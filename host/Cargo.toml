@@ -1,0 +1,24 @@
+[package]
+name = "wasm-plugin-host"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "wasm_plugin_host"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+wasmtime = { version = "44", features = ["cranelift", "pooling-allocator", "cache"] }
+wasmtime-wasi = "44"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["io-util"] }
+notify = "8"
+
+[[bin]]
+name = "plugin-host"
+path = "src/main.rs"
+
+[dev-dependencies]
+wat = "1"

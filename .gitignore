@@ -1,0 +1,21 @@
+# Rust
+/target/
+
+# Build artifacts
+**/*.rs.bk
+*.pdb
+
+# demo scratch output (rebuilt by scripts)
+/demo/stage/
+/demo/lat.json
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# ECC session memory (tool-local, not part of the project)
+.ecc-memory/
+
+# Go build output (keep the checked-in sample .wasm? no — rebuild it)
+# plugins/hello-go/hello_go.wasm

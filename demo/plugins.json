@@ -1,0 +1,7 @@
+{
+  "watch": { "enabled": true, "interval_ms": 300 },
+  "plugins": {
+    "hello":   { "path": "../target/wasm32-wasip1/release/hello_rust.wasm", "enabled": true },
+    "greeter": { "path": "../plugins/hello-go/hello_go.wasm", "enabled": true }
+  }
+}

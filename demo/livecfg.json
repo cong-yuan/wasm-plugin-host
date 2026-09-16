@@ -1,0 +1,24 @@
+{
+  "watch": {
+    "enabled": true,
+    "interval_ms": 200
+  },
+  "plugins": {
+    "greet": {
+      "path": "stage/greet.wasm",
+      "enabled": true,
+      "config": {
+        "greeting": "HELLO (live!)"
+      },
+      "watch": false
+    },
+    "goplug": {
+      "path": "../plugins/hello-go/hello_go.wasm",
+      "enabled": true,
+      "config": {
+        "greeting": "Bonjour"
+      },
+      "watch": false
+    }
+  }
+}

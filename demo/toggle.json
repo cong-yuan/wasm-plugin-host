@@ -1,0 +1,12 @@
+{
+  "plugins": {
+    "greet": {
+      "path": "stage/greet.wasm",
+      "enabled": true
+    }
+  },
+  "watch": {
+    "enabled": true,
+    "interval_ms": 200
+  }
+}

@@ -1,0 +1,310 @@
+# ABI v1 — WASM Plugin Contract
+
+A plugin is a **core WASM module** built for `wasm32-wasip1` (or any target that
+exports `memory`). The host provides WASI Preview 1, so plugins may use `std`
+(Rust), `fmt`/`os` (Go), etc.
+
+The contract is deliberately tiny — **JSON strings over linear memory** — so it
+is implementable in Rust, Go, C, Zig today, and via the Component Model for
+JS/Python later.
+
+## Guest exports (plugin → host)
+
+| Export | Signature | Meaning |
+|---|---|---|
+| `memory` | `memory` | Linear memory (required) |
+| `plugin_abi_version` | `() -> i32` | Must return `1`; host rejects mismatch |
+| `plugin_alloc` | `(size: i32) -> i32` | Allocate `size` bytes, return pointer (0 = fail) |
+| `plugin_free` | `(ptr: i32, size: i32)` | Free a block previously handed out |
+| `plugin_init` | `() -> i32` | One-time init. `0` = ok, non-zero = fail |
+| `plugin_describe` | `(out: i32, cap: i32) -> i64` | Write declaration JSON into `out`; return bytes written, or `-(needed)` if `cap` too small |
+| `plugin_invoke` | `(op: i32, op_len: i32, args: i32, args_len: i32, out: i32, cap: i32) -> i64` | Run op `op` (UTF-8 JSON `args` → UTF-8 JSON result in `out`); same return convention as `describe` |
+| `plugin_shutdown` | `()` | Release state. Called once, before the instance is dropped |
+| `plugin_configure` | `(out: i32, cap: i32) -> i32` | **Optional.** Called once at load, after `plugin_init`, when the entry has a `config`. Read it with `host.get_config`. `out`/`cap` are scratch space the host provides. `0` = ok |
+| `plugin_on_config` | `() -> i32` | **Optional.** Called when the host pushes a new config to a **live** plugin. Re-read via `host.get_config`. `0` = ok |
+
+## Guest imports (host → plugin)
+
+Module **`host`**:
+
+| Import | Signature | Meaning |
+|---|---|---|
+| `log` | `(level: i32, ptr: i32, len: i32)` | Log UTF-8 text (level: 0=debug 1=info 2=warn 3=error) |
+| `now_ms` | `() -> i64` | Unix epoch milliseconds |
+| `get_config` | `(out: i32, cap: i32) -> i64` | Write the current config as UTF-8 JSON into guest memory. Returns bytes written, `-(needed)` if `cap` too small, or `0` if the config is JSON `null` |
+| `config_version` | `() -> i64` | Monotonic counter, bumped on every config change. Compare to a cached value to cheaply detect updates |
+
+## Logging
+
+**The universal channel is WASI stdout/stderr — no per-language glue required.**
+Any language's normal print goes there:
+
+| Language | call |
+|---|---|
+| Rust | `println!` / `eprintln!` |
+| Go | `fmt.Println` / `fmt.Fprintln(os.Stderr, ...)` |
+| C | `printf` / `fprintf(stderr, ...)` |
+| Zig | `std.debug.print` |
+| JS (jco) | `console.log` / `console.error` |
+| Python | `print()` / `sys.stderr.write` |
+
+The host gives every instance a custom `StdoutStream`/`StderrStream` that
+splits the byte stream into lines and feeds them into the shared `LogSink`.
+stdout is logged at `Info`, stderr at `Error`. A trailing line without a newline
+is flushed when the instance drops, so nothing is lost.
+
+A plugin built in **any** language, using only its stdlib print, shows up as:
+
+```
+#1  [greet] info:  hello from Go stdout
+#2  [greet] error: hello from Go stderr
+```
+
+### `host.log` — optional structured upgrade
+
+Guests that want an explicit level (e.g. `Warn`/`Debug`, which have no separate
+WASI fd) may call `host.log(level, ptr, len)` with UTF-8 text in their own linear
+memory. Both channels feed the same sink.
+
+The host turns every line into a `LogRecord`:
+
+```rust
+pub struct LogRecord {
+    pub seq: u64,        // monotonic, for tailing
+    pub slot: String,    // the slot it was loaded under, e.g. "greet"
+    pub plugin: String,  // the plugin's own name, e.g. "hello-rust"
+    pub level: LogLevel, // Debug | Info | Warn | Error
+    pub message: String,
+}
+```
+
+Each record is:
+
+1. **stored in a bounded ring buffer** (default 1000 records; older ones are
+   dropped — a chatty plugin cannot grow memory without bound),
+2. **echoed to stderr** as `[slot] level: message` unless disabled, and
+3. **passed to an optional `LogHook` callback**, so an embedding host (e.g. a
+   Tauri backend) can forward records to its UI.
+
+Reading logs back from the host:
+
+```rust
+let reg = Registry::with_logging(runtime, 1000, /*echo*/ true, Some(hook));
+reg.logs();                    // all buffered records
+reg.logs_for("greet");         // just one slot
+reg.logs_since(last_seq);      // tail
+reg.log_sink().clear();        // drop the buffer
+```
+
+## Declaration JSON (`plugin_describe`)
+
+```json
+{
+  "name": "hello-rust",
+  "abi": 1,
+  "tools": [
+    {
+      "name": "greet",
+      "description": "Return a greeting",
+      "parameters": { "type": "object", "properties": { "who": { "type": "string" } } },
+      "exec": "greet"
+    }
+  ],
+  "hooks": [
+    { "on": "tools/pre-execute", "exec": "check", "mode": "waterfall", "priority": 0 }
+  ],
+  "injects": ["sessions"],
+  "provides": ["policy"]
+}
+```
+
+`exec` is the `op` string the host passes to `plugin_invoke`.
+`tools[].name` is how the agent-loop sees the tool.
+
+## Intervening in the flow (`hooks`)
+
+A plugin that declares only `tools` is a **leaf**: the flow calls it. A plugin
+that declares `hooks` is a **participant**: the flow calls it *at* flow points,
+where it can observe or intervene. This is the dsh model.
+
+| Event | Fires | Payload in | May change? |
+|---|---|---|---|
+| `turn/start` | a turn begins | `{turn, input}` | observe |
+| `agent/pre-step` | before a step | `{turn, input}` | **rewrite / veto** |
+| `agent/request` | before the model call | `{turn, messages}` | **rewrite / veto** |
+| `llm/chunk` | each streamed chunk | `{turn, index, text}` | **rewrite** |
+| `assistant/message` | a full message | `{turn, text}` | observe |
+| `tool/call` | a tool is about to run | `{turn, name, args}` | observe |
+| `tools/pre-execute` | right before a tool body | `{turn, name, args}` | **rewrite / veto** |
+| `tool/result` | after a tool returns | `{turn, name, result}` | **rewrite** |
+| `turn/end` | a turn finishes | `{turn, ...}` | observe |
+
+### Hook modes
+
+* **`"observe"`** — the plugin is called and its reply is **ignored**. For
+  logging, metrics, telemetry. Cannot change the flow.
+* **`"waterfall"`** (default) — the plugin's reply is a **decision** that gates
+  the flow. The value passed to each subscriber is the value *as rewritten so
+  far*, so an earlier rewrite is visible to later subscribers.
+
+### The decision reply
+
+A hook (waterfall) replies with one of:
+
+```json
+{ "kind": "continue" }
+{ "kind": "rewrite", "value": { } }
+{ "kind": "veto", "reason": "why" }
+```
+
+`rewrite` replaces the payload the flow carries on; `veto` stops the step, and
+the flow reports who vetoed. Anything unrecognised is treated as `continue`
+(fail-open): a hook can never wedge the flow by returning junk. A hook that
+**errors** is recorded and skipped, and the flow continues.
+
+### Services (`injects` / `provides`)
+
+A plugin may declare the services it **needs** (`injects`) and the ones it
+**provides** (`provides`). This is dsh's service graph: a plugin is a
+**participant with declared capabilities**, not just a leaf.
+
+**Responsive convergence.** A plugin is *active* iff every service it injects is
+provided by some active plugin (a plugin may satisfy its own inject by what it
+provides). Activation registers its tools, hooks, and services; a newly
+registered service can satisfy another plugin's injects, so convergence iterates
+to a fixpoint — a whole chain can light up in one pass. Losing a provider
+cascades deactivation the same way.
+
+```
+load consumer (injects kv)          -> quiescent: missing=["kv"], no tools registered
+load provider (provides kv)         -> consumer activates automatically (cascade)
+unload provider                     -> consumer deactivates; its tools unregister
+```
+
+* A load fails if two plugins provide the same service.
+* `LoadedReport.missing_services` lists what a plugin still needs.
+* `LoadedReport.active` says whether its effects are currently registered.
+* `Registry::is_active(slot)` and the `pending` state in `plugins` reflect this.
+
+### Calling one plugin from another (`host.call_service`)
+
+An active plugin may invoke another plugin **by service name** (not slot), so it
+depends on the capability rather than a specific implementation:
+
+```c
+// wasmimport host call_service
+//   (svc_ptr, svc_len, op_ptr, op_len, args_ptr, args_len, out_ptr, out_cap) -> i64
+// returns bytes written, or -(needed) if out_cap is too small.
+```
+
+```c
+// wasmimport host has_service
+//   (name_ptr, name_len) -> i32   // 1 if a provider is registered
+```
+
+A call with no provider, or one that hits a plugin already executing (a
+recursive call), returns a JSON `{"kind":"error", ...}` reply rather than
+trapping — so a plugin can handle a missing or busy dependency gracefully.
+
+**Re-entrancy.** While a plugin runs, it is taken out of the store; the callee
+of a service call is taken out too and put back afterwards. So nested service
+calls work, the store lock is never held across a guest call, and a direct
+recursion (A calls B calls A) fails with a clear "busy" error instead of
+deadlocking.
+
+## Config injection and live config
+
+Each plugin entry may carry a `config` object. It is delivered two ways:
+
+1. **At load (push):** the host stores it in the plugin's shared state and, if
+the plugin exports `plugin_configure`, calls that hook once. The plugin then
+reads the value through `host.get_config`.
+2. **At runtime (pull or push):** whenever the config changes, the host either
+pushes it live (`plugin_on_config` runs, `host.get_config` returns the new
+value immediately) or restarts the plugin — controlled per entry by
+`restart_on_config` (see below).
+
+```json
+{
+  "plugins": {
+    "greet": {
+      "path": "greet.wasm",
+      "enabled": true,
+      "config": { "greeting": "Hello" },
+      "restart_on_config": false
+    }
+  }
+}
+```
+
+* `restart_on_config: false` (default) — **live update**. The running instance
+  gets the new config; `plugin_on_config` fires if exported. Cheap, no reload.
+* `restart_on_config: true` — **restart**. The plugin is atomically reloaded so
+  it re-reads the config during `plugin_configure` as if freshly started. Use
+  this when a config change must rebuild internal state that the plugin can't
+  otherwise refresh.
+
+**Only the plugin whose `config` changed is touched.** The supervisor diffs each
+slot's config independently; other plugins are neither reloaded nor
+reconfigured. Same for `.wasm` rebuilds.
+
+### Reading the config from a plugin
+
+Rust:
+
+```rust
+#[link(wasm_import_module = "host")]
+unsafe extern "C" {
+    fn get_config(out: *mut u8, cap: usize) -> i64;
+    fn config_version() -> i64;
+}
+
+fn config() -> serde_json::Value {
+    let mut buf = vec![0u8; 64 * 1024];
+    // SAFETY: buf is valid for buf.len() bytes for the duration of the call.
+    let n = unsafe { get_config(buf.as_mut_ptr(), buf.len()) };
+    if n <= 0 { return serde_json::Value::Null; }
+    serde_json::from_slice(&buf[..n as usize]).unwrap_or(serde_json::Value::Null)
+}
+```
+
+Go:
+
+```go
+//go:wasmimport host get_config
+func getConfig(out uint32, cap int32) int64
+
+//go:wasmimport host config_version
+func configVersion() int64
+```
+
+## Result JSON (`plugin_invoke`)
+
+```json
+{ "kind": "success", "content": "Hello, world!", "value": { "who": "world" } }
+```
+```json
+{ "kind": "error", "message": "bad argument", "code": "BAD_ARG" }
+```
+
+## Lifecycle (dsh / cordis style)
+
+```
+Pending ──load──▶ Init ──describe──▶ Active ──invoke──▶ Active
+                                       │
+                              unload ──┴──▶ Shutdown ──drop──▶ Disposed
+                            (any failure) ─▶ Failed
+```
+
+Unloading is a **drop**: unlike `dlopen`, a WASM instance releases its code and
+linear memory for real. Registration of tools is an *effect* that unwinds on
+unload — the host removes them from the registry automatically.
+
+## Why this shape (and where JS/Python go)
+
+* **Now (core module):** Rust and Go compile to `wasm32-wasip1` and can export
+  these symbols directly. Go uses `//go:wasmexport`; Rust uses `#[no_mangle]`.
+* **Later (Component Model):** JS (`jco`), Python (`componentize-py`), and also
+  Rust emit *components*, not core modules. The host speaks WIT instead of raw
+  JSON-over-memory. The **lifecycle and registry layers are identical** — only
+  the `PluginRuntime` backend differs. See `host/src/plugin.rs::Runtime`.
