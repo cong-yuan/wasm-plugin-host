@@ -36,18 +36,27 @@ pub extern "C" fn plugin_free(_p: i32, _n: i32) {}
 pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
     let entry_js = r#"
         studio.register("LlmPanel", (el) => {
-            el.innerHTML = '<div style="font-family:system-ui">'
+            el.innerHTML =
+              '<div style="font-family:system-ui">'
               + '<strong>LLM provider panel</strong>'
               + '<p style="color:#8f8f8f;font-size:12px">from ui-llm-panel (wasm plugin)</p>'
               + '<button id="ping">test connection</button>'
-              + '<pre id="out" style="font-size:11px"></pre></div>';
+              + '<pre id="out" style="font-size:11px"></pre>'
+              + '<div style="margin-top:10px;border-top:1px solid #2a2a2a;padding-top:8px">'
+              + '  <div style="font-size:11px;color:#8f8f8f;margin-bottom:6px">'
+              + '    contributed by other plugins (slot: ui-llm-panel.config)</div>'
+              + '  <div id="sub" style="min-height:24px"></div>'
+              + '</div></div>';
             const b = el.querySelector('#ping');
             const o = el.querySelector('#out');
-            if (b && o) b.addEventListener('click', () => { o.textContent = 'ok — handled inside the plugin UI'; });
-        });
-        studio.register("SubSlot", (el) => {
-            el.innerHTML = '<em style="font-size:12px;color:#3ecf8e">'
-              + 'this area is a slot owned by ui-llm-panel; other plugins mount here</em>';
+            if (b && o) b.addEventListener('click', () => {
+                o.textContent = 'ok — handled inside the plugin UI';
+            });
+            // The half that makes an opened slot visible: render its children
+            // into our own DOM. Without this call, contributors never appear.
+            const sub = el.querySelector('#sub');
+            const dispose = sub ? studio.renderSlot('ui-llm-panel.config', sub) : null;
+            return () => { if (dispose) dispose(); };
         });
     "#;
     let decl = serde_json::json!({
