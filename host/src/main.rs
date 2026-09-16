@@ -125,6 +125,17 @@ fn main() -> Result<()> {
 
     if let Some(sup) = sup {
         host.watching = sup.config.watch.enabled;
+        // Apply the configured log level immediately, before any plugin loads:
+        // otherwise the first reconcile would emit guest logs at the default
+        // level and they would slip past the filter.
+        if let Some(level) = sup
+            .config
+            .log_level
+            .as_deref()
+            .and_then(wasm_plugin_host::LogLevel::parse)
+        {
+            host.reg.set_log_level(level);
+        }
         host.sup = Some(sup);
     }
 

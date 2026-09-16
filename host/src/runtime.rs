@@ -111,7 +111,16 @@ impl DiskCache {
         let path = self.path_for(content);
         // Atomic publish: write a sibling temp file, then rename over the
         // target. A crash mid-write cannot leave a truncated `.cwasm`.
-        let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+        //
+        // The temp name must be unique per *call*, not just per process: two
+        // threads compiling the same plugin concurrently would otherwise write
+        // the same temp path, and one `rename` could yank the file out from
+        // under the other (turning a successful write into a spurious error).
+        // Content is identical either way, so last-writer-wins on the target is
+        // correct; the counter only removes the intra-process collision.
+        static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = path.with_extension(format!("tmp-{}-{seq}", std::process::id()));
         if std::fs::write(&tmp, &bytes).is_ok() && std::fs::rename(&tmp, &path).is_ok() {
             self.stats.lock().unwrap().writes += 1;
         } else {

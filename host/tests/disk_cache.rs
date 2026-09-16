@@ -266,3 +266,62 @@ fn a_hot_reload_re_uses_the_cache_for_an_unchanged_file() {
     let after = reg.runtime().cache_stats();
     assert_eq!(before.hits, after.hits, "no extra disk hit for an unchanged file");
 }
+
+#[test]
+fn concurrent_compiles_of_the_same_plugin_leave_a_readable_artifact() {
+    // STRESS TEST, not a guaranteed regression guard. It exercises concurrent
+    // writes to one cache dir and asserts the published artifact is always
+    // valid, but it does NOT reliably reproduce the specific hazard the unique
+    // temp-name fix targets: with a process-id-only temp name, corruption needs
+    // thread B to `open` the temp file *before* thread A's `rename` publishes it
+    // and to `write` *after* — a window `std::fs::write` makes very narrow, so
+    // this test passes even against the unfixed code. The fix is justified by
+    // that interleaving analysis, and pinned by the leftover-temp assertion
+    // below, which IS deterministic.
+    let work = tmpdir("concurrent");
+    let cache = work.join("cache");
+    let wasm = work.join("p.wasm");
+    write(&wasm, &wasm_bytes("alpha"));
+
+    let threads: Vec<_> = (0..8)
+        .map(|_| {
+            let wasm = wasm.clone();
+            let cache = cache.clone();
+            std::thread::spawn(move || {
+                // Each thread has its own runtime (and thus its own in-process
+                // cache) but they share the on-disk cache directory.
+                let rt = Runtime::new_cached(&cache).unwrap();
+                let mut reg = Registry::new(rt);
+                reg.load("slot", &wasm, serde_json::Value::Null).unwrap();
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().expect("compile thread must not panic");
+    }
+
+    // Whatever interleaving happened, a fresh load must deserialize cleanly
+    // from disk (no error fallback) — i.e. the published artifact is intact.
+    let rt = Runtime::new_cached(&cache).unwrap();
+    let mut reg = Registry::new(rt);
+    reg.load("slot", &wasm, serde_json::Value::Null).unwrap();
+    let stats = reg.runtime().cache_stats();
+    assert_eq!(stats.errors, 0, "no corrupt artifact should have been published");
+    assert_eq!(stats.hits, 1, "the published artifact must be reusable");
+
+    // Deterministic invariant: every temp file was renamed away (or cleaned up
+    // on failure). A stranded temp file would mean the publish path leaked.
+    let leftovers: Vec<_> = std::fs::read_dir(&cache)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .contains(".tmp-")
+        })
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "atomic publish must not leave temp files behind: {leftovers:?}"
+    );
+}

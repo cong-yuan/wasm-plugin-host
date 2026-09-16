@@ -261,7 +261,7 @@ cargo build --release -p hello-rust --target wasm32-wasip1   # rustup target add
 ./target/release/plugin-host                                  # REPL, no config
 ./target/release/plugin-host --config demo/live.json          # REPL + watcher
 ./target/release/plugin-host --config demo/live.json --supervise   # daemon
-cargo test --release                                          # 84 tests, hermetic
+cargo test --release                                          # 85 tests, hermetic
 ```
 
 ## Plugin logs
