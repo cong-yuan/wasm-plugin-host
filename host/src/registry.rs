@@ -138,6 +138,23 @@ impl Registry {
         self.log.since(seq)
     }
 
+    /// Drop log records below `level`. Applies to records buffered *after* the
+    /// call; already-buffered records are untouched.
+    pub fn set_log_level(&self, level: crate::state::LogLevel) {
+        self.log.set_min_level(level);
+    }
+
+    /// The current minimum retained log level.
+    pub fn log_level(&self) -> crate::state::LogLevel {
+        self.log.min_level()
+    }
+
+    /// Snapshot the buffered records older than `level` and drop them too
+    /// (used when the level is raised at runtime, so the buffer reflects it).
+    pub fn prune_logs_below(&self, level: crate::state::LogLevel) -> usize {
+        self.log.prune_below(level)
+    }
+
     pub fn runtime(&self) -> &Runtime {
         &self.runtime
     }

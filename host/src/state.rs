@@ -10,11 +10,11 @@ use wasmtime_wasi::WasiCtxBuilder;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::VecDeque;
-use std::sync::atomic::AtomicI64;
+use std::sync::atomic::{AtomicI64, AtomicU8};
 use std::sync::{Arc, Mutex};
 
 /// Severity of a log line, mirroring the integer levels the ABI uses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Debug,
@@ -40,6 +40,17 @@ impl LogLevel {
             LogLevel::Warn => "warn",
             LogLevel::Error => "error",
         }
+    }
+
+    /// Parse a level name (case-insensitive). Used by config validation.
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s.trim().to_ascii_lowercase().as_str() {
+            "debug" | "trace" => LogLevel::Debug,
+            "info" => LogLevel::Info,
+            "warn" | "warning" => LogLevel::Warn,
+            "error" | "err" => LogLevel::Error,
+            _ => return None,
+        })
     }
 }
 
@@ -79,6 +90,10 @@ pub struct LogSink {
     capacity: usize,
     echo_stderr: bool,
     hook: Option<LogHook>,
+    /// Records below this level are discarded entirely (never buffered or
+    /// forwarded). Stored as an atomic so `set_min_level` is lock-free and can
+    /// be called while a plugin is logging on another thread.
+    min_level: AtomicU8,
 }
 
 impl LogSink {
@@ -93,13 +108,30 @@ impl LogSink {
             capacity: capacity.max(1),
             echo_stderr,
             hook,
+            min_level: AtomicU8::new(level_to_u8(LogLevel::Debug)),
         }
+    }
+
+    /// Discard records below `level`. Default is `Debug` (keep everything).
+    pub fn set_min_level(&self, level: LogLevel) {
+        self.min_level
+            .store(level_to_u8(level), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The current minimum retained level.
+    pub fn min_level(&self) -> LogLevel {
+        u8_to_level(self.min_level.load(std::sync::atomic::Ordering::Relaxed))
     }
 
     /// Record a line. Assigns the sequence number, trims to capacity, mirrors to
     /// stderr if enabled, and forwards to the hook (outside the lock, so a hook
     /// that re-enters the sink cannot deadlock).
     pub fn push(&self, mut rec: LogRecord) {
+        // Level filter: below-threshold records are dropped before they cost a
+        // buffer slot or a hook call.
+        if level_to_u8(rec.level) < self.min_level.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         {
             let mut inner = self.inner.lock().unwrap();
             inner.next_seq += 1;
@@ -163,6 +195,19 @@ impl LogSink {
     pub fn capacity(&self) -> usize {
         self.capacity
     }
+
+    /// Drop every buffered record below `level`, returning how many were
+    /// removed. Used when the level is raised at runtime so the buffer does not
+    /// hold lines that would no longer be admitted.
+    pub fn prune_below(&self, level: LogLevel) -> usize {
+        let threshold = level_to_u8(level);
+        let mut inner = self.inner.lock().unwrap();
+        let before = inner.buf.len();
+        inner
+            .buf
+            .retain(|r| level_to_u8(r.level) >= threshold);
+        before - inner.buf.len()
+    }
 }
 
 /// Per-`Store` host state. `T` in `Store<T>` is this type.
@@ -222,3 +267,21 @@ impl HostState {
 
 /// Default bound on retained log records per plugin.
 pub const DEFAULT_LOG_CAPACITY: usize = 1000;
+
+fn level_to_u8(l: LogLevel) -> u8 {
+    match l {
+        LogLevel::Debug => 0,
+        LogLevel::Info => 1,
+        LogLevel::Warn => 2,
+        LogLevel::Error => 3,
+    }
+}
+
+fn u8_to_level(v: u8) -> LogLevel {
+    match v {
+        0 => LogLevel::Debug,
+        1 => LogLevel::Info,
+        2 => LogLevel::Warn,
+        _ => LogLevel::Error,
+    }
+}

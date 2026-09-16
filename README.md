@@ -13,7 +13,7 @@ linear memory**.
 
 Plugins are not just callable leaves — they **intervene in the agent flow**.
 A plugin may subscribe to flow events (`agent/pre-step`, `tools/pre-execute`,
-`llm/chunk`, ...) and **observe, rewrite, or veto** what happens next. That is
+`assistant/chunk`, ...) and **observe, rewrite, or veto** what happens next. That is
 the dsh model.
 
 ```
@@ -116,7 +116,7 @@ hooks registered: 2
 
 The host ships a minimal flow (`flow::run_turn`) so there is something to
 intervene in: `turn/start → agent/pre-step → agent/request → model →
-llm/chunk → assistant/message → tool/* → turn/end`, each point dispatching the
+assistant/chunk → assistant/message → tool/* → turn/end`, each point dispatching the
 matching event. A real host swaps `Model::complete` for a provider; the event
 plumbing is what matters here.
 
@@ -261,7 +261,7 @@ cargo build --release -p hello-rust --target wasm32-wasip1   # rustup target add
 ./target/release/plugin-host                                  # REPL, no config
 ./target/release/plugin-host --config demo/live.json          # REPL + watcher
 ./target/release/plugin-host --config demo/live.json --supervise   # daemon
-cargo test --release                                          # 5 integration tests
+cargo test --release                                          # 84 tests, hermetic
 ```
 
 ## Plugin logs
@@ -482,5 +482,9 @@ it is falling back to mtime polling.
 4. **A failed reload records the new mtime**, so a broken build is not retried
    every tick — fix and rebuild to trigger the next attempt.
 5. **ABI v1** is version-gated; mismatched plugins are rejected at load.
+6. **The streamed-chunk event is `assistant/chunk`** (aligned with dsh-rs); the
+   older name `llm/chunk` is still accepted as an alias.
+7. **The disk cache is not a trust boundary** — deserializing a `.cwasm` is
+   `unsafe` in wasmtime, so the cache dir must be host-only-writable.
 
 ABI details: [`docs/ABI.md`](docs/ABI.md).

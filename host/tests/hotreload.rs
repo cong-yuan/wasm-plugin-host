@@ -915,6 +915,15 @@ fn unknown_event_is_rejected_at_load() {
 }
 
 #[test]
+fn chunk_event_is_named_assistant_chunk_but_accepts_the_legacy_alias() {
+    // The canonical name matches dsh's `SessionEventData::event_type()`.
+    assert_eq!(FlowEvent::LlmChunk.as_str(), "assistant/chunk");
+    assert_eq!(FlowEvent::parse("assistant/chunk"), Some(FlowEvent::LlmChunk));
+    // The pre-alignment name still resolves, so older plugins keep loading.
+    assert_eq!(FlowEvent::parse("llm/chunk"), Some(FlowEvent::LlmChunk));
+}
+
+#[test]
 fn service_inject_reports_missing_provider() {
     let dir = tmpdir("svc");
     let a = dir.join("a.wasm");

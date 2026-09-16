@@ -6,7 +6,7 @@
 //!
 //! The point is not to be a full agent (no real LLM here). The point is to give
 //! plugins a **flow to enter**: a place where `agent/pre-step` can veto, where
-//! `tools/pre-execute` can rewrite arguments, where `llm/chunk` can transform
+//! `tools/pre-execute` can rewrite arguments, where `assistant/chunk` can transform
 //! streamed text. That is what "the plugin participates in dsh" means.
 //!
 //! A real host would replace [`Model::complete`] with an actual provider; the
@@ -49,7 +49,7 @@ impl Model for ScriptedModel {
 #[derive(Debug)]
 pub struct TurnOutcome {
     pub turn: u64,
-    /// Assistant text after any `llm/chunk` rewriting.
+    /// Assistant text after any `assistant/chunk` rewriting.
     pub reply: String,
     /// Tool calls that actually executed (name, rewritten args, result).
     pub executed: Vec<(String, Value, Value)>,
@@ -104,7 +104,7 @@ pub fn run_turn(
     // --- model call ---
     let raw_reply = model.complete(messages.as_array().map(|a| a.as_slice()).unwrap_or(&[]))?;
 
-    // --- llm/chunk (waterfall: transform the streamed text) ---
+    // --- assistant/chunk (waterfall: transform the streamed text) ---
     // We emit the reply as a single chunk here; a streaming model would emit many.
     let chunk = reg.dispatch(Event::LlmChunk, json!({ "turn": turn, "index": 0, "text": raw_reply }));
     let reply = chunk

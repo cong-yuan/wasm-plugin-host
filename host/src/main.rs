@@ -8,6 +8,8 @@
 //!   reconcile                   apply config desired state now
 //!   refresh                     clear the compile caches (memory + disk)
 //!   cache                       show disk compile-cache stats
+//!   validate                    validate the loaded config
+//!   log-level <debug|info|warn|error>   set the retained log level
 //!   watch [on|off]              toggle the file watcher (hot reload)
 //!   plugins / tools / call <tool> <json>
 //!   config                      show the loaded config
@@ -16,6 +18,7 @@
 //! CLI:
 //!   plugin-host                      interactive REPL
 //!   plugin-host --config c.json      REPL bound to a config
+//!   plugin-host --config c.json --validate      validate a config and exit
 //!   plugin-host --config c.json --supervise   run the watcher loop (no REPL)
 
 use anyhow::Result;
@@ -50,6 +53,7 @@ fn main() -> Result<()> {
     // Parse a couple of top-level flags.
     let mut config_path: Option<PathBuf> = None;
     let mut supervise = false;
+    let mut validate_only = false;
     let mut rest: Vec<String> = Vec::new();
     let mut i = 0;
     while i < argv.len() {
@@ -59,9 +63,29 @@ fn main() -> Result<()> {
                 config_path = argv.get(i).map(PathBuf::from);
             }
             "--supervise" | "--watch" => supervise = true,
+            "--validate" => validate_only = true,
             other => rest.push(other.to_string()),
         }
         i += 1;
+    }
+
+    // `--validate` is a one-shot: check the config and exit non-zero on error.
+    if validate_only {
+        let cp = config_path
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("--validate requires --config <file>"))?;
+        let cfg = wasm_plugin_host::Config::load(cp)?;
+        let base = cp.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let issues = cfg.validate(base);
+        if issues.is_empty() {
+            println!("{}: OK ({} plugin(s))", cp.display(), cfg.plugins.len());
+            return Ok(());
+        }
+        eprintln!("{}: {} problem(s)", cp.display(), issues.len());
+        for issue in &issues {
+            eprintln!("  - {issue}");
+        }
+        std::process::exit(2);
     }
 
     // Load the config (if any) *before* building the runtime, so the runtime
@@ -339,6 +363,31 @@ fn run_command(host: &mut Host, parts: &[String]) -> Result<()> {
                 s.hits, s.misses, s.writes, s.errors
             );
         }
+        "validate" => {
+            let sup = host.sup.as_ref().ok_or_else(|| anyhow::anyhow!("no config loaded (use --config)"))?;
+            let issues = sup.validate();
+            if issues.is_empty() {
+                println!("config OK ({} plugin(s))", sup.config.plugins.len());
+            } else {
+                println!("config has {} problem(s):", issues.len());
+                for issue in &issues {
+                    println!("  - {issue}");
+                }
+            }
+        }
+        "log-level" | "loglevel" => {
+            match parts.get(1).and_then(|s| wasm_plugin_host::LogLevel::parse(s)) {
+                Some(level) => {
+                    reg.set_log_level(level);
+                    let pruned = reg.prune_logs_below(level);
+                    println!("log level: {}", level.as_str());
+                    if pruned > 0 {
+                        println!("  pruned {pruned} buffered record(s)");
+                    }
+                }
+                None => println!("log level: {} (usage: log-level debug|info|warn|error)", reg.log_level().as_str()),
+            }
+        }
         "watch" => {
             match parts.get(1).map(|s| s.as_str()) {
                 Some("on") => host.watching = true,
@@ -417,6 +466,7 @@ fn run_command(host: &mut Host, parts: &[String]) -> Result<()> {
             println!("  enable <slot> | disable <slot> | reconcile | reconfig | refresh");
             println!("  watch [on|off] | plugins | tools | call <tool> <json>");
             println!("  logs [slot] [n] | clear-logs | status | config | quit");
+            println!("  cache | validate | log-level <debug|info|warn|error>");
         }
         other => anyhow::bail!("unknown command: {other}"),
     }

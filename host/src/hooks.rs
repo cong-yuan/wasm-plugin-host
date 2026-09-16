@@ -21,7 +21,7 @@
 //! | `turn/start` | a turn begins | `{turn}` | observe only |
 //! | `agent/pre-step` | before a step runs | `{step, input}` | may rewrite/veto |
 //! | `agent/request` | before the model is called | `{messages, tools}` | may rewrite/veto |
-//! | `llm/chunk` | each streamed chunk | `{index, text}` | may rewrite |
+//! | `assistant/chunk` | each streamed chunk | `{index, text}` | may rewrite |
 //! | `assistant/message` | a full assistant message | `{text}` | observe only |
 //! | `tool/call` | a tool is about to run | `{name, args}` | observe only |
 //! | `tools/pre-execute` | right before a tool body | `{name, args}` | may rewrite/veto |
@@ -65,7 +65,7 @@ impl Event {
             Event::TurnStart => "turn/start",
             Event::AgentPreStep => "agent/pre-step",
             Event::AgentRequest => "agent/request",
-            Event::LlmChunk => "llm/chunk",
+            Event::LlmChunk => "assistant/chunk",
             Event::AssistantMessage => "assistant/message",
             Event::ToolCall => "tool/call",
             Event::ToolsPreExecute => "tools/pre-execute",
@@ -79,6 +79,11 @@ impl Event {
             "turn/start" => Event::TurnStart,
             "agent/pre-step" => Event::AgentPreStep,
             "agent/request" => Event::AgentRequest,
+            "assistant/chunk" => Event::LlmChunk,
+            // Legacy alias: the event was called `llm/chunk` before it was
+            // aligned with dsh's `SessionEventData::event_type()`. Accepting it
+            // keeps existing plugins loading; new plugins should use
+            // `assistant/chunk`.
             "llm/chunk" => Event::LlmChunk,
             "assistant/message" => Event::AssistantMessage,
             "tool/call" => Event::ToolCall,

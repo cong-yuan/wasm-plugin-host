@@ -31,9 +31,12 @@
 //! | `agent/request` | ignored (no reject vocabulary) | → the replacement `LlmCallConfig` |
 //! | `session/event` | — | — (observe only) |
 //!
-//! Notice the one vocabulary rename in the whole bridge: dsh emits
-//! `assistant/chunk`, whereas our hook vocabulary calls that point `LlmChunk`
-//! (`llm/chunk`).
+//! ## One vocabulary, one rename no more
+//!
+//! `wasm-plugin-host`'s `Event::LlmChunk` now serializes as
+//! `assistant/chunk`, matching dsh's `SessionEventData::event_type()`
+//! exactly, so the fan-out is a direct name match. (`llm/chunk` was the old
+//! name and is still accepted as a legacy alias by the guest-side parser.)
 
 use anyhow::Result;
 use cordis::{Context, Next};
@@ -232,8 +235,7 @@ fn session_event_to_flow(payload: &Value) -> Option<FlowEvent> {
     Some(match kind {
         "turn/start" => FlowEvent::TurnStart,
         "turn/end" => FlowEvent::TurnEnd,
-        // dsh's chunk event is `assistant/chunk`; our vocabulary knows the
-        // point as `LlmChunk` (`llm/chunk`).
+        // dsh's chunk event and our vocabulary now agree on the name.
         "assistant/chunk" => FlowEvent::LlmChunk,
         "assistant/message" => FlowEvent::AssistantMessage,
         "tool/call" => FlowEvent::ToolCall,

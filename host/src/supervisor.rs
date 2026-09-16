@@ -102,6 +102,19 @@ impl Supervisor {
     pub fn reconcile(&mut self, reg: &mut Registry) -> Vec<Event> {
         let mut events = Vec::new();
 
+        // Apply the global log level first, so anything logged during this
+        // reconcile already honours it. An unparseable level is ignored (it is
+        // reported by `Config::validate` when the caller asks for validation).
+        if let Some(level) = self
+            .config
+            .log_level
+            .as_deref()
+            .and_then(crate::state::LogLevel::parse)
+        {
+            reg.set_log_level(level);
+            reg.prune_logs_below(level);
+        }
+
         // Desired sets: slot -> (path, enabled, config, restart_on_config).
         #[derive(Clone)]
         struct Desired {
@@ -372,6 +385,8 @@ impl Supervisor {
     }
 
     /// Reload the config file from disk (e.g. after external edit).
+    /// Re-read the config file. Parse errors are surfaced; the previous good
+    /// config is left in place so a bad external edit cannot wedge the host.
     pub fn reload_config(&mut self) -> Result<()> {
         self.config = Config::load(&self.config_path)?;
         self.config_mtime = if self.config_path.exists() {
@@ -380,6 +395,12 @@ impl Supervisor {
             0
         };
         Ok(())
+    }
+
+    /// Validate the *current* config against the filesystem. Relative paths are
+    /// resolved against the config's directory. Empty means valid.
+    pub fn validate(&self) -> Vec<crate::config::ValidationIssue> {
+        self.config.validate(&self.base_dir)
     }
 
     pub fn interval(&self) -> Duration {

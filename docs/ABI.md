@@ -132,12 +132,15 @@ where it can observe or intervene. This is the dsh model.
 | `turn/start` | a turn begins | `{turn, input}` | observe |
 | `agent/pre-step` | before a step | `{turn, input}` | **rewrite / veto** |
 | `agent/request` | before the model call | `{turn, messages}` | **rewrite / veto** |
-| `llm/chunk` | each streamed chunk | `{turn, index, text}` | **rewrite** |
+| `assistant/chunk` | each streamed chunk | `{turn, index, text}` | **rewrite** |
 | `assistant/message` | a full message | `{turn, text}` | observe |
 | `tool/call` | a tool is about to run | `{turn, name, args}` | observe |
 | `tools/pre-execute` | right before a tool body | `{turn, name, args}` | **rewrite / veto** |
 | `tool/result` | after a tool returns | `{turn, name, result}` | **rewrite** |
 | `turn/end` | a turn finishes | `{turn, ...}` | observe |
+
+> **名称变更(P3.6)**:流式分片事件现叫 **`assistant/chunk`**(与 dsh 一致)。
+> 旧名 `llm/chunk` **仍被接受**作为别名,老插件无需修改。
 
 ### Hook modes
 

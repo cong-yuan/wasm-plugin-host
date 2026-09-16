@@ -24,5 +24,6 @@ pub use runtime::{AllocationStrategy, CacheStats, Runtime};
 pub use service::{Convergence, Shared};
 pub use state::{LogHook, LogLevel, LogRecord, LogSink};
 pub use supervisor::{render, Event as SupervisorEvent, Supervisor, Watcher};
+pub use config::{CacheConfig, Config, PluginEntry, ValidationIssue, Watch};
 /// Back-compat: the supervisor's event type used to be exported as `Event`.
 pub use supervisor::Event;
