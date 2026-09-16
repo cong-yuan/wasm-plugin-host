@@ -11,4 +11,6 @@ members = [
     "plugins/hello-rust-v2",
     "plugins/plain-rust",
     "plugins/fs-reader",
+    "plugins/ui-llm-panel",
+    "plugins/ui-theme-widget",
 ]

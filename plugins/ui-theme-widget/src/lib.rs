@@ -1,0 +1,62 @@
+//! Demo plugin B: mounts into a slot **another plugin** opened.
+//!
+//! It injects into `ui-llm-panel.config` — a slot that plugin A owns. This is
+//! the cross-plugin case: B builds its UI *inside* A. Loading order does not
+//! matter (B before A leaves the contribution pending until A appears).
+
+#[no_mangle]
+pub extern "C" fn plugin_abi_version() -> i32 { 1 }
+
+#[no_mangle]
+pub extern "C" fn plugin_init() -> i32 {
+    println!("ui-theme-widget: up");
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn plugin_shutdown() {}
+
+#[no_mangle]
+pub extern "C" fn plugin_alloc(n: i32) -> i32 {
+    let mut v = Vec::<u8>::with_capacity(n.max(0) as usize);
+    let p = v.as_mut_ptr() as i32;
+    std::mem::forget(v);
+    p
+}
+
+#[no_mangle]
+pub extern "C" fn plugin_free(_p: i32, _n: i32) {}
+
+#[no_mangle]
+pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
+    let entry_js = r#"
+        studio.register("ThemeWidget", (el) => {
+            el.innerHTML = '<div style="border:1px solid #2a2a2a;border-radius:6px;'
+              + 'padding:8px;font-size:12px;font-family:system-ui">'
+              + '<span style="color:#3ecf8e">ui-theme-widget</span> mounted into a slot '
+              + '<b>owned by ui-llm-panel</b></div>';
+        });
+    "#;
+    let decl = serde_json::json!({
+        "name": "ui-theme-widget",
+        "abi": 1,
+        "tools": [],
+        "ui": {
+            "injects": [
+                { "slot": "ui-llm-panel.config", "priority": 0, "component": "ThemeWidget" }
+            ],
+            "assets": { "entry.js": entry_js }
+        }
+    })
+    .to_string();
+    write_out(out, cap, decl.as_bytes())
+}
+
+#[no_mangle]
+pub extern "C" fn plugin_invoke(_a: i32, _b: i32, _c: i32, _d: i32, _e: i32, _f: i32) -> i64 { -2 }
+
+fn write_out(out: i32, cap: i32, src: &[u8]) -> i64 {
+    if out == 0 || src.len() > cap.max(0) as usize { return -(src.len() as i64); }
+    unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), out as *mut u8, src.len()) };
+    src.len() as i64
+}
