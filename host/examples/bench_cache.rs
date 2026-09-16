@@ -23,13 +23,13 @@
 //!   speedup         :   ~49x
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use wasm_plugin_host::{Registry, Runtime};
 
 /// Load one plugin and return `(elapsed, stats)`.
-fn timed_load(cache: Option<&PathBuf>, wasm: &PathBuf) -> anyhow::Result<(Duration, wasm_plugin_host::CacheStats)> {
+fn timed_load(cache: Option<&Path>, wasm: &Path) -> anyhow::Result<(Duration, wasm_plugin_host::CacheStats)> {
     let rt = match cache {
         Some(dir) => Runtime::new_cached(dir)?,
         None => Runtime::new()?,
@@ -56,8 +56,8 @@ fn main() -> anyhow::Result<()> {
     let _ = std::fs::remove_dir_all(&cache);
 
     let (no_cache, _) = timed_load(None, &wasm)?;
-    let (cold, cold_stats) = timed_load(Some(&cache), &wasm)?;
-    let (warm, warm_stats) = timed_load(Some(&cache), &wasm)?;
+    let (cold, cold_stats) = timed_load(Some(cache.as_path()), &wasm)?;
+    let (warm, warm_stats) = timed_load(Some(cache.as_path()), &wasm)?;
 
     println!("go plugin, load() wall time (release):");
     println!("  no cache         : {:>8.2} ms", ms(no_cache));
