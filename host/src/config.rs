@@ -41,6 +41,14 @@ pub struct Config {
     /// Default `"debug"` (keep everything).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_level: Option<String>,
+    /// Free-form section for the **embedding host**. The plugin runtime ignores
+    /// it entirely; it exists so an embedder (e.g. a GUI) can keep its own
+    /// settings in the same file and round-trip them untouched.
+    ///
+    /// Declared last and defaulted so unknown keys are not a problem: any JSON
+    /// under `"extra"` is preserved verbatim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra: Option<serde_json::Value>,
 }
 
 /// Build-cache settings.
@@ -59,6 +67,7 @@ impl Default for Config {
             watch: Watch::default(),
             cache: None,
             log_level: None,
+            extra: None,
         }
     }
 }

@@ -335,3 +335,28 @@ fn rec(level: LogLevel, message: &str) -> wasm_plugin_host::LogRecord {
         message: message.to_string(),
     }
 }
+
+#[test]
+fn the_extra_section_round_trips_untouched() {
+    // `extra` is the embedder's own space: the plugin runtime must not touch it,
+    // and it must survive a save/load cycle verbatim (a GUI keeps its settings
+    // there, alongside the plugin entries).
+    let dir = tmpdir("extra");
+    let text = r#"{
+      "plugins": {},
+      "extra": { "llm": { "providers": { "deepseek": { "base_url": "http://x" } } } }
+    }"#;
+    let cfg: Config = serde_json::from_str(text).unwrap();
+    assert_eq!(
+        cfg.extra.as_ref().unwrap()["llm"]["providers"]["deepseek"]["base_url"],
+        "http://x"
+    );
+    // Valid, since extra is opaque to validation.
+    assert!(cfg.validate(&dir).is_empty(), "{:?}", cfg.validate(&dir));
+
+    // Round-trip through disk.
+    let path = dir.join("c.json");
+    cfg.save(&path).unwrap();
+    let back = Config::load(&path).unwrap();
+    assert_eq!(back.extra, cfg.extra, "extra must survive a round trip");
+}
