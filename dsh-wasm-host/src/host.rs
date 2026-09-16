@@ -7,7 +7,7 @@
 //! cordis fibers, the tool callbacks, and the flow listeners.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result};
@@ -27,6 +27,9 @@ pub struct HostOptions {
     /// A callback invoked for every guest log line. Wire this to a cordis
     /// logger or a UI channel.
     pub log_hook: Option<LogHook>,
+    /// Enable the on-disk `.cwasm` compile cache at this directory. `None`
+    /// keeps compilation in-process only.
+    pub cache_dir: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for HostOptions {
@@ -64,7 +67,10 @@ impl WasmHost {
 
     /// Build a host with explicit options.
     pub fn with_options(opts: HostOptions) -> Result<Self> {
-        let runtime = Runtime::new().context("building the wasmtime runtime")?;
+        let runtime = match &opts.cache_dir {
+            Some(dir) => Runtime::new_cached(dir).context("building the cached wasmtime runtime")?,
+            None => Runtime::new().context("building the wasmtime runtime")?,
+        };
         let registry = Registry::with_logging(
             runtime,
             opts.log_capacity.unwrap_or(1000),

@@ -125,18 +125,55 @@ impl std::fmt::Debug for WasmService {
     }
 }
 
+/// What a slot fiber's disposer does to the guest registry when the fiber
+/// unloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnDispose {
+    /// Unload the guest, releasing the wasmtime instance (code + linear memory).
+    ///
+    /// The default: for a host where "the fiber is disposed" and "the plugin is
+    /// gone" mean the same thing ([`install`]).
+    Unload,
+    /// Only deactivate the slot in the registry — unregister its tools, hooks
+    /// and services — but keep the guest instance loaded.
+    ///
+    /// For a host that manages the guest lifecycle itself and needs the instance
+    /// to outlive a fiber remount. In particular a hot reload must: dispose the
+    /// fiber (so dsh drops the old tools/services), swap the guest's code, then
+    /// remount — which is impossible if disposing also destroyed the instance.
+    KeepLoaded,
+}
+
 /// One cordis plugin per WASM slot.
 pub struct WasmSlotPlugin {
     slot: String,
     host: WasmHost,
+    on_dispose: OnDispose,
 }
 
 impl WasmSlotPlugin {
+    /// A slot whose fiber disposes by **unloading** the guest.
     pub fn new(slot: impl Into<String>, host: WasmHost) -> Self {
         Self {
             slot: slot.into(),
             host,
+            on_dispose: OnDispose::Unload,
         }
+    }
+
+    /// A slot whose fiber disposes by only **deactivating** in the registry,
+    /// leaving the guest instance loaded for the caller to manage.
+    pub fn keeping_loaded(slot: impl Into<String>, host: WasmHost) -> Self {
+        Self {
+            slot: slot.into(),
+            host,
+            on_dispose: OnDispose::KeepLoaded,
+        }
+    }
+
+    /// What this slot does to the guest when its fiber is disposed.
+    pub fn on_dispose(&self) -> OnDispose {
+        self.on_dispose
     }
 }
 
@@ -167,6 +204,9 @@ impl Plugin for WasmSlotPlugin {
     fn apply(&self, ctx: Context, _config: Value) -> BoxFuture<cordis::Result<()>> {
         let host = self.host.clone();
         let slot = self.slot.clone();
+        // Read `on_dispose` before entering the async block so the future does
+        // not borrow `self`.
+        let on_dispose = self.on_dispose;
         Box::pin(async move {
             let tools = ctx
                 .require::<ToolsService>(TOOLS_SERVICE)
@@ -220,19 +260,31 @@ impl Plugin for WasmSlotPlugin {
                     let slot = slot_for_dispose.clone();
                     let _ = provided_for_dispose; // withdrawn by the fiber's own provide-effects
                     Box::pin(async move {
+                        // Withdraw this slot's tools from the dsh registry. Its
+                        // `provide`d services are withdrawn by the fiber's own
+                        // provide-effects, which unwind alongside this one.
                         for name in registered {
                             tools.unregister_dynamic_tool(&name);
                         }
-                        // Fully unload the slot: this drops the wasmtime instance
-                        // so the guest's code AND linear memory are really
-                        // released. That is the reason this host exists — a
-                        // disposed slot must not leak a live instance.
                         let registry = host.registry();
                         let mut reg = match registry.lock() {
                             Ok(guard) => guard,
                             Err(poisoned) => poisoned.into_inner(),
                         };
-                        let _ = reg.unload(&slot);
+                        match on_dispose {
+                            // Deactivate in the WASM registry but keep the guest
+                            // instance loaded for the caller to manage.
+                            OnDispose::KeepLoaded => {
+                                reg.force_deactivate(&slot);
+                            }
+                            // Fully unload: drops the wasmtime instance so the
+                            // guest's code AND linear memory are really released.
+                            // That is the reason this host exists — a disposed
+                            // slot must not leak a live instance.
+                            OnDispose::Unload => {
+                                let _ = reg.unload(&slot);
+                            }
+                        }
                     })
                 });
                 Ok(Some(disposer))

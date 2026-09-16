@@ -80,8 +80,8 @@ pub mod plugin;
 pub use bridge::{install_flow_bridge, FlowBridgeReport};
 pub use host::{HostOptions, WasmHost, WasmToolInfo};
 pub use plugin::{
-    install, resync_slot_tools, resync_tools, FlowBridgePlugin, LoadSpec, Mounted, WasmService,
-    WasmSlotPlugin,
+    install, resync_slot_tools, resync_tools, FlowBridgePlugin, LoadSpec, Mounted, OnDispose,
+    WasmService, WasmSlotPlugin,
 };
 
 /// Re-export the pieces of the WASM runtime a caller most often needs, so a

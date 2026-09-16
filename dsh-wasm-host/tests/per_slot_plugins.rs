@@ -288,3 +288,44 @@ async fn agent_loop_still_drives_a_per_slot_wasm_tool() {
     });
     assert!(executed, "the per-slot wasm tool must run in the agent loop");
 }
+
+#[tokio::test]
+async fn disposing_a_keeping_loaded_slot_does_not_unload_the_guest() {
+    // Regression: `WasmSlotPlugin::keeping_loaded` must only deactivate in the
+    // registry. If its disposer unloaded the guest, a host that remounts a fiber
+    // (e.g. a hot reload: dispose → swap code → remount) would find the slot
+    // gone. `WasmSlotPlugin::new` keeps the opposite (unloading) behaviour.
+    use dsh_wasm_host::WasmSlotPlugin;
+    use std::sync::Arc;
+
+    let dir = tmpdir("keep-loaded");
+    let wasm = write_wasm(&dir, "alpha", &wasm_provider("alpha", &[]));
+    let ctx = Context::new();
+    boot_dsh(&ctx).await;
+    let host = host();
+    host.load("alpha", &wasm, json!(null)).unwrap();
+
+    let plugin: Arc<dyn cordis::plugin::Plugin> =
+        Arc::new(WasmSlotPlugin::keeping_loaded("alpha", host.clone()));
+    let fiber = ctx.plugin(plugin, None);
+    fiber.join().await.unwrap();
+    assert!(host.is_loaded("alpha"), "loaded before dispose");
+
+    // Disposing must leave the guest instance in the registry.
+    fiber.dispose().await;
+    assert!(
+        host.is_loaded("alpha"),
+        "`keeping_loaded` must NOT unload the guest on dispose"
+    );
+
+    // Contrast: the default plugin *does* unload.
+    let plugin2: Arc<dyn cordis::plugin::Plugin> =
+        Arc::new(WasmSlotPlugin::new("alpha", host.clone()));
+    let fiber2 = ctx.plugin(plugin2, None);
+    fiber2.join().await.unwrap();
+    fiber2.dispose().await;
+    assert!(
+        !host.is_loaded("alpha"),
+        "the default plugin unloads the guest on dispose"
+    );
+}
