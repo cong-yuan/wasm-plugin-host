@@ -34,6 +34,18 @@ pub struct Config {
     pub plugins: BTreeMap<String, PluginEntry>,
     #[serde(default)]
     pub watch: Watch,
+    /// Optional on-disk precompiled-module cache (`.cwasm`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache: Option<CacheConfig>,
+}
+
+/// Build-cache settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheConfig {
+    /// Cache directory (relative paths resolve against the config's dir).
+    pub dir: String,
+    #[serde(default = "yes")]
+    pub enabled: bool,
 }
 
 impl Default for Config {
@@ -41,6 +53,7 @@ impl Default for Config {
         Self {
             plugins: BTreeMap::new(),
             watch: Watch::default(),
+            cache: None,
         }
     }
 }

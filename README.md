@@ -352,6 +352,31 @@ host> tools
 RSS stays flat across 3000 cycles → no leak. Go costs ~20× more per instance
 because each instance bundles the Go runtime.
 
+### Disk compile cache (P2)
+
+`Runtime::new_cached(dir)` caches precompiled `.cwasm` artifacts. A warm cache
+turns a cold compile into a deserialize — Go plugin (10.6 MB module):
+
+| | `load()` wall time |
+|---|---|
+| no cache | 279 ms |
+| cold (compile + write `.cwasm`) | 258 ms |
+| **warm (deserialize)** | **7.3 ms** |
+| **speedup** | **~36×** |
+
+```sh
+cargo run --release -p wasm-plugin-host --example bench_cache
+```
+
+Keyed by wasm **content hash** + engine **fingerprint**, so a rebuilt `.wasm`
+recompiles and a changed engine config invalidates the cache. Artifacts are
+written atomically and a corrupt one is dropped and recompiled. Enable it in
+the config: `"cache": { "dir": ".cwasm-cache", "enabled": true }`.
+
+> **Trust boundary:** deserializing a `.cwasm` is `unsafe` (wasmtime assumes a
+> compatible producer), so the cache directory must be writable **only by the
+> host** — the usual build-cache assumption.
+
 ## Embedding
 
 The logic is a library; the CLI is a thin shell over it:

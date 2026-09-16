@@ -19,3 +19,7 @@
 
 # Go build output (keep the checked-in sample .wasm? no — rebuild it)
 # plugins/hello-go/hello_go.wasm
+
+# Disk compile cache (rebuilt by the runtime)
+/demo/.cwasm-cache/
+*.cwasm

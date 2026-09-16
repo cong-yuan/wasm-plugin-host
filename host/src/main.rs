@@ -6,7 +6,8 @@
 //!   reload <slot>               hot-reload a slot from its wasm (atomic)
 //!   enable <slot> / disable <slot>   adjust desired state, persist to config
 //!   reconcile                   apply config desired state now
-//!   refresh                     clear the compile cache
+//!   refresh                     clear the compile caches (memory + disk)
+//!   cache                       show disk compile-cache stats
 //!   watch [on|off]              toggle the file watcher (hot reload)
 //!   plugins / tools / call <tool> <json>
 //!   config                      show the loaded config
@@ -63,15 +64,42 @@ fn main() -> Result<()> {
         i += 1;
     }
 
-    let runtime = Runtime::new()?;
+    // Load the config (if any) *before* building the runtime, so the runtime
+    // can honour the config's compile-cache settings.
+    let sup = match &config_path {
+        Some(cp) => Some(Supervisor::new(cp)?),
+        None => None,
+    };
+
+    let cache_dir = sup
+        .as_ref()
+        .and_then(|s| s.config.cache.as_ref())
+        .filter(|c| c.enabled)
+        .map(|c| {
+            let p = std::path::Path::new(&c.dir);
+            if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                // Relative dirs resolve against the config file's directory,
+                // matching how plugin paths are resolved.
+                config_path
+                    .as_ref()
+                    .and_then(|cp| cp.parent().map(|d| d.join(p)))
+                    .unwrap_or_else(|| p.to_path_buf())
+            }
+        });
+
+    let runtime = match cache_dir {
+        Some(dir) => Runtime::new_cached(dir)?,
+        None => Runtime::new()?,
+    };
     let mut host = Host {
         reg: Registry::new(runtime),
         sup: None,
         watching: false,
     };
 
-    if let Some(cp) = &config_path {
-        let sup = Supervisor::new(cp)?;
+    if let Some(sup) = sup {
         host.watching = sup.config.watch.enabled;
         host.sup = Some(sup);
     }
@@ -296,7 +324,20 @@ fn run_command(host: &mut Host, parts: &[String]) -> Result<()> {
         }
         "refresh" => {
             reg.runtime().clear_cache();
-            println!("compile cache cleared");
+            let removed = reg.runtime().clear_disk_cache().unwrap_or(0);
+            if removed > 0 {
+                println!("compile cache cleared ({removed} disk artifact(s))");
+            } else {
+                println!("compile cache cleared");
+            }
+        }
+        "cache" => {
+            let s = reg.runtime().cache_stats();
+            println!(
+                "disk cache: {} | hits {} misses {} writes {} errors {}",
+                if reg.runtime().disk_cache_enabled() { "enabled" } else { "disabled" },
+                s.hits, s.misses, s.writes, s.errors
+            );
         }
         "watch" => {
             match parts.get(1).map(|s| s.as_str()) {

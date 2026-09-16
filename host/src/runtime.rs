@@ -33,6 +33,115 @@ use wasmtime::PoolingAllocationConfig;
 
 use crate::state::HostState;
 
+/// Counters for the on-disk compile cache, for observability and tests.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CacheStats {
+    /// Loads served from a `.cwasm` on disk (no compilation).
+    pub hits: u64,
+    /// Loads that had to compile (no usable `.cwasm`).
+    pub misses: u64,
+    /// `.cwasm` artifacts written to disk.
+    pub writes: u64,
+    /// Disk-cache read/deserialize failures that fell back to compiling.
+    pub errors: u64,
+}
+
+/// An on-disk cache of precompiled modules (`.cwasm`), keyed by the wasm
+/// bytes' content hash and the engine configuration's fingerprint.
+///
+/// # Trust boundary
+///
+/// Deserializing a `.cwasm` is `unsafe` in wasmtime: the artifact is trusted
+/// to have been produced by a compatible engine, and a hostile artifact could
+/// cause undefined behaviour. **The cache directory must therefore be one only
+/// the host can write** (the same assumption any build cache makes). Artifacts
+/// are written atomically (temp file + rename) so a crash cannot leave a
+/// half-written file in place.
+struct DiskCache {
+    dir: PathBuf,
+    /// Fingerprint of the engine configuration. Any change (allocation
+    /// strategy, enabled features) yields a different fingerprint, so stale
+    /// artifacts are never deserialized.
+    engine_key: u64,
+    stats: Mutex<CacheStats>,
+}
+
+impl DiskCache {
+    fn new(dir: PathBuf, engine_key: u64) -> Result<Self> {
+        std::fs::create_dir_all(&dir).map_err(|e| {
+            anyhow::anyhow!("creating compile-cache dir {}: {e}", dir.display())
+        })?;
+        Ok(Self {
+            dir,
+            engine_key,
+            stats: Mutex::new(CacheStats::default()),
+        })
+    }
+
+    /// `<dir>/<content>-<engine>.cwasm`
+    fn path_for(&self, content: u64) -> PathBuf {
+        self.dir.join(format!("{content:016x}-{:016x}.cwasm", self.engine_key))
+    }
+
+    fn get(&self, content: u64, engine: &Engine) -> Option<Module> {
+        let path = self.path_for(content);
+        if !path.exists() {
+            return None;
+        }
+        // SAFETY: the file is one we wrote, named by content + engine hash.
+        match unsafe { Module::deserialize_file(engine, &path) } {
+            Ok(module) => {
+                self.stats.lock().unwrap().hits += 1;
+                Some(module)
+            }
+            Err(_) => {
+                // Corrupt or stale artifact: drop it and recompile below.
+                let _ = std::fs::remove_file(&path);
+                self.stats.lock().unwrap().errors += 1;
+                None
+            }
+        }
+    }
+
+    fn put(&self, content: u64, module: &Module) {
+        let bytes = match module.serialize() {
+            Ok(bytes) => bytes,
+            Err(_) => return,
+        };
+        let path = self.path_for(content);
+        // Atomic publish: write a sibling temp file, then rename over the
+        // target. A crash mid-write cannot leave a truncated `.cwasm`.
+        let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+        if std::fs::write(&tmp, &bytes).is_ok() && std::fs::rename(&tmp, &path).is_ok() {
+            self.stats.lock().unwrap().writes += 1;
+        } else {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
+}
+
+/// Stable 64-bit FNV-1a — a dependency-free content fingerprint. Not
+/// cryptographic, but the cache key only needs collision resistance against
+/// accidental collisions, not a hostile adversary.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// Fingerprint the engine configuration: the wasmtime compatibility hash plus
+/// our own allocation strategy (which the compatibility hash does not cover).
+fn engine_fingerprint(engine: &Engine, strategy: &AllocationStrategy) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    engine.precompile_compatibility_hash().hash(&mut hasher);
+    format!("{strategy:?}").hash(&mut hasher);
+    hasher.finish()
+}
+
 /// How the engine allocates instance resources.
 #[derive(Debug, Clone)]
 pub enum AllocationStrategy {
@@ -83,6 +192,8 @@ pub struct Runtime {
     /// In-process module cache keyed by canonical path (+ mtime), so a rebuilt
     /// wasm at the same path is recompiled rather than served stale.
     modules: Mutex<HashMap<PathBuf, (u128, Module)>>,
+    /// Optional on-disk `.cwasm` cache; `None` disables it entirely.
+    disk_cache: Option<DiskCache>,
 }
 
 impl Runtime {
@@ -146,7 +257,39 @@ impl Runtime {
             linker,
             strategy,
             modules: Mutex::new(HashMap::new()),
+            disk_cache: None,
         })
+    }
+
+    /// Build a runtime that also caches precompiled modules on disk.
+    ///
+    /// Cold start with a warm cache is a `deserialize_file` (milliseconds)
+    /// instead of a full compile (tens to hundreds of ms per plugin). The
+    /// directory must be writable by the host and **not** by untrusted code
+    /// (see [`CacheStats`] for the trust note).
+    pub fn with_disk_cache(strategy: AllocationStrategy, cache_dir: impl Into<PathBuf>) -> Result<Self> {
+        let mut rt = Self::with_strategy(strategy)?;
+        let key = engine_fingerprint(&rt.engine, &rt.strategy);
+        rt.disk_cache = Some(DiskCache::new(cache_dir.into(), key)?);
+        Ok(rt)
+    }
+
+    /// The default on-demand strategy plus a disk cache.
+    pub fn new_cached(cache_dir: impl Into<PathBuf>) -> Result<Self> {
+        Self::with_disk_cache(AllocationStrategy::OnDemand, cache_dir)
+    }
+
+    /// Is a disk cache configured?
+    pub fn disk_cache_enabled(&self) -> bool {
+        self.disk_cache.is_some()
+    }
+
+    /// Snapshot of the disk cache counters (all zero when disabled).
+    pub fn cache_stats(&self) -> CacheStats {
+        self.disk_cache
+            .as_ref()
+            .map(|c| *c.stats.lock().unwrap())
+            .unwrap_or_default()
     }
 
     pub fn allocation_strategy(&self) -> &AllocationStrategy {
@@ -167,6 +310,9 @@ impl Runtime {
 
     /// Compile (or fetch from cache) a module. The cache key includes the
     /// file's mtime, so overwriting a `.wasm` (a rebuild) forces recompilation.
+    ///
+    /// When a disk cache is configured, a miss compiles once and writes a
+    /// `.cwasm`; a later *process* then deserializes it instead of recompiling.
     pub fn compile(&self, engine: &Engine, path: &Path) -> Result<Module> {
         let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let mtime = std::fs::metadata(path)
@@ -183,8 +329,29 @@ impl Runtime {
                 }
             }
         }
-        let module = Module::from_file(engine, path)
-            .map_err(|e| anyhow::anyhow!("compiling wasm module {}: {e}", path.display()))?;
+
+        // Read the module bytes once: the content hash keys the disk cache, and
+        // `Module::new` compiles from the same bytes on a miss.
+        let bytes = std::fs::read(path)
+            .map_err(|e| anyhow::anyhow!("reading wasm module {}: {e}", path.display()))?;
+
+        let module = if let Some(disk) = &self.disk_cache {
+            let content = fnv1a(&bytes);
+            match disk.get(content, engine) {
+                Some(module) => module,
+                None => {
+                    let module = Module::new(engine, &bytes)
+                        .map_err(|e| anyhow::anyhow!("compiling wasm module {}: {e}", path.display()))?;
+                    disk.put(content, &module);
+                    disk.stats.lock().unwrap().misses += 1;
+                    module
+                }
+            }
+        } else {
+            Module::new(engine, &bytes)
+                .map_err(|e| anyhow::anyhow!("compiling wasm module {}: {e}", path.display()))?
+        };
+
         self.modules.lock().unwrap().insert(key, (mtime, module.clone()));
         Ok(module)
     }
@@ -192,6 +359,28 @@ impl Runtime {
     /// Drop every cached module. Used by the `refresh` command.
     pub fn clear_cache(&self) {
         self.modules.lock().unwrap().clear();
+    }
+
+    /// Delete every `.cwasm` artifact in the disk cache, if configured.
+    /// Returns the number of files removed. The in-process cache is left
+    /// alone; call [`Runtime::clear_cache`] as well for a full reset.
+    pub fn clear_disk_cache(&self) -> Result<usize> {
+        let Some(disk) = &self.disk_cache else {
+            return Ok(0);
+        };
+        let mut removed = 0;
+        for entry in std::fs::read_dir(&disk.dir)
+            .map_err(|e| anyhow::anyhow!("reading compile-cache dir {}: {e}", disk.dir.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("cwasm")
+                && std::fs::remove_file(&path).is_ok()
+            {
+                removed += 1;
+            }
+        }
+        Ok(removed)
     }
 
     /// Instantiate under the shared linker (WASI + `host.*` imports).

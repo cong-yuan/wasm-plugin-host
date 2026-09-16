@@ -20,7 +20,7 @@ pub use hooks::{Decision, Dispatch, Event as FlowEvent, Hooks};
 pub use pipe::{log_pipes, Channel, LogPipe};
 pub use plugin::{HookDecl, HookMode, Plugin, PluginState, ToolDecl};
 pub use registry::{LoadedReport, Registry, ReloadReport};
-pub use runtime::{AllocationStrategy, Runtime};
+pub use runtime::{AllocationStrategy, CacheStats, Runtime};
 pub use service::{Convergence, Shared};
 pub use state::{LogHook, LogLevel, LogRecord, LogSink};
 pub use supervisor::{render, Event as SupervisorEvent, Supervisor, Watcher};
