@@ -218,6 +218,14 @@ impl WasmHost {
             .logs()
     }
 
+    /// Log records emitted by one slot, oldest first.
+    pub fn logs_for(&self, slot: &str) -> Vec<LogRecord> {
+        self.registry
+            .lock()
+            .expect("registry mutex poisoned")
+            .logs_for(slot)
+    }
+
     /// Load every plugin in a [`wasm_plugin_host::config::Config`], skipping
     /// disabled entries. Returns the loaded slot names.
     pub fn load_config(&self, cfg: &wasm_plugin_host::config::Config) -> Vec<(String, Result<LoadedReport>)> {
