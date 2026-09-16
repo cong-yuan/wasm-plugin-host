@@ -57,6 +57,37 @@ pub fn wasm_tool_with_veto(slot: &str, tool: &str) -> Vec<u8> {
     build(&decl, r#"{"kind":"veto","reason":"blocked by guest"}"#)
 }
 
+/// A **provider** plugin: declares `provides: [services…]` and answers any
+/// service call with a fixed JSON reply. Lets tests check that a WASM slot's
+/// `provides` becomes a real cordis service.
+pub fn wasm_provider(slot: &str, services: &[&str]) -> Vec<u8> {
+    let provides = services
+        .iter()
+        .map(|s| format!("\"{s}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    let decl = format!(
+        r#"{{"name":"{slot}","abi":1,"tools":[],"provides":[{provides}]}}"#
+    );
+    // Any op returns the same payload, tagged with the slot name.
+    let reply = format!(r#"{{"kind":"success","content":"served by {slot}","value":{{"provider":"{slot}"}}}}"#);
+    build(&decl, &reply)
+}
+
+/// An **injector** plugin: declares `injects: [services…]` and no tools. It is
+/// only active once those services exist; gives tests a dependency to gate on.
+pub fn wasm_injector(slot: &str, services: &[&str]) -> Vec<u8> {
+    let injects = services
+        .iter()
+        .map(|s| format!("\"{s}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    let decl = format!(
+        r#"{{"name":"{slot}","abi":1,"tools":[{{"name":"{slot}_tool","description":"injector tool","exec":"go"}}],"injects":[{injects}]}}"#
+    );
+    build(&decl, r#"{"kind":"success","content":"ok","value":{}}"#)
+}
+
 /// Compile the common module skeleton around a declaration + invoke reply.
 fn build(decl: &str, reply: &str) -> Vec<u8> {
     let decl_off = 64usize;

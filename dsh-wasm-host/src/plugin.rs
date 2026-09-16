@@ -1,16 +1,33 @@
-//! A cordis [`Plugin`] that mounts WASM plugins into a dsh harness.
+//! Mount WASM plugins into a dsh harness — **one cordis plugin per slot**.
 //!
-//! The plugin body does three things, all as fiber effects so unloading the
-//! fiber tears everything down in reverse order:
+//! This is the "everything is a plugin" mapping taken seriously: each WASM slot
+//! is mounted as its **own** cordis plugin, so it gets
 //!
-//! 1. registers every tool the loaded WASM plugins declare on dsh's
-//!    `ctx.tools`, as a *dynamic tool* whose `exec` calls back into the guest;
-//! 2. installs the flow bridge (see [`crate::bridge`]);
-//! 3. registers a disposer that unregisters those same tools.
+//! * its own **fiber** (independent lifecycle, its own convergence state),
+//! * its own **`inject`** list — a slot that needs `sessions` stays PENDING
+//!   until that service is live, exactly like a native dsh plugin,
+//! * its own **`provide`** — a slot that provides `memory` publishes a
+//!   [`WasmService`] on the context that other dsh plugins (native or WASM) can
+//!   `ctx.require::<WasmService>("memory")` and call.
 //!
-//! Because it declares `inject: ["tools"]`, the fiber stays PENDING until
-//! dsh's tool registry is live — the same dependency discipline every dsh
-//! plugin follows.
+//! A single separate [`FlowBridgePlugin`] installs the shared flow bridge (the
+//! intervention waterfalls and the `session/event` fan-out); that is a property
+//! of the host as a whole, not of any one slot.
+//!
+//! ## How a slot'`inject` list becomes a cordis dependency
+//!
+//! A WASM slot declares `injects: ["sessions"]`. Two things then have to agree
+//! that `sessions` is available:
+//!
+//! 1. **cordis** — the slot's fiber declares `Injection::new("sessions")`, so it
+//!    is gated on a service of that name existing on the context.
+//! 2. **the WASM registry** — the registry's own convergence must not *also*
+//!    quiesce the slot. Services provided by dsh are registered with the
+//!    registry as **external** ([`crate::host::WasmHost::declare_dsh_service`]),
+//!    so the registry accepts them as satisfied.
+//!
+//! cordis is the authoritative gate; the registry's [`force_activate`] mirrors
+//! cordis's decision rather than re-deriving it.
 
 use std::sync::Arc;
 
@@ -49,63 +66,173 @@ impl LoadSpec {
     }
 }
 
-/// The cordis plugin that bridges a [`WasmHost`] into a dsh context.
-pub struct WasmHostPlugin {
+/// The value a WASM slot publishes for each service it `provides`.
+///
+/// dsh plugins obtain it with `ctx.require::<WasmService>("<name>")` and call it
+/// with [`WasmService::call`]; the call crosses into the guest as
+/// JSON-over-linear-memory and comes back as JSON, so the guest can be written
+/// in any WASI language.
+#[derive(Clone)]
+pub struct WasmService {
+    /// The service name as declared by the slot's `provides`.
+    pub name: String,
+    /// The slot that provides it.
+    pub slot: String,
     host: WasmHost,
 }
 
-impl WasmHostPlugin {
-    pub fn new(host: WasmHost) -> Self {
-        Self { host }
+impl WasmService {
+    pub fn new(name: impl Into<String>, slot: impl Into<String>, host: WasmHost) -> Self {
+        Self {
+            name: name.into(),
+            slot: slot.into(),
+            host,
+        }
     }
 
-    /// The host this plugin drives.
-    pub fn host(&self) -> &WasmHost {
-        &self.host
+    /// Call `op` on the providing slot with JSON `args`; returns its JSON reply.
+    ///
+    /// Runs on the blocking pool (wasmtime calls are synchronous), so callers may
+    /// `.await` it from an async dsh plugin without stalling the runtime.
+    pub async fn call(&self, op: &str, args: Value) -> anyhow::Result<Value> {
+        let host = self.host.clone();
+        let service = self.name.clone();
+        let op = op.to_string();
+        tokio::task::spawn_blocking(move || {
+            let registry = host.registry();
+            let reg = match registry.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            reg.call_service(&service, &op, &args)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("wasm service task failed: {e}"))?
+    }
+
+    /// Is the providing slot still loaded?
+    pub fn is_live(&self) -> bool {
+        self.host.is_loaded(&self.slot)
     }
 }
 
-impl std::fmt::Debug for WasmHostPlugin {
+impl std::fmt::Debug for WasmService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WasmHostPlugin")
-            .field("host", &self.host)
+        f.debug_struct("WasmService")
+            .field("name", &self.name)
+            .field("slot", &self.slot)
             .finish()
     }
 }
 
-impl Plugin for WasmHostPlugin {
+/// One cordis plugin per WASM slot.
+pub struct WasmSlotPlugin {
+    slot: String,
+    host: WasmHost,
+}
+
+impl WasmSlotPlugin {
+    pub fn new(slot: impl Into<String>, host: WasmHost) -> Self {
+        Self {
+            slot: slot.into(),
+            host,
+        }
+    }
+}
+
+impl std::fmt::Debug for WasmSlotPlugin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WasmSlotPlugin")
+            .field("slot", &self.slot)
+            .finish()
+    }
+}
+
+impl Plugin for WasmSlotPlugin {
     fn name(&self) -> std::borrow::Cow<'static, str> {
-        std::borrow::Cow::Borrowed("wasm-plugin-host")
+        std::borrow::Cow::Owned(format!("wasm:{}", self.slot))
     }
 
     fn inject(&self) -> Vec<Injection> {
-        // The tool registry must exist before we can register into it.
-        vec![Injection::new(TOOLS_SERVICE)]
+        // Always need the tool registry to register into; plus whatever the
+        // guest declared, mapped one-to-one onto cordis service names.
+        let mut deps = vec![Injection::new(TOOLS_SERVICE)];
+        let (injects, _) = self.host.deps_of(&self.slot);
+        for svc in injects {
+            deps.push(Injection::new(svc));
+        }
+        deps
     }
 
     fn apply(&self, ctx: Context, _config: Value) -> BoxFuture<cordis::Result<()>> {
         let host = self.host.clone();
+        let slot = self.slot.clone();
         Box::pin(async move {
             let tools = ctx
                 .require::<ToolsService>(TOOLS_SERVICE)
                 .map_err(|e| cordis::Error::msg(format!("tools service missing: {e}")))?;
 
-            // 1. Register every declared tool as a dsh dynamic tool.
-            let registered = register_all_tools(&tools, &host);
+            // cordis has already proven this slot's dependencies are met, so
+            // mirror that decision into the WASM registry (which owns the actual
+            // guest instances, tools map and hooks table).
+            {
+                let registry = host.registry();
+                let mut reg = match registry.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                reg.force_activate(&slot);
+            }
 
-            // 2. Install the flow bridge (waterfalls + observe fan-out).
-            bridge::install_flow_bridge(&ctx, &host)
-                .await
-                .map_err(|e| cordis::Error::msg(format!("flow bridge: {e}")))?;
+            // Register this slot's tools on dsh's tool registry.
+            let mine: Vec<WasmToolInfo> = host
+                .list_tools()
+                .into_iter()
+                .filter(|t| t.slot == slot)
+                .collect();
+            let mut registered = Vec::new();
+            for info in &mine {
+                register_one(&tools, &host, info);
+                registered.push(info.name.clone());
+            }
 
-            // 3. Unregister those tools when the fiber unloads.
+            // Publish each service the slot `provides`, so native dsh plugins
+            // (and other slots) can inject it.
+            let (_, provides) = host.deps_of(&slot);
+            let mut provided = Vec::new();
+            for svc in provides {
+                let handle = WasmService::new(svc.clone(), slot.clone(), host.clone());
+                ctx.provide(svc.as_str(), handle).await.map_err(|e| {
+                    cordis::Error::msg(format!("slot `{slot}` could not provide `{svc}`: {e}"))
+                })?;
+                provided.push(svc);
+            }
+
+            // Unwind everything on unload, in reverse.
             let tools_for_dispose = tools.clone();
-            ctx.effect("wasm plugin tools", async move {
+            let host_for_dispose = host.clone();
+            let slot_for_dispose = slot.clone();
+            let provided_for_dispose = provided.clone();
+            ctx.effect(format!("wasm slot {slot}"), async move {
                 let disposer: cordis::Disposer = Box::new(move || {
+                    let tools = tools_for_dispose.clone();
+                    let host = host_for_dispose.clone();
+                    let slot = slot_for_dispose.clone();
+                    let _ = provided_for_dispose; // withdrawn by the fiber's own provide-effects
                     Box::pin(async move {
                         for name in registered {
-                            tools_for_dispose.unregister_dynamic_tool(&name);
+                            tools.unregister_dynamic_tool(&name);
                         }
+                        // Fully unload the slot: this drops the wasmtime instance
+                        // so the guest's code AND linear memory are really
+                        // released. That is the reason this host exists — a
+                        // disposed slot must not leak a live instance.
+                        let registry = host.registry();
+                        let mut reg = match registry.lock() {
+                            Ok(guard) => guard,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        let _ = reg.unload(&slot);
                     })
                 });
                 Ok(Some(disposer))
@@ -114,11 +241,12 @@ impl Plugin for WasmHostPlugin {
 
             ctx.logger().log_event(
                 cordis::LogLevel::Info,
-                "wasm-plugin-host".to_string(),
+                "wasm-plugin".to_string(),
                 None,
                 format!(
-                    "{} wasm plugin(s) bridged",
-                    host.list_plugins().len()
+                    "slot `{slot}` active ({} tool(s), {} service(s))",
+                    mine.len(),
+                    provided.len()
                 ),
             );
             Ok(())
@@ -126,21 +254,197 @@ impl Plugin for WasmHostPlugin {
     }
 }
 
-/// Register every tool the host currently exposes; returns their names.
-fn register_all_tools(tools: &ToolsService, host: &WasmHost) -> Vec<String> {
-    let mut names = Vec::new();
-    for info in host.list_tools() {
-        register_one(tools, host, &info);
-        names.push(info.name);
+/// The single host-wide plugin that installs the flow bridge.
+pub struct FlowBridgePlugin {
+    host: WasmHost,
+}
+
+impl FlowBridgePlugin {
+    pub fn new(host: WasmHost) -> Self {
+        Self { host }
     }
-    names
+}
+
+impl std::fmt::Debug for FlowBridgePlugin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FlowBridgePlugin").finish()
+    }
+}
+
+impl Plugin for FlowBridgePlugin {
+    fn name(&self) -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("wasm-flow-bridge")
+    }
+
+    fn inject(&self) -> Vec<Injection> {
+        // The bridge registers listeners on the event bus and dispatches into
+        // the registry; it needs no dsh service, but gating on `tools` keeps it
+        // from activating before the harness is up (matching the old behaviour).
+        vec![Injection::new(TOOLS_SERVICE)]
+    }
+
+    fn apply(&self, ctx: Context, _config: Value) -> BoxFuture<cordis::Result<()>> {
+        let host = self.host.clone();
+        Box::pin(async move {
+            bridge::install_flow_bridge(&ctx, &host)
+                .await
+                .map_err(|e| cordis::Error::msg(format!("flow bridge: {e}")))?;
+            Ok(())
+        })
+    }
+}
+
+/// What [`install`] mounted: the per-slot fibers (so a caller can reload or
+/// dispose one slot) and the shared bridge fiber.
+pub struct Mounted {
+    pub host: WasmHost,
+    /// slot -> its fiber handle.
+    pub slots: Vec<(String, FiberHandle)>,
+    pub bridge: FiberHandle,
+}
+
+impl Mounted {
+    /// The fiber for one slot, if it was mounted.
+    pub fn slot_fiber(&self, slot: &str) -> Option<&FiberHandle> {
+        self.slots
+            .iter()
+            .find(|(s, _)| s == slot)
+            .map(|(_, f)| f)
+    }
+
+    /// Unmount everything: unload each slot then tear down the bridge.
+    pub async fn dispose(&self) {
+        for (_, fiber) in &self.slots {
+            fiber.dispose().await;
+        }
+        self.bridge.dispose().await;
+    }
+}
+
+impl std::fmt::Debug for Mounted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Mounted")
+            .field("slots", &self.slots.iter().map(|(s, _)| s).collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+/// Load `specs` into `host`, then mount **one cordis plugin per slot** plus the
+/// shared flow bridge.
+pub async fn install(
+    ctx: &Context,
+    host: WasmHost,
+    specs: Vec<LoadSpec>,
+) -> anyhow::Result<Mounted> {
+    // Load all guests first so each slot plugin can read its declaration.
+    for spec in &specs {
+        host.load(&spec.slot, &spec.path, spec.config.clone())
+            .map_err(|e| anyhow::anyhow!("loading `{}` for slot `{}`: {e}", spec.path, spec.slot))?;
+    }
+
+    // Mount the bridge once.
+    let bridge_plugin: Arc<dyn Plugin> = Arc::new(FlowBridgePlugin::new(host.clone()));
+    let bridge = ctx.plugin(bridge_plugin, None);
+    bridge
+        .join()
+        .await
+        .map_err(|e| anyhow::anyhow!("flow bridge fiber failed to converge: {e}"))?;
+
+    // Mount one plugin per slot, in load order.
+    let mut slots = Vec::new();
+    for spec in &specs {
+        let plugin: Arc<dyn Plugin> =
+            Arc::new(WasmSlotPlugin::new(spec.slot.clone(), host.clone()));
+        let fiber = ctx.plugin(plugin, None);
+        // A slot whose injects are unmet stays PENDING — that is correct dsh
+        // behaviour, not an error. We only surface a *failed* startup.
+        if let Err(e) = fiber.join().await {
+            return Err(anyhow::anyhow!(
+                "slot `{}` fiber failed to start: {e}",
+                spec.slot
+            ));
+        }
+        slots.push((spec.slot.clone(), fiber));
+    }
+
+    Ok(Mounted {
+        host,
+        slots,
+        bridge,
+    })
+}
+
+/// Re-synchronise dsh's tool registry with a slot's current tool set (after a
+/// hot reload changed the slot's declared tools). Returns `(added, removed)`.
+pub fn resync_slot_tools(
+    tools: &ToolsService,
+    host: &WasmHost,
+    slot: &str,
+    tracked: &mut Vec<String>,
+) -> (Vec<String>, Vec<String>) {
+    let current: Vec<WasmToolInfo> = host
+        .list_tools()
+        .into_iter()
+        .filter(|t| t.slot == slot)
+        .collect();
+    let current_names: Vec<String> = current.iter().map(|t| t.name.clone()).collect();
+
+    let removed: Vec<String> = tracked
+        .iter()
+        .filter(|n| !current_names.contains(n))
+        .cloned()
+        .collect();
+    for name in &removed {
+        tools.unregister_dynamic_tool(name);
+    }
+
+    let added: Vec<String> = current_names
+        .iter()
+        .filter(|n| !tracked.contains(n))
+        .cloned()
+        .collect();
+    for info in &current {
+        if added.contains(&info.name) {
+            register_one(tools, host, info);
+        }
+    }
+
+    *tracked = current_names;
+    (added, removed)
+}
+
+/// Back-compat shim for the previous all-slots-in-one helper.
+pub fn resync_tools(
+    tools: &ToolsService,
+    host: &WasmHost,
+    tracked: &mut Vec<String>,
+) -> (Vec<String>, Vec<String>) {
+    let current = host.list_tools();
+    let current_names: Vec<String> = current.iter().map(|t| t.name.clone()).collect();
+
+    let removed: Vec<String> = tracked
+        .iter()
+        .filter(|n| !current_names.contains(n))
+        .cloned()
+        .collect();
+    for name in &removed {
+        tools.unregister_dynamic_tool(name);
+    }
+    let added: Vec<String> = current_names
+        .iter()
+        .filter(|n| !tracked.contains(n))
+        .cloned()
+        .collect();
+    for info in &current {
+        if added.contains(&info.name) {
+            register_one(tools, host, info);
+        }
+    }
+    *tracked = current_names;
+    (added, removed)
 }
 
 /// Register a single WASM tool as a dsh dynamic tool.
-///
-/// The `exec` closure runs the guest call on the blocking pool (wasmtime calls
-/// are synchronous) and maps the guest's reply onto a
-/// [`ToolExecutionResult`].
 fn register_one(tools: &ToolsService, host: &WasmHost, info: &WasmToolInfo) {
     let host = host.clone();
     let tool_name = info.name.clone();
@@ -155,9 +459,7 @@ fn register_one(tools: &ToolsService, host: &WasmHost, info: &WasmToolInfo) {
                 let args = arguments.clone();
                 match tokio::task::spawn_blocking(move || host.call_tool(&tool_name, &args)).await {
                     Ok(Ok(reply)) => guest_reply_to_result(reply),
-                    Ok(Err(e)) => {
-                        ToolExecutionResult::error("WASM_CALL", e.to_string())
-                    }
+                    Ok(Err(e)) => ToolExecutionResult::error("WASM_CALL", e.to_string()),
                     Err(join) => ToolExecutionResult::error(
                         "WASM_JOIN",
                         format!("wasm tool task failed: {join}"),
@@ -201,61 +503,6 @@ fn guest_reply_to_result(reply: Value) -> ToolExecutionResult {
             format!("guest returned an unrecognised reply: {reply}"),
         ),
     }
-}
-
-/// Load `specs` into `host`, then mount the host into `ctx` as a plugin.
-///
-/// Returns the fiber handle, which the caller joins (or disposes) as usual.
-/// Plugins are loaded *before* the fiber starts so the tool registration in
-/// `apply` sees them.
-pub async fn install(
-    ctx: &Context,
-    host: WasmHost,
-    specs: Vec<LoadSpec>,
-) -> anyhow::Result<FiberHandle> {
-    for spec in &specs {
-        host.load(&spec.slot, &spec.path, spec.config.clone())
-            .map_err(|e| anyhow::anyhow!("loading `{}` for slot `{}`: {e}", spec.path, spec.slot))?;
-    }
-    let plugin: Arc<dyn Plugin> = Arc::new(WasmHostPlugin::new(host));
-    let fiber = ctx.plugin(plugin, None);
-    fiber
-        .join()
-        .await
-        .map_err(|e| anyhow::anyhow!("wasm host fiber failed to converge: {e}"))?;
-    Ok(fiber)
-}
-
-/// Re-synchronise dsh's tool registry with the host's current tool set.
-///
-/// Call this after a hot [`WasmHost::reload`] so newly-declared tools appear
-/// and removed ones disappear. Returns `(added, removed)`.
-pub fn resync_tools(tools: &ToolsService, host: &WasmHost, tracked: &mut Vec<String>) -> (Vec<String>, Vec<String>) {
-    let current: Vec<WasmToolInfo> = host.list_tools();
-    let current_names: Vec<String> = current.iter().map(|t| t.name.clone()).collect();
-
-    let removed: Vec<String> = tracked
-        .iter()
-        .filter(|n| !current_names.contains(n))
-        .cloned()
-        .collect();
-    for name in &removed {
-        tools.unregister_dynamic_tool(name);
-    }
-
-    let added: Vec<String> = current_names
-        .iter()
-        .filter(|n| !tracked.contains(n))
-        .cloned()
-        .collect();
-    for info in &current {
-        if added.contains(&info.name) {
-            register_one(tools, host, info);
-        }
-    }
-
-    *tracked = current_names;
-    (added, removed)
 }
 
 #[cfg(test)]
@@ -319,7 +566,7 @@ mod tests {
             ToolExecutionResult::Success { content, .. } => {
                 let text: String = content.iter().filter_map(|b| b.as_text()).collect();
                 assert_eq!(text, "ok");
-                let _ = ContentBlock::text(""); // exercise the re-export
+                let _ = ContentBlock::text("");
             }
             other => panic!("expected success, got {other:?}"),
         }

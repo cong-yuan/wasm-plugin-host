@@ -21,7 +21,7 @@
 //! A) fails with a clear "busy" error rather than deadlocking or aliasing.
 
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::plugin::Plugin;
@@ -32,6 +32,13 @@ pub struct Shared {
     slots: Mutex<HashMap<String, Plugin>>,
     /// service name -> slot that provides it. Only **active** plugins appear.
     providers: Mutex<HashMap<String, String>>,
+    /// Service names provided *outside* the WASM plugin graph — i.e. by the
+    /// embedding host (a dsh service, a native extension). A WASM plugin that
+    /// injects one of these is considered satisfied, so its own convergence
+    /// agrees with the embedding framework's. These are never callable through
+    /// `host.call_service` (they are not JSON-over-linear-memory guests);
+    /// `has_service` reports them, `call_service` returns a clear error.
+    external: Mutex<HashSet<String>>,
 }
 
 impl Default for Shared {
@@ -45,7 +52,35 @@ impl Shared {
         Self {
             slots: Mutex::new(HashMap::new()),
             providers: Mutex::new(HashMap::new()),
+            external: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// Declare that `service` is provided by the embedding host. Satisfies any
+    /// WASM plugin's `injects` that names it.
+    pub fn add_external_provider(&self, service: &str) {
+        self.external.lock().unwrap().insert(service.to_string());
+    }
+
+    /// Revoke an external service (e.g. its providing dsh plugin unloaded).
+    /// WASM plugins that injected it will deactivate on the next convergence.
+    pub fn remove_external_provider(&self, service: &str) {
+        self.external.lock().unwrap().remove(service);
+    }
+
+    /// Is `service` a host-provided (non-WASM) service?
+    pub fn is_external(&self, service: &str) -> bool {
+        self.external.lock().unwrap().contains(service)
+    }
+
+    /// Every service name visible to WASM plugins: those provided by active
+    /// WASM slots plus the embedding host's.
+    pub fn all_services(&self) -> Vec<String> {
+        let mut names: HashSet<String> = self.providers.lock().unwrap().keys().cloned().collect();
+        names.extend(self.external.lock().unwrap().iter().cloned());
+        let mut v: Vec<String> = names.into_iter().collect();
+        v.sort();
+        v
     }
 
     /// Insert a plugin under `slot`.
@@ -120,9 +155,16 @@ impl Shared {
         op: &str,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value> {
-        let slot = self
-            .provider(service)
-            .ok_or_else(|| anyhow::anyhow!("no provider for service `{service}`"))?;
+        let slot = self.provider(service).ok_or_else(|| {
+            if self.is_external(service) {
+                anyhow::anyhow!(
+                    "service `{service}` is provided by the embedding host, not a WASM plugin; \
+                     it cannot be called via `host.call_service`"
+                )
+            } else {
+                anyhow::anyhow!("no provider for service `{service}`")
+            }
+        })?;
         self.with_plugin(&slot, |p| p.invoke_raw(op, args))
     }
 

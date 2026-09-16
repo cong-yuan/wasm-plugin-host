@@ -169,6 +169,70 @@ impl Registry {
         self.meta.get(slot).map(|m| m.active).unwrap_or(false)
     }
 
+    /// The declaration of a loaded slot: the tools it exposes, the hooks it
+    /// subscribes to, and the services it injects/provides.
+    ///
+    /// Read from the live instance, so it reflects the *current* build. Returns
+    /// `None` if the slot is not loaded.
+    pub fn decl_of(&self, slot: &str) -> Option<crate::plugin::PluginDecl> {
+        self.shared.with_plugin(slot, |p| Ok(p.decl.clone())).ok()
+    }
+
+    /// The service names a slot injects / provides (empty if not loaded).
+    /// Unlike [`Registry::decl_of`] this never touches the guest instance.
+    pub fn deps_of(&self, slot: &str) -> (Vec<String>, Vec<String>) {
+        self.meta
+            .get(slot)
+            .map(|m| (m.injects.clone(), m.provides.clone()))
+            .unwrap_or_default()
+    }
+
+    /// Call `op` on whichever slot provides `service` — the same mechanism as
+    /// the guest's `host.call_service`, exposed to host-side callers (used to
+    /// back a dsh service a wasm plugin offers).
+    pub fn call_service(
+        &self,
+        service: &str,
+        op: &str,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.shared.call_service(service, op, args)
+    }
+
+    /// Declare a service as provided by the embedding host (e.g. a dsh service),
+    /// so WASM plugins that inject it can activate.
+    pub fn add_external_service(&self, service: &str) {
+        self.shared.add_external_provider(service);
+    }
+
+    /// Revoke a host-provided service and re-converge (dependents deactivate).
+    pub fn remove_external_service(&mut self, service: &str) -> crate::service::Convergence {
+        self.shared.remove_external_provider(service);
+        self.converge()
+    }
+
+    /// Every service visible to WASM plugins (WASM-provided + host-provided).
+    pub fn services(&self) -> Vec<String> {
+        self.shared.all_services()
+    }
+
+    /// Activate a slot **without** consulting its `injects`.
+    ///
+    /// Used when an outer framework already proved the slot's dependencies are
+    /// met — in `dsh-wasm-host`, cordis gates activation (its `inject` list
+    /// spans both dsh services and other slots' `provides`), and the WASM
+    /// registry must simply reflect that decision. Registers the slot's tools,
+    /// hooks, and provided services. Returns `false` if already active.
+    pub fn force_activate(&mut self, slot: &str) -> bool {
+        self.activate(slot)
+    }
+
+    /// Deactivate a slot unconditionally, unwinding its tools/hooks/services.
+    /// Returns the tool names removed.
+    pub fn force_deactivate(&mut self, slot: &str) -> Vec<String> {
+        self.deactivate(slot)
+    }
+
     /// Load a plugin into `slot`.
     pub fn load(
         &mut self,
@@ -666,10 +730,13 @@ impl Registry {
         conv
     }
 
-    /// Is `service` available to `slot`? It is if any active slot provides it, or
-    /// if `slot` itself provides it.
+    /// Is `service` available to `slot`? It is if any active slot provides it,
+    /// if the embedding host declares it external, or if `slot` itself provides it.
     fn service_available(&self, slot: &str, service: &str) -> bool {
         if self.meta.get(slot).map(|m| m.provides.iter().any(|s| s == service)).unwrap_or(false) {
+            return true;
+        }
+        if self.shared.is_external(service) {
             return true;
         }
         self.shared

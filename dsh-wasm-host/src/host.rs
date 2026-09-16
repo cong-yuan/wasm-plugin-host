@@ -164,6 +164,44 @@ impl WasmHost {
             .is_loaded(slot)
     }
 
+    /// The `(injects, provides)` a loaded slot declared. Empty if not loaded.
+    pub fn deps_of(&self, slot: &str) -> (Vec<String>, Vec<String>) {
+        let reg = match self.registry.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        reg.deps_of(slot)
+    }
+
+    /// Declare that a service is provided by the **embedding host** (a dsh
+    /// service), so WASM plugins that inject it can activate. The host is
+    /// responsible for calling this for each dsh service it exposes.
+    pub fn declare_dsh_service(&self, service: &str) {
+        let reg = match self.registry.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        reg.add_external_service(service);
+    }
+
+    /// Revoke a host-declared service (its dsh provider went away).
+    pub fn revoke_dsh_service(&self, service: &str) {
+        let mut reg = match self.registry.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let _ = reg.remove_external_service(service);
+    }
+
+    /// Every service visible to WASM plugins (its own + host-declared).
+    pub fn services(&self) -> Vec<String> {
+        let reg = match self.registry.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        reg.services()
+    }
+
     /// Validate a `.wasm` without swapping anything: `(plugin_name, tools)`.
     pub fn validate(&self, path: impl AsRef<Path>) -> Result<(String, Vec<String>)> {
         self.registry

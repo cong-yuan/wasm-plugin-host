@@ -35,6 +35,11 @@
 //!   session/event (emit) ── observe ──►  Registry::dispatch (observe hooks)
 //! ```
 //!
+//! * **One slot = one cordis plugin**: each WASM slot is mounted as its own
+//!   plugin, so it has its own [`cordis::FiberHandle`], its own `inject` gate,
+//!   and its own `provide`d services ([`WasmService`]). A slot whose `injects`
+//!   are unmet stays PENDING; a slot that `provides` a service publishes it on
+//!   the context for any other plugin (native or WASM) to `require`.
 //! * **Tools**: each tool a WASM plugin declares is registered on dsh's
 //!   `ctx.tools` as a dynamic tool, so the agent loop can call it exactly like
 //!   a built-in. Execution hands off to the WASM guest through
@@ -56,11 +61,14 @@
 //! dsh_rs::bundle::install_base_default(&ctx).await.unwrap();
 //!
 //! let host = WasmHost::new()?;
-//! install(
+//! let mounted = install(
 //!     &ctx,
 //!     host,
 //!     vec![LoadSpec::new("greet", "plugins/greet.wasm")],
 //! ).await?;
+//!
+//! // Each slot is mounted as its own cordis plugin with its own fiber:
+//! let greet_fiber = mounted.slot_fiber("greet").unwrap();
 //! # Ok(())
 //! # }
 //! ```
@@ -71,7 +79,10 @@ pub mod plugin;
 
 pub use bridge::{install_flow_bridge, FlowBridgeReport};
 pub use host::{HostOptions, WasmHost, WasmToolInfo};
-pub use plugin::{install, LoadSpec, WasmHostPlugin};
+pub use plugin::{
+    install, resync_slot_tools, resync_tools, FlowBridgePlugin, LoadSpec, Mounted, WasmService,
+    WasmSlotPlugin,
+};
 
 /// Re-export the pieces of the WASM runtime a caller most often needs, so a
 /// host can depend on `dsh-wasm-host` alone.
