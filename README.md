@@ -401,6 +401,33 @@ let out = reg.call_many_parallel(&[
 ]);   // Vec<Result<Value>>, same order
 ```
 
+## Composing with a dsh agent harness
+
+The [`dsh-wasm-host`](dsh-wasm-host) crate mounts this runtime inside a real
+[`dsh-rs`](https://crates.io/crates/dsh-rs) (cordis) harness: a `.wasm`
+plugin's tools are registered on dsh's `ctx.tools` and driven by dsh's **own
+agent loop**, and its hooks are bridged to dsh's flow waterfalls.
+
+dsh already ships a dynamic-plugin host — but it is `dlopen`/cdylib based: a
+mapped library is **never unmapped**, and a crash can take the host down. This
+crate is the WASM analogue, keeping what `dlopen` cannot give you: a plugin's
+code and linear memory are **really released** on unload, and a broken rebuild
+is **rejected before** it can replace a running plugin.
+
+```sh
+cargo build --release -p hello-rust --target wasm32-wasip1
+cargo run -p dsh-wasm-host --example compose
+```
+
+```
+tools on ctx.tools: ["bash", "echo_num", "greet", ...]
+wasm tool result: Hello, wasm! (now_ms=...)
+[hello] info: greet called for `wasm`
+```
+
+See [`dsh-wasm-host/README.md`](dsh-wasm-host/README.md) for the bridge
+mapping (which guest decision maps to which dsh point) and the known limits.
+
 ## Watching (notify, not polling)
 
 `Supervisor::watcher()` uses the [`notify`](https://docs.rs/notify) crate to

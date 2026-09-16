@@ -1,0 +1,29 @@
+[package]
+name = "dsh-wasm-host"
+version = "0.1.0"
+edition = "2021"
+description = "Run wasm-plugin-host WASM plugins inside a dsh-rs (cordis) agent harness."
+license = "MIT"
+
+[lib]
+name = "dsh_wasm_host"
+path = "src/lib.rs"
+
+[dependencies]
+wasm-plugin-host = { path = "../host" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"] }
+
+# Alias to `cordis` so our types are written exactly like dsh-rs writes them.
+cordis = { package = "cordis-rust", version = "0.2.1" }
+dsh-rs = { version = "0.2.0", default-features = false }
+
+[features]
+default = []
+# Pull the OpenAI-compatible provider (reqwest/rustls) transitively from dsh-rs.
+openai = ["dsh-rs/openai"]
+
+[dev-dependencies]
+wat = "1"
