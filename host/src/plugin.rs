@@ -61,6 +61,59 @@ pub struct PluginDecl {
     /// Service names this plugin *provides* to others (dsh `ctx.provide`).
     #[serde(default)]
     pub provides: Vec<String>,
+    /// Frontend UI contributions. Optional — a backend-only plugin omits it.
+    #[serde(default)]
+    pub ui: Option<UiDecl>,
+}
+
+/// A plugin's frontend contribution.
+///
+/// The **`slots`** pair mirrors `provides`/`injects`, but for the frontend's
+/// layout: a plugin may open its own named slot for others to fill
+/// (`provides`), and/or declare that its UI wants to appear inside a slot
+/// someone else supplies (`injects`). Resolution is order-independent and
+/// reactive: a contribution whose slot does not exist yet is *pending*, and a
+/// slot that disappears hides its contributors until it returns.
+///
+/// The **assets** are opaque strings — the frontend decides how to run them.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UiDecl {
+    /// Slots this plugin **opens** for others to contribute into.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provides: Vec<SlotDecl>,
+    /// Slots this plugin's UI wants to be **rendered inside**.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub injects: Vec<SlotInject>,
+    /// `{ "entry.js": "<source>", "style.css": "<source>" }`. The frontend
+    /// executes `entry.js`; the plugin registers its components from there.
+    /// Kept as strings so the ABI stays language- and scheme-agnostic.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub assets: std::collections::BTreeMap<String, String>,
+}
+
+/// A slot a plugin opens for others.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlotDecl {
+    /// Globally unique slot name, e.g. `llm-ui.config`. Namespacing by plugin
+    /// is convention, not enforcement.
+    pub name: String,
+    /// Human-readable purpose, shown in the UI's slot inspector.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// A declaration that this plugin's UI belongs inside another slot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlotInject {
+    /// The slot to render into (may be opened by another plugin).
+    pub slot: String,
+    /// Lower renders first. Lets a plugin order itself among contributors.
+    #[serde(default)]
+    pub priority: i32,
+    /// A key into `assets` naming which registered component to mount. The
+    /// frontend's `register()` call maps names to components.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
 }
 
 /// How a hook participates when the flow reaches its event.
@@ -212,6 +265,7 @@ impl Plugin {
                 hooks: vec![],
                 injects: vec![],
                 provides: vec![],
+                ui: None,
             },
             logs: log,
             store,

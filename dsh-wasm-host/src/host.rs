@@ -170,6 +170,25 @@ impl WasmHost {
             .is_loaded(slot)
     }
 
+    /// The **frontend UI declaration** a slot made, if any. `None` for a
+    /// backend-only plugin (or an unloaded slot).
+    pub fn ui_decl(&self, slot: &str) -> Option<wasm_plugin_host::UiDecl> {
+        let reg = match self.registry.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        reg.decl_of(slot).and_then(|d| d.ui)
+    }
+
+    /// Every loaded slot's UI declaration: `(slot, decl)`, in slot order.
+    /// Slots without a UI declaration are omitted.
+    pub fn ui_decls(&self) -> Vec<(String, wasm_plugin_host::UiDecl)> {
+        self.list_plugins()
+            .into_iter()
+            .filter_map(|(slot, ..)| self.ui_decl(&slot).map(|ui| (slot, ui)))
+            .collect()
+    }
+
     /// The `(injects, provides)` a loaded slot declared. Empty if not loaded.
     pub fn deps_of(&self, slot: &str) -> (Vec<String>, Vec<String>) {
         let reg = match self.registry.lock() {

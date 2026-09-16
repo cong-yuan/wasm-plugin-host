@@ -18,7 +18,9 @@ pub mod supervisor;
 pub use flow::{run_turn, Model, ScriptedModel, TurnOutcome};
 pub use hooks::{Decision, Dispatch, Event as FlowEvent, Hooks};
 pub use pipe::{log_pipes, Channel, LogPipe};
-pub use plugin::{HookDecl, HookMode, Plugin, PluginState, ToolDecl};
+pub use plugin::{
+    HookDecl, HookMode, Plugin, PluginDecl, PluginState, SlotDecl, SlotInject, ToolDecl, UiDecl,
+};
 pub use registry::{LoadedReport, Registry, ReloadReport};
 pub use runtime::{AllocationStrategy, CacheStats, Runtime};
 pub use service::{Convergence, Shared};
