@@ -260,6 +260,11 @@ impl Runtime {
         linker.func_wrap("host", "call_service", host_call_service)?;
         // Is a service currently provided? Lets a plugin check before calling.
         linker.func_wrap("host", "has_service", host_has_service)?;
+        // Network capability. WASI p1's `sock_*` are unimplemented stubs in
+        // wasmtime (they return NOTSOCK), so a guest cannot open sockets itself;
+        // this import is the *only* way a plugin reaches the network. The host
+        // performs the request and hands back status/headers/body as JSON.
+        linker.func_wrap("host", "http_fetch", host_http_fetch)?;
 
         Ok(Self {
             engine,
@@ -474,6 +479,130 @@ fn host_get_config(
 /// `host.has_service(name_ptr, name_len) -> i32` — 1 if a provider is registered
 /// for that service, 0 otherwise. Lets a plugin check before calling, so an
 /// optional dependency does not have to be a hard `inject`.
+/// `host.http_fetch(req_ptr, req_len, out_ptr, out_cap) -> i64`
+///
+/// The request is a JSON object:
+/// ```json
+/// { "url": "https://…", "method": "POST",
+///   "headers": { "authorization": "Bearer …" },
+///   "body": "…" }
+/// ```
+/// `method` defaults to `GET` and `body` is optional. The reply is JSON:
+/// ```json
+/// { "status": 200, "headers": { "content-type": "…" }, "body": "…" }
+/// ```
+/// or `{ "error": "…" }` if the request could not be made at all. A non-2xx
+/// status is **not** an error — the guest sees the status and decides.
+///
+/// This is a deliberate capability decision: plugins are trusted, so they get
+/// unrestricted network access. It runs **blocking** on the guest's thread,
+/// because wasmtime host functions are synchronous.
+fn host_http_fetch(
+    mut caller: wasmtime::Caller<'_, HostState>,
+    req_ptr: i32,
+    req_len: i32,
+    out_ptr: i32,
+    out_cap: i32,
+) -> wasmtime::Result<i64> {
+    // Read the request JSON out of guest memory.
+    let req_json = {
+        let mem = caller
+            .get_export("memory")
+            .and_then(|e| e.into_memory())
+            .ok_or_else(|| wasmtime::Error::msg("`host.http_fetch` needs a `memory` export"))?;
+        let mut buf = vec![0u8; req_len.max(0) as usize];
+        mem.read(&caller, req_ptr as usize, &mut buf)?;
+        String::from_utf8_lossy(&buf).into_owned()
+    };
+
+    let reply = http_fetch_json(&req_json);
+    let bytes = serde_json::to_vec(&reply)
+        .map_err(|e| wasmtime::Error::msg(format!("serializing http reply: {e}")))?;
+
+    if out_ptr == 0 || bytes.len() > out_cap.max(0) as usize {
+        return Ok(-(bytes.len() as i64));
+    }
+    let mem = caller
+        .get_export("memory")
+        .and_then(|e| e.into_memory())
+        .ok_or_else(|| wasmtime::Error::msg("`host.http_fetch` needs a `memory` export"))?;
+    mem.write(&mut caller, out_ptr as usize, &bytes)?;
+    Ok(bytes.len() as i64)
+}
+
+/// Perform the HTTP request described by `req_json`; never panics, always
+/// returns a JSON value the guest can inspect.
+///
+/// Built on ureq 3's *generic* `http::Request` path rather than the typed
+/// `ureq::get/post/...` builders: those return different typestates
+/// (`RequestBuilder<WithoutBody>` vs `<WithBody>`), which cannot share a
+/// `match`. The `http::Request` form is method-agnostic.
+fn http_fetch_json(req_json: &str) -> serde_json::Value {
+    use serde_json::json;
+    use ureq::http;
+
+    let req: serde_json::Value = match serde_json::from_str(req_json) {
+        Ok(v) => v,
+        Err(e) => return json!({ "error": format!("bad request JSON: {e}") }),
+    };
+    let Some(url) = req.get("url").and_then(|u| u.as_str()) else {
+        return json!({ "error": "request is missing `url`" });
+    };
+    let method = req
+        .get("method")
+        .and_then(|m| m.as_str())
+        .unwrap_or("GET")
+        .to_ascii_uppercase();
+    let body = req.get("body").and_then(|b| b.as_str()).map(str::to_string);
+
+    let mut builder = http::Request::builder()
+        .method(method.as_str())
+        .uri(url);
+    if let Some(headers) = req.get("headers").and_then(|h| h.as_object()) {
+        for (k, v) in headers {
+            if let Some(v) = v.as_str() {
+                builder = builder.header(k.as_str(), v);
+            }
+        }
+    }
+
+    // Both arms must produce the *same* type. Sending a `String` body works for
+    // every method (an empty string for GET/HEAD), so there is one path.
+    use ureq::RequestExt as _;
+    let run = match builder.body(body.unwrap_or_default()) {
+        Ok(r) => r.with_default_agent().run(),
+        Err(e) => return json!({ "error": format!("building request: {e}") }),
+    };
+
+    match run {
+        Ok(resp) => {
+            type Resp = ureq::http::Response<ureq::Body>;
+            let resp: Resp = resp;
+            let (parts, mut body) = resp.into_parts();
+            let status = parts.status.as_u16();
+            let headers: serde_json::Map<String, serde_json::Value> = parts
+                .headers
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.as_str().to_string(),
+                        serde_json::Value::String(v.to_str().unwrap_or("").to_string()),
+                    )
+                })
+                .collect();
+            // Cap the body so a huge download cannot blow guest memory.
+            const MAX_BODY: u64 = 8 * 1024 * 1024;
+            let text = body
+                .with_config()
+                .limit(MAX_BODY)
+                .read_to_string()
+                .unwrap_or_default();
+            json!({ "status": status, "headers": headers, "body": text })
+        }
+        Err(e) => json!({ "error": e.to_string() }),
+    }
+}
+
 fn host_has_service(
     mut caller: wasmtime::Caller<'_, HostState>,
     name_ptr: i32,

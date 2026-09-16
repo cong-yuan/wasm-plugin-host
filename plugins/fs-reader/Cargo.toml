@@ -1,0 +1,12 @@
+[package]
+name = "fs-reader"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+# No dependencies: this plugin only uses `std`, which is the point — a trusted
+# plugin can read the host filesystem through ordinary `std::fs`.
+[dependencies]
+serde_json = "1"

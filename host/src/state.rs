@@ -249,10 +249,24 @@ impl HostState {
         // `print()` all land here with no per-language glue.
         let (out_pipe, err_pipe) =
             crate::pipe::log_pipes(log.clone(), &slot, &plugin_name);
-        let ctx = WasiCtxBuilder::new()
-            .stdout(out_pipe)
-            .stderr(err_pipe)
-            .build_p1();
+        // Capability model: plugins are **trusted**, so they get full filesystem
+        // access — the whole host root is preopened read/write. This is a
+        // deliberate product decision (see docs/已知问题.md); it means a plugin
+        // can read and write any file the app can. Narrow this to a sandbox
+        // directory when untrusted plugins must be supported.
+        let mut builder = WasiCtxBuilder::new();
+        builder.stdout(out_pipe).stderr(err_pipe);
+        if let Err(e) = builder.preopened_dir(
+            "/",
+            "/",
+            wasmtime_wasi::DirPerms::all(),
+            wasmtime_wasi::FilePerms::all(),
+        ) {
+            // Never fatal: a host that cannot preopen (e.g. an unusual root)
+            // still runs, just without filesystem access.
+            eprintln!("[host] could not preopen `/` for plugin `{plugin_name}`: {e}");
+        }
+        let ctx = builder.build_p1();
         Self {
             wasi: ctx,
             log,

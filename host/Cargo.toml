@@ -15,6 +15,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["io-util"] }
 notify = "8"
+# Blocking HTTP for `host.http_fetch` — the guest-facing network capability.
+# Blocking (not async) because wasmtime host functions are sync `func_wrap`s.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [[bin]]
 name = "plugin-host"

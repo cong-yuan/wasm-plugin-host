@@ -10,4 +10,5 @@ members = [
     "plugins/hello-rust",
     "plugins/hello-rust-v2",
     "plugins/plain-rust",
+    "plugins/fs-reader",
 ]

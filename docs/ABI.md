@@ -33,6 +33,9 @@ Module **`host`**:
 | `now_ms` | `() -> i64` | Unix epoch milliseconds |
 | `get_config` | `(out: i32, cap: i32) -> i64` | Write the current config as UTF-8 JSON into guest memory. Returns bytes written, `-(needed)` if `cap` too small, or `0` if the config is JSON `null` |
 | `config_version` | `() -> i64` | Monotonic counter, bumped on every config change. Compare to a cached value to cheaply detect updates |
+| `call_service` | `(svc, svc_len, op, op_len, args, args_len, out, cap) -> i64` | 调用另一个插件提供的服务(见下文) |
+| `has_service` | `(name, name_len) -> i32` | 某服务当前是否可用 |
+| `http_fetch` | `(req, req_len, out, cap) -> i64` | **联网的唯一方式**:宿主代发一个 HTTP 请求(见文末) |
 
 ## Logging
 
@@ -311,3 +314,25 @@ unload — the host removes them from the registry automatically.
   Rust emit *components*, not core modules. The host speaks WIT instead of raw
   JSON-over-memory. The **lifecycle and registry layers are identical** — only
   the `PluginRuntime` backend differs. See `host/src/plugin.rs::Runtime`.
+
+
+## Host imports (补充)
+
+除 `log` / `now_ms` / `get_config` / `config_version` / `call_service` / `has_service` 外:
+
+### `host.http_fetch(req_ptr, req_len, out_ptr, out_cap) -> i64`
+
+发起一个 HTTP 请求。WASI p1 的 `sock_*` 在 wasmtime 里未实现,所以**这是插件唯一的联网方式**。
+
+请求 JSON:
+```json
+{ "url": "https://...", "method": "POST",
+  "headers": { "authorization": "Bearer ..." }, "body": "..." }
+```
+
+返回 JSON:
+```json
+{ "status": 200, "headers": { "content-type": "..." }, "body": "..." }
+```
+或 `{ "error": "..." }`(请求根本无法发出时)。**非 2xx 不是错误** —— 插件自己看 status 决定。
+body 上限 8 MiB。
