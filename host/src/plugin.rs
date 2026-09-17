@@ -66,31 +66,18 @@ pub struct PluginDecl {
     pub ui: Option<UiDecl>,
 }
 
-/// A plugin's frontend contribution.
-///
-/// The **`slots`** pair mirrors `provides`/`injects`, but for the frontend's
-/// layout: a plugin may open its own named slot for others to fill
-/// (`provides`), and/or declare that its UI wants to appear inside a slot
-/// someone else supplies (`injects`). Resolution is order-independent and
-/// reactive: a contribution whose slot does not exist yet is *pending*, and a
-/// slot that disappears hides its contributors until it returns.
-///
-/// The **assets** are opaque strings — the frontend decides how to run them.
-///
-/// The **adjusts** let a later-loaded plugin reshape UI another plugin already
-/// contributes — see [`UiAdjust`].
-
 /// One plugin's *adjustment* to UI that other plugins already contribute.
 ///
-/// This is the capability dsh-web does not have: a plugin loaded **later** can
-/// reshape existing UI without touching the contributing plugin's code. The
-/// frontend applies these at **resolution** time (when a slot's mount list is
-/// computed), never by mutating another plugin's DOM — so adjustments compose,
-/// stay reversible, and follow the same order-independence rules as claims.
+/// This is the capability this host has and dsh-web does not: a plugin loaded
+/// **later** can reshape existing UI without touching the contributing plugin's
+/// code. The frontend applies these at **resolution** time (when a slot's mount
+/// list is computed), never by mutating another plugin's DOM — so adjustments
+/// compose, stay reversible, and follow the same order-independence rules as
+/// claims.
 ///
 /// `slot` is a glob: `settings.tabs` matches that slot; `*` matches every slot.
-/// A glob may also match the contributing plugin's owner id, so an adjustment
-/// can target "everything plugin `noisy` contributes anywhere".
+/// `from` is a glob over the contributing plugin's id, so an adjustment can
+/// target "everything plugin `noisy` contributes anywhere".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiAdjust {
     /// Which contributions this applies to. Supports a trailing `*` wildcard.
@@ -135,6 +122,19 @@ pub enum AdjustAction {
     Priority,
 }
 
+/// A plugin's frontend contribution.
+///
+/// The **slots** pair mirrors `provides`/`injects`, but for the frontend's
+/// layout: a plugin may open its own named slot for others to fill
+/// (`provides`), and/or declare that its UI wants to appear inside a slot
+/// someone else supplies (`injects`). Resolution is order-independent and
+/// reactive: a contribution whose slot does not exist yet is *pending*, and a
+/// slot that disappears hides its contributors until it returns.
+///
+/// The **assets** are opaque strings — the frontend decides how to run them.
+///
+/// The **adjusts** let a later-loaded plugin reshape UI another plugin already
+/// contributes — see [`UiAdjust`].
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UiDecl {
     /// Slots this plugin **opens** for others to contribute into.
