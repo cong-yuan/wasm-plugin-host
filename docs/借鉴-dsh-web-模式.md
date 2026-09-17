@@ -266,12 +266,65 @@ disposer 移除容器/根/属性。**一个打开的面板一个 React 根，对
 我们目前是 Tauri 命令直接改 `studio.json`。
 "唯一写入者 + 冲突 diff + 环路校验"这套，在我们开放更多管理能力时值得参考。
 
+## 8.5 语义属性契约（唯一能“改造别人 UI”的机制）
+
+`packages/skins/skin-center/contracts/semantic-attrs-v1.md` 是他们仓库里
+**最容易被忽略但最重要的一份文档**。它定义了一组稳定的 DOM 契约属性，
+让样式层能键在语义上而不是官方 hash 类名上。
+
+三组：
+
+| 组 | 例 | 谁输出 |
+|---|---|---|
+| `data-dsh-surface` | `sidebar`, `conversation`, `composer`, `details`, `overlay` | shell |
+| `data-dsh-part` | `column`, `sprite`, `entry` | 各自插件 |
+| `data-dsh-plugin` | `task-board`, `ssh`, `pet`, `usage` …（**15 个**） | 各自插件 |
+
+选择器写法：`[data-dsh-plugin="ssh"] [data-dsh-part="terminal"]`。
+
+### 纪律（这几条比技术本身值钱）
+
+1. **每个枚举值必须有明确 owner、版本、含义与锚定方式**——
+   "不能只堆字符串——防止语义层退化成另一套隐式 DOM API"。
+2. **契约归属单一持有者**：这组属性由皮肤中心**单方面拥有和维护**，
+   并明文写着一句话：
+
+   > 冲突仲裁纪律：**不靠加载顺序**。
+
+3. **两种产出通道**：compat adapter（合并 MutationObserver，给未 opt-in 的补打属性）
+   与组件主动输出（更准更快）。**不输出语义属性的插件只享受 L1 token 基础覆盖**
+   ——即"可得性是分层的"，不是一个开关。
+4. **part 用裸值，归属交给 `data-dsh-plugin`**（`column` 而非 `task-board-column`）。
+5. **不复用官方 `data-plugin`**：官方用它标 style 标签归属，语义不同。
+
+### 它解决了什么真实问题
+
+他们的已知脆弱点清单写得很直白（这就是他们推动上游改的诉求列表）：
+
+1. AppFrame 三列容器本体只有 hash 类，列级钩子缺失；
+2. 侧栏导航行无官方 slot，插件靠 DOM 注入；
+3. 设置模态只有 `role="dialog"`（与其他对话框撞车）；
+4. list slot 的单 entry **无 DOM 归属标识**——`[data-dsh-plugin]` 是对它的补偿。
+
+**对我们的启示**：
+
+- 第 4 条尤其值得注意：**它的存在是因为 slot 渲染不把 entry id 透传到 DOM**，
+  于是插件无法用 CSS 定位自己或别人的条目。我们的 `PluginHost.mount()`
+  **已经**写了 `wrapper.dataset.plugin` / `dataset.slot` / `dataset.renderedBy`
+  ——**我们白得这个能力**（`e2e-check.mjs` 甚至在断言 `dataset.renderedBy`）。
+- 但我们的 `data-*` 是**为了测试**，没当成**公开契约**。若要支持"插件用 CSS 微调别人"，
+  应该像他们一样把这几个属性**文档化、版本化、声明归属**，
+  而不是当成内部实现细节——否则插件会键上去，而我们会无意中改它。
+- **"不靠加载顺序"这条纪律直接指出我们 §3.6 的缺陷**：
+  我们的调整冲突靠加载顺序静默解决，而他们的契约层明确拒绝这个做法。
+
 ## 9. 该抄什么（按性价比排序）
 
 | 优先级 | 项 | 成本 | 收益 |
 |---|---|---|---|
 | **高** | **双源加载防重**（`globalThis` 标志 + `release`） | 小 | 消除真实的重复注册 bug |
 | **高** | **翻译完整性类型**（`Record<keyof typeof zh, string>`） | 极小 | 编译期保证不漏翻译 |
+| **高** | **`data-*` 当公开契约**（我们已在写，但未文档化） | 小 | 插件可稳定用 CSS 定位；避免无意改动破坏插件 |
 | **高** | **disposer 带 label** | 小 | 日志可读，能定位泄漏 |
 | 中 | **core 共享层**（插件内宿主/前端共用逻辑） | 中 | 消灭两侧重复实现 |
 | 中 | **批量挂载容错**（一处失败不中断其余） | 小 | 健壮性 |

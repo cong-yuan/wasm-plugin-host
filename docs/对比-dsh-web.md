@@ -11,7 +11,8 @@ dsh-web 把插件挂到**真实的 DSH 宿主**上，我们是**自建宿主 + W
 两者都坚持"不改 DSH 源码"，但一个寄生、一个替换。
 
 **我们有一个他们没有的能力**：后加载的插件可以**改造**已有 UI（隐藏 / 重排 / 替换）。
-这一条是下面第 3 节的重点，也是唯一被证实为"生态里没有"的能力。
+这一条是下面第 3 节的重点。**注意：他们有一个 CSS 层的渲染抑制（移动端隐藏其他插件），
+但没有注册表层的调整**——两者的确切区别见第 3 节。
 
 ## 1. 路线对照
 
@@ -39,13 +40,19 @@ dsh-web 的 `packages/AGENTS.md`：
 我们的是"插件经 ABI 声明能力，宿主解析"。**目的相同：让插件与宿主解耦。**
 区别在于我们连宿主本身都换掉了，所以解耦点从 npm 依赖变成了 WASM 导入表。
 
-## 3. 关键差异：改造既有 UI（本项目独有）
+## 3. 关键差异：改造既有 UI
 
-### dsh-web 没有这个能力——已确证
+### 结论：能力存在，但机制与作用面都不同
 
-调研对 `dsh-web` 做了穷举：**9068 个路径全部枚举**，并逐个读了 **21 个包的客户端入口**（`packages/*/src/client/index.ts`、`skins/skin-center`、`scripts/plugin-template`）以及全部 `shared/client/*`。
+> **更正记录**。本节第一版写的是"没有任何插件隐藏另一个插件的 UI"，**这个结论下得太满，是错的**。
+> 后续复查找到了 `dsh-remote-web-ui` 的实例（见下）。保留这段更正记录，是因为"下满结论"这个错误本身值得记下来。
 
-结论：**没有任何插件隐藏、重排、替换或包裹另一个插件的 contribution。**
+分两层说，因为答案是**分层的**：
+
+**① 槽位注册层面：确实没有跨插件手术。**
+调研对 `dsh-web` 做了穷举：**9068 个路径全部枚举**，并逐个读了 **21 个包的客户端入口**
+（`packages/*/src/client/index.ts`、`skins/skin-center`、`scripts/plugin-template`）以及全部 `shared/client/*`。
+**没有任何插件在注册表层面隐藏、重排、替换或包裹另一个插件的 contribution。**
 
 它的槽位 API 只有三个动词，没有第四个：
 
@@ -62,9 +69,50 @@ export interface PluginCardSlots {
 > external plugins cannot declare slots
 > （`shared/client/panel-mount-core.ts` 文件头）
 
-协作是**加法式**的：`inject` → `register` → 自己的 disposer。跨插件协作走 cordis 服务或 slot，**不触碰别人的条目**。
+协作是**加法式**的：`inject` → `register` → 自己的 disposer。跨插件协作走 cordis 服务或 slot，**不触碰别人的注册条目**。
 
-### 两处"最接近改造"的地方，但仍不是
+**② DOM/CSS 层面：存在，而且很直接。**
+
+`packages/dsh-remote-web-ui/src/client/mobile-adapt.ts` **隐藏了另外六个插件的 UI**：
+
+```ts
+// Mobile scope: hide the plugin surfaces that do not fit a phone …
+// The list keys on the L2 semantic roots (data-dsh-plugin, ownership stays
+// with the declaring plugin), so official class churn cannot resurrect them.
+// These are render suppressions: the client bundles still load.
+`body.${ACTIVE_CLASS} [class$="_detailsCol"]{display:none !important}`,
+`body.${ACTIVE_CLASS} [data-dsh-plugin="ssh"],`,
+`body.${ACTIVE_CLASS} [data-dsh-plugin="skill-explorer"],`,
+`body.${ACTIVE_CLASS} [data-dsh-plugin="task-board"],`,
+`body.${ACTIVE_CLASS} [data-dsh-plugin="git-graph"],`,
+`body.${ACTIVE_CLASS} [data-dsh-plugin="pet"],`,
+`body.${ACTIVE_CLASS} [data-dsh-plugin="usage"]{display:none !important}`,
+```
+
+（注意连官方的详情列也一并隐藏，以及 `[class$="_workbench"]` 那段——它还隐藏了指定 portal 里的官方工作台。）
+
+它的契约文档是 [`packages/skins/skin-center/contracts/semantic-attrs-v1.md`](https://github.com/zhu1090093659/dsh-web/blob/dev/packages/skins/skin-center/contracts/semantic-attrs-v1.md)，
+枚举了 15 个 `data-dsh-plugin` 值，每个都注明 **owner、版本、含义与锚定方式**，
+并明文写着纪律：**"冲突仲裁纪律：不靠加载顺序"**。
+
+### 机制对比：他们的做法与我们的不同在哪
+
+| | `dsh-remote-web-ui` | 本项目 |
+|---|---|---|
+| 机制 | **CSS `display:none !important`** | **注册表解析期折叠** |
+| 目标识别 | **硬编码 6 个插件名** | **glob**（`from: "noisy-*"`） |
+| 新插件能否被识别 | 不能——名字必须进白名单 | 能——`*` 或 `from: "x-*"` 覆盖未来的插件 |
+| 依赖插件配合 | **是**——插件必须自愿输出 `data-dsh-plugin` | 否——注册表本就知晓每个贡献 |
+| 能做什么 | **只能隐藏** | hide **+ 重排 + 替换** |
+| 作用域 | 仅竖屏窄视口（`ACTIVE_CLASS`） | 任意插件、任意上下文 |
+| 可逆性 | 移除 CSS 类 | `release(owner)` 同时丢弃调整 |
+
+**所以准确的表述是**：他们有一个**渲染抑制**能力（CSS + 语义属性白名单），
+用于移动端降级；我们有一个**注册表级调整**能力（glob 匹配 + 四种动作 + 可逆）。
+**两者都是"后加载的插件改造既有 UI"，但我们的覆盖面、可组合性与扩展性都更宽**——
+尤其是"重排"和"替换"他们没有,以及他们的白名单意味着**新插件默认不受控**。
+
+### 两处"最接近改造"的地方，但仍不是注册表级
 
 1. **唯一真正的包裹发生在单个插件包裹宿主服务时**，不是包裹同类插件的条目。
    `packages/dsh-git-graph/src/client/auto-isolation.ts` 影子化了共享单例 `workspaces.startSession`：
@@ -77,11 +125,12 @@ export interface PluginCardSlots {
    不是注册表仲裁的同类变更。两个插件同时这么做会**互相抢占，无人仲裁**——
    正是我们的 `SlotRegistry` 用冲突报错解决的那种情况。
 
-2. **DOM 注入核是加法式的，不是改写。**
+2. **DOM 注入核是加法式的，不是改写注册表。**
    `panel-mount-core.ts` 在中央列**追加**一个容器并切换 `<html data-*>`；
    `sidebar-entry-core.ts` **插入**一行并用 MutationObserver 自愈。
    排序只发生在**家族兄弟之间**（`position: 'before' | 'after'` + `familySelectors`），
-   **任何插件都无法重排或隐藏非家族条目**。
+   即**协作约定**,而非一个插件改另一个插件的条目。
+   （唯一的例外是上面 ② 的 CSS 抑制，那是渲染层而非注册表层。）
 
    顺便：这个文件头承认了他们被迫的妥协——
 
@@ -198,9 +247,13 @@ export function claimTaskboardApply(): boolean {
 **架构分歧是真实的，不是同一件事的两种写法。**
 dsh-web 在既有宿主上做加法生态；我们在自建宿主上做可编排的插件系统。
 
-**唯一被证实为本项目独有的能力**是第 3 节的 UI 改造层。
-这不是自夸——是穷举了对方 9068 个路径、21 个客户端入口后的**阴性结论**，
-而这个阴性结论恰恰说明该能力在同类生态里确实缺失。
+**我们的 UI 改造层在注册表层面领先**：他们有 DOM/CSS 层的渲染抑制（6 个硬编码插件名，
+仅移动端，仅隐藏），我们有 glob 匹配的四种动作（隐藏/重排/替换/恢复）、
+任意作用域、可逆、且新插件自动被覆盖。
+
+**但第一版结论下得太满，已更正**（见第 3 节开头的更正记录）：
+"改造既有 UI"这件事**不是不存在的**，只是他们做在渲染层、我们做在注册表层。
+这个区别是真实的，但"独有"这个词用得不准确。
 
 **最值得学的不是架构，是工程纪律**：失败隔离的明确立场、防重加载、文档归属、i18n 与产物的 CI 门禁。
 这些与路线选择无关，任何规模的项目都受用。
