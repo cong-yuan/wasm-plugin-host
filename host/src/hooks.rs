@@ -331,3 +331,121 @@ impl Hooks {
         }
     }
 }
+
+#[cfg(test)]
+mod failopen_tests {
+    use super::*;
+    use crate::plugin::{HookDecl, HookMode};
+
+    /// Build a `Hooks` with one waterfall subscription for `slot`.
+    fn one(slot: &str, event: Event, mode: HookMode) -> Hooks {
+        let mut h = Hooks::new();
+        h.add_slot(
+            slot,
+            slot,
+            &[HookDecl {
+                on: event.as_str().to_string(),
+                exec: "check".to_string(),
+                mode,
+                priority: 0,
+            }],
+        )
+        .expect("subscription registers");
+        h
+    }
+
+    fn two_waterfalls(a: &str, b: &str, event: Event) -> Hooks {
+        let mut h = Hooks::new();
+        // The declaration does not depend on the slot, only the subscription
+        // does, so this takes no argument.
+        let decl = || HookDecl {
+            on: event.as_str().to_string(),
+            exec: "check".to_string(),
+            mode: HookMode::Waterfall,
+            priority: 0,
+        };
+        h.add_slot(a, a, &[decl()]).unwrap();
+        h.add_slot(b, b, &[decl()]).unwrap();
+        h
+    }
+
+    /// A hook that **errors** must be skipped, the flow must continue, and the
+    /// failure must be recorded. Six documents claim this; nothing tested it.
+    #[test]
+    fn an_erroring_hook_is_skipped_and_recorded() {
+        let hooks = two_waterfalls("bad", "good", Event::ToolCall);
+        let d = hooks.dispatch(Event::ToolCall, serde_json::json!({"a": 1}), |sub, _p| {
+            if sub.slot == "bad" {
+                anyhow::bail!("guest exploded");
+            }
+            Ok(serde_json::json!({"kind": "continue"}))
+        });
+
+        assert_eq!(d.errored, vec!["bad".to_string()], "the failure is recorded");
+        assert!(d.vetoed_by.is_none(), "an error is not a veto");
+        assert_eq!(d.ran, 2, "the failing hook's peer still ran");
+    }
+
+    /// A hook returning **unparseable junk** must be treated as `continue`:
+    /// the payload is unchanged and nothing is reported as an error.
+    #[test]
+    fn a_junk_reply_is_treated_as_continue() {
+        let hooks = one("junk", Event::ToolCall, HookMode::Waterfall);
+        let original = serde_json::json!({"a": 1});
+        let d = hooks.dispatch(Event::ToolCall, original.clone(), |_s, _p| {
+            Ok(serde_json::json!("not a decision at all"))
+        });
+        assert_eq!(d.value, original, "junk must not change the payload");
+        assert!(d.vetoed_by.is_none());
+        assert!(d.errored.is_empty(), "junk is ignored, not an error");
+    }
+
+    /// An **observe** hook's reply is ignored entirely — even a `veto`.
+    #[test]
+    fn an_observe_hook_cannot_veto_or_rewrite() {
+        let hooks = one("watcher", Event::ToolCall, HookMode::Observe);
+        let original = serde_json::json!({"a": 1});
+        let d = hooks.dispatch(Event::ToolCall, original.clone(), |_s, _p| {
+            Ok(serde_json::json!({"kind": "veto", "reason": "nope"}))
+        });
+        assert!(d.vetoed_by.is_none(), "observe cannot stop the flow");
+        assert_eq!(d.value, original, "observe cannot rewrite either");
+    }
+
+    /// A veto stops the chain: subscribers after it do not run.
+    #[test]
+    fn a_veto_stops_the_chain() {
+        let hooks = two_waterfalls("first", "second", Event::ToolCall);
+        let d = hooks.dispatch(Event::ToolCall, serde_json::json!({}), |sub, _p| {
+            Ok(if sub.slot == "first" {
+                serde_json::json!({"kind": "veto", "reason": "stop"})
+            } else {
+                serde_json::json!({"kind": "continue"})
+            })
+        });
+        assert_eq!(d.vetoed_by.as_deref(), Some("first"));
+        assert_eq!(d.ran, 1, "the chain stopped at the veto");
+    }
+
+    /// A `rewrite` replaces the payload and the **next** hook sees the new
+    /// value — the waterfall contract.
+    #[test]
+    fn a_rewrite_is_seen_by_the_next_hook() {
+        let hooks = two_waterfalls("first", "second", Event::ToolCall);
+        let seen = std::cell::RefCell::new(None);
+        let d = hooks.dispatch(Event::ToolCall, serde_json::json!({"n": 1}), |sub, payload| {
+            if sub.slot == "first" {
+                Ok(serde_json::json!({"kind": "rewrite", "value": {"n": 2}}))
+            } else {
+                *seen.borrow_mut() = Some(payload.get("value").cloned());
+                Ok(serde_json::json!({"kind": "continue"}))
+            }
+        });
+        assert_eq!(d.value, serde_json::json!({"n": 2}));
+        assert_eq!(
+            seen.into_inner(),
+            Some(Some(serde_json::json!({"n": 2}))),
+            "the second hook received the rewritten value"
+        );
+    }
+}
