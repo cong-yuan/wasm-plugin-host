@@ -68,8 +68,18 @@ pub async fn install_waterfalls(ctx: &Context, host: &WasmHost) -> Result<FlowBr
     register_pre_execute(ctx, host.clone()).await?;
     register_pre_step(ctx, host.clone()).await?;
     register_request(ctx, host.clone()).await?;
+    register_llm_stream(ctx, host.clone()).await?;
+    register_tool_execute(ctx, host.clone()).await?;
+    register_tool_post_execute(ctx, host.clone()).await?;
     Ok(FlowBridgeReport {
-        waterfalls: vec!["tools/pre-execute", "agent/pre-step", "agent/request"],
+        waterfalls: vec![
+            "tools/pre-execute",
+            "tools/execute",
+            "tools/post-execute",
+            "agent/pre-step",
+            "agent/request",
+            "llm/stream",
+        ],
         observe: Vec::new(),
     })
 }
@@ -186,6 +196,177 @@ async fn register_request(ctx: &Context, host: WasmHost) -> Result<()> {
     .await
     .map_err(err("agent/request"))?;
     Ok(())
+}
+
+/// `llm/stream` — the assembled model request, immediately before it is sent.
+///
+/// **The deepest point in the bridge.** dsh's fallback here is where the
+/// provider call actually happens, and it *parses its own input payload* as
+/// `GenerateOptions` — so returning a rewritten payload genuinely changes what
+/// the model receives (`system`, `messages`, `temperature`, `stop`, …).
+///
+/// A guest `veto` skips the chain **including that fallback** (see cordis's
+/// `Next`: a listener that never calls `run` vetoes the rest). dsh then reports
+/// the resulting empty stream as a failure. That is the mechanism by which a
+/// plugin substitutes its own LLM backend — powerful, and deliberately
+/// **visible**: the rewrite is logged so "the model saw something else" is
+/// never silent.
+async fn register_llm_stream(ctx: &Context, host: WasmHost) -> Result<()> {
+    ctx.on(
+        "llm/stream",
+        move |_ctx: Context, payload: Value, next: Next| {
+            let host = host.clone();
+            Box::pin(async move {
+                let dispatch = run_guest(&host, FlowEvent::LlmRequest, &payload);
+                if dispatch.vetoed_by.is_some() {
+                    // Never call `next`: the provider call does not happen.
+                    // dsh turns the missing `stream_id` into an LlmError, so we
+                    // do not fabricate a stream here — failing loudly is honest.
+                    return Ok(json!({
+                        "error": {
+                            "code": "WASM_VETO",
+                            "message": veto_reason(&dispatch),
+                        }
+                    }));
+                }
+                match rewritten_payload(&dispatch, &payload) {
+                    Some(value) => {
+                        if let Err(e) = check_llm_rewrite(&value) {
+                            eprintln!(
+                                "[wasm-plugin] llm/stream rewrite rejected ({e}); using the original request"
+                            );
+                            return next.run(payload).await;
+                        }
+                        // IMPORTANT: this waterfall's *return value* is not the
+                        // request — dsh reads `stream_id` back out of it and
+                        // takes that stream from the table. So the rewrite must
+                        // be forwarded INTO the continuation, and the
+                        // continuation's `{stream_id}` returned unchanged.
+                        // Returning the options here would produce no stream_id
+                        // and dsh would report "produced no stream_id" — the
+                        // request would never reach the provider.
+                        next.run(value).await
+                    }
+                    None => next.run(payload).await,
+                }
+            })
+        },
+    )
+    .await
+    .map_err(err("llm/stream"))?;
+    Ok(())
+}
+
+/// Guard a rewritten `llm/stream` payload.
+///
+/// dsh deserializes this value into `GenerateOptions`, all of whose fields are
+/// required except a few optionals. A rewrite that drops `provider`/`model`/
+/// `messages` would fail deserialization *inside* dsh and surface as a generic
+/// `WATERFALL` error far from its cause, so we check the shape here and refuse
+/// the rewrite instead — falling back to the original request. A plugin must
+/// not be able to break the turn with a malformed edit.
+fn check_llm_rewrite(value: &Value) -> Result<()> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("rewritten payload is not an object"))?;
+    for key in ["provider", "model", "messages"] {
+        if obj.get(key).is_none() {
+            anyhow::bail!("rewritten payload dropped required field `{key}`");
+        }
+    }
+    if !obj.get("messages").map(Value::is_array).unwrap_or(false) {
+        anyhow::bail!("`messages` must be an array");
+    }
+    Ok(())
+}
+
+/// `tools/execute` — wraps the tool body.
+///
+/// dsh's fallback reads `arguments` **out of the payload it receives**, so a
+/// guest rewrite changes the arguments the tool actually gets. A veto skips the
+/// body; we return an error result so the model sees a normal tool failure
+/// rather than a broken turn.
+async fn register_tool_execute(ctx: &Context, host: WasmHost) -> Result<()> {
+    ctx.on(
+        "tools/execute",
+        move |_ctx: Context, payload: Value, next: Next| {
+            let host = host.clone();
+            Box::pin(async move {
+                let dispatch = run_guest(&host, FlowEvent::ToolExecute, &payload);
+                if dispatch.vetoed_by.is_some() {
+                    return Ok(tool_error_result(
+                        "WASM_VETO",
+                        &veto_reason(&dispatch),
+                    ));
+                }
+                match rewritten_payload(&dispatch, &payload) {
+                    Some(value) => {
+                        // Only `arguments` is consulted by the continuation, so
+                        // ignore edits to anything else rather than forwarding a
+                        // shape the tool body never asked for.
+                        let args = value.get("arguments").cloned().unwrap_or(Value::Null);
+                        let mut forwarded = payload.clone();
+                        if let Some(obj) = forwarded.as_object_mut() {
+                            obj.insert("arguments".to_string(), args);
+                        }
+                        Ok(next.run(forwarded).await?)
+                    }
+                    None => next.run(payload).await,
+                }
+            })
+        },
+    )
+    .await
+    .map_err(err("tools/execute"))?;
+    Ok(())
+}
+
+/// `tools/post-execute` — inspect or replace a tool's result.
+///
+/// dsh reads `result` back out of the returned payload, so a rewrite replaces
+/// what the model sees. Useful for redaction and normalisation. A veto has no
+/// meaning here (the work is already done), so it is ignored — there is no
+/// "undo" for an executed tool.
+async fn register_tool_post_execute(ctx: &Context, host: WasmHost) -> Result<()> {
+    ctx.on(
+        "tools/post-execute",
+        move |_ctx: Context, payload: Value, next: Next| {
+            let host = host.clone();
+            Box::pin(async move {
+                let dispatch = run_guest(&host, FlowEvent::ToolResultPost, &payload);
+                match rewritten_payload(&dispatch, &payload) {
+                    Some(value) => match value.get("result") {
+                        // dsh deserializes this into `ToolExecutionResult`; a
+                        // malformed replacement would be reported as BAD_RESULT
+                        // far from here, so fall back to the real result.
+                        Some(r) if r.is_object() => {
+                            let mut forwarded = payload.clone();
+                            if let Some(obj) = forwarded.as_object_mut() {
+                                obj.insert("result".to_string(), r.clone());
+                            }
+                            Ok(next.run(forwarded).await?)
+                        }
+                        _ => next.run(payload).await,
+                    },
+                    None => next.run(payload).await,
+                }
+            })
+        },
+    )
+    .await
+    .map_err(err("tools/post-execute"))?;
+    Ok(())
+}
+
+/// A `ToolExecutionResult::Error` in dsh's wire shape (`#[serde(tag="kind",
+/// rename_all="kebab-case")]`, and `ContentBlock::text` is `{"type":"text",…}`).
+fn tool_error_result(code: &str, message: &str) -> Value {
+    json!({
+        "kind": "error",
+        "code": code,
+        "message": message,
+        "content": [{ "type": "text", "text": format!("Error: {message}") }],
+    })
 }
 
 // ---------------------------------------------------------------------------

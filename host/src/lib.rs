@@ -19,7 +19,7 @@ pub use flow::{run_turn, Model, ScriptedModel, TurnOutcome};
 pub use hooks::{Decision, Dispatch, Event as FlowEvent, Hooks};
 pub use pipe::{log_pipes, Channel, LogPipe};
 pub use plugin::{
-    AdjustAction, HookDecl, HookMode, Plugin, PluginDecl, PluginState, SlotDecl, SlotInject, ToolDecl, UiAdjust, UiDecl,
+    AdjustAction, HookDecl, HookMode, Plugin, PluginDecl, PluginState, RouteDecl, SlotDecl, SlotInject, ToolDecl, UiAdjust, UiDecl,
     WindowContent, WindowDecl, WindowOpen,
 };
 pub use registry::{LoadedReport, Registry, ReloadReport};

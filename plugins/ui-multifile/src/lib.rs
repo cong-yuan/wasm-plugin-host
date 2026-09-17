@@ -74,6 +74,15 @@ const PANELS: &str = r#"
             row("entry.js lines", 3)));
     });
 
+    studio.register("MultiFilePage", (el) => {
+        el.appendChild(h("div", { style: "font-family:system-ui" },
+            h("p", { style: "color:#8f8f8f;font-size:13px",
+                     text: "This whole page is contributed by a WASM plugin. "
+                         + "Its route and its sidebar entry were declared once." }),
+            row("declared in", "ui.routes"),
+            row("rendered by", "MultiFilePage (a module asset)")));
+    });
+
     studio.register("MultiFileBadge", (el) => {
         el.appendChild(h("span", {
             style: "border:1px solid #2a2a2a;border-radius:6px;padding:4px 8px;"
@@ -102,7 +111,18 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
                 "lib/stats.js": LIB_STATS,
                 "panels.js": PANELS,
                 "entry.js": ENTRY_JS
-            }
+            },
+            // One declaration yields both the page and its sidebar entry, so
+            // they cannot drift apart.
+            "routes": [
+                {
+                    "path": "multifile",
+                    "component": "MultiFilePage",
+                    "title": "Multi-file demo",
+                    "icon": "▤",
+                    "nav": true
+                }
+            ]
         }
     })
     .to_string();

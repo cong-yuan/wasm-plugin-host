@@ -51,10 +51,25 @@ pub enum Event {
     TurnStart,
     AgentPreStep,
     AgentRequest,
+    /// The assembled model request, at the moment before it is sent.
+    ///
+    /// This is the deepest intervention point: dsh's fallback here performs the
+    /// actual provider call, and a hook that rewrites the payload changes what
+    /// the model receives. A hook that **vetoes** prevents the call entirely
+    /// (the chain, including the fallback, is skipped) — which is how a plugin
+    /// substitutes its own LLM backend.
+    LlmRequest,
+    /// One chunk of the assistant's streamed reply (observe-shaped).
     LlmChunk,
     AssistantMessage,
     ToolCall,
+    /// The allow/deny gate that runs before a tool body.
     ToolsPreExecute,
+    /// Wraps the tool body itself: a rewrite changes the **arguments** the tool
+    /// receives, and a veto skips execution.
+    ToolExecute,
+    /// Inspects or replaces a tool's result after the body ran.
+    ToolResultPost,
     ToolResult,
     TurnEnd,
 }
@@ -65,10 +80,13 @@ impl Event {
             Event::TurnStart => "turn/start",
             Event::AgentPreStep => "agent/pre-step",
             Event::AgentRequest => "agent/request",
+            Event::LlmRequest => "llm/stream",
             Event::LlmChunk => "assistant/chunk",
             Event::AssistantMessage => "assistant/message",
             Event::ToolCall => "tool/call",
             Event::ToolsPreExecute => "tools/pre-execute",
+            Event::ToolExecute => "tools/execute",
+            Event::ToolResultPost => "tools/post-execute",
             Event::ToolResult => "tool/result",
             Event::TurnEnd => "turn/end",
         }
@@ -79,6 +97,7 @@ impl Event {
             "turn/start" => Event::TurnStart,
             "agent/pre-step" => Event::AgentPreStep,
             "agent/request" => Event::AgentRequest,
+            "llm/stream" => Event::LlmRequest,
             "assistant/chunk" => Event::LlmChunk,
             // Legacy alias: the event was called `llm/chunk` before it was
             // aligned with dsh's `SessionEventData::event_type()`. Accepting it
@@ -88,6 +107,8 @@ impl Event {
             "assistant/message" => Event::AssistantMessage,
             "tool/call" => Event::ToolCall,
             "tools/pre-execute" => Event::ToolsPreExecute,
+            "tools/execute" => Event::ToolExecute,
+            "tools/post-execute" => Event::ToolResultPost,
             "tool/result" => Event::ToolResult,
             "turn/end" => Event::TurnEnd,
             _ => return None,
@@ -95,14 +116,17 @@ impl Event {
     }
 
     /// The full vocabulary, for `describe` validation and error messages.
-    pub const ALL: [Event; 9] = [
+    pub const ALL: [Event; 12] = [
         Event::TurnStart,
         Event::AgentPreStep,
         Event::AgentRequest,
+        Event::LlmRequest,
         Event::LlmChunk,
         Event::AssistantMessage,
         Event::ToolCall,
         Event::ToolsPreExecute,
+        Event::ToolExecute,
+        Event::ToolResultPost,
         Event::ToolResult,
         Event::TurnEnd,
     ];

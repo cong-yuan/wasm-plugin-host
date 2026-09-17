@@ -10,7 +10,7 @@ use dsh_rs::api::services::{AgentRegistryService, ToolsService};
 use dsh_rs::types::{AgentOptions, ContentBlock, Message, SessionEventData};
 use dsh_wasm_host::bridge::{install_observe, install_waterfalls};
 use dsh_wasm_host::{install, LoadSpec};
-use serde_json::json;
+use serde_json::{json, Value};
 
 use common::{boot_dsh, host, script_tool_call, tmpdir, wasm_hook, wasm_tool, wasm_tool_with_veto, write_wasm};
 
@@ -201,5 +201,325 @@ fn run_ctx(ctx: &cordis::Context) -> dsh_rs::types::ToolRunContext {
         signal: dsh_rs::types::CancelToken::new(),
         agent_id: Some("agent-test".to_string()),
         cwd: Some("/tmp".to_string()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The three points added to reach 6/6
+//
+// Each has a different contract, so each gets a test that would fail if the
+// registration were removed or its translation were wrong.
+// ---------------------------------------------------------------------------
+
+/// A `llm/stream` hook that rewrites the request so the model sees different
+/// text. The mock adapter **echoes the last user message**, which is what makes
+/// this observable: if the rewrite did not reach the provider, the reply would
+/// echo the original text instead.
+#[tokio::test]
+async fn llm_stream_rewrite_changes_what_the_model_receives() {
+    let dir = tmpdir("llm-rewrite");
+    let rewritten = json!({
+        "provider": "mock",
+        "model": "mock-1",
+        "messages": [{
+            "id": "m-rewritten",
+            "role": "user",
+            "content": [{ "type": "text", "text": "REWRITTEN BY PLUGIN" }],
+            "source": { "kind": "user" }
+        }]
+    });
+    let decision = json!({ "kind": "rewrite", "value": rewritten }).to_string();
+    let wasm = write_wasm(&dir, "rewriter", &wasm_hook("rewriter", "llm/stream", "waterfall", &decision));
+
+    let ctx = Context::new();
+    boot_dsh(&ctx).await;
+    script_echo(&ctx).await;
+    install(
+        &ctx,
+        host(),
+        vec![LoadSpec::new("rewriter", wasm.to_string_lossy().to_string())],
+    )
+    .await
+    .unwrap();
+
+    let agents = ctx.require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE).unwrap();
+    let agent = agents
+        .create(None, AgentOptions::mock("mock-1"), Some("/tmp".to_string()), None)
+        .unwrap();
+    agent.followup(Message::user(
+        "u-1",
+        vec![ContentBlock::text("ORIGINAL TEXT")],
+    ));
+    agent.when_idle().await;
+
+    // The mock adapter echoes the last user message it was handed, so the
+    // assistant text reveals which request actually went out.
+    let assistant_text: String = agent
+        .session()
+        .events()
+        .iter()
+        .filter_map(|e| match &e.data {
+            SessionEventData::AssistantMessage { message, .. }
+                if message.role == dsh_rs::types::Role::Assistant =>
+            {
+                Some(message.text())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("");
+
+    assert!(
+        assistant_text.contains("REWRITTEN BY PLUGIN"),
+        "the plugin's rewrite must be what the model was asked: {assistant_text:?}"
+    );
+    assert!(
+        !assistant_text.contains("ORIGINAL TEXT"),
+        "the original request must NOT have been sent: {assistant_text:?}"
+    );
+}
+
+/// A malformed rewrite must be refused, not forwarded: dsh would otherwise fail
+/// to deserialize it and report a generic error far from the cause. The turn
+/// must proceed with the original request.
+#[tokio::test]
+async fn a_malformed_llm_rewrite_falls_back_to_the_original_request() {
+    let dir = tmpdir("llm-bad-rewrite");
+    // Drops `messages`, which dsh requires.
+    let bad = json!({
+        "kind": "rewrite",
+        "value": { "provider": "mock", "model": "mock-1" }
+    })
+    .to_string();
+    let wasm = write_wasm(&dir, "bad", &wasm_hook("bad", "llm/stream", "waterfall", &bad));
+
+    let ctx = Context::new();
+    boot_dsh(&ctx).await;
+    script_echo(&ctx).await;
+    install(
+        &ctx,
+        host(),
+        vec![LoadSpec::new("bad", wasm.to_string_lossy().to_string())],
+    )
+    .await
+    .unwrap();
+
+    let agents = ctx.require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE).unwrap();
+    let agent = agents
+        .create(None, AgentOptions::mock("mock-1"), Some("/tmp".to_string()), None)
+        .unwrap();
+    agent.followup(Message::user("u-2", vec![ContentBlock::text("STILL HERE")]));
+    agent.when_idle().await;
+
+    let text: String = agent
+        .session()
+        .events()
+        .iter()
+        .filter_map(|e| match &e.data {
+            SessionEventData::AssistantMessage { message, .. }
+                if message.role == dsh_rs::types::Role::Assistant =>
+            {
+                Some(message.text())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    assert!(
+        text.contains("STILL HERE"),
+        "a refused rewrite must leave the original request intact: {text:?}"
+    );
+}
+
+/// `tools/execute` is the wrapper around the tool body, and dsh reads
+/// `arguments` out of the payload handed to the continuation — so a rewrite
+/// changes what the tool actually receives.
+///
+/// Observed via `register_dynamic_tool`, whose `exec` callback receives the
+/// parsed arguments. (The WASM test tools reply with a fixed string and so
+/// could not reveal what they were given.)
+#[tokio::test]
+async fn tool_execute_rewrite_changes_the_arguments_the_tool_receives() {
+    use dsh_rs::api::services::DynamicToolSpec;
+    use std::sync::{Arc, Mutex};
+
+    let dir = tmpdir("tool-exec-rewrite");
+    let decision = json!({
+        "kind": "rewrite",
+        "value": { "arguments": { "forced": true } }
+    })
+    .to_string();
+    let wasm = write_wasm(
+        &dir,
+        "forcer",
+        &wasm_hook("forcer", "tools/execute", "waterfall", &decision),
+    );
+
+    let ctx = Context::new();
+    boot_dsh(&ctx).await;
+
+    let seen: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let seen_in_tool = seen.clone();
+    let tools = ctx.require::<ToolsService>(dsh_rs::api::TOOLS_SERVICE).unwrap();
+    tools.register_dynamic_tool(DynamicToolSpec {
+        name: "spy".into(),
+        description: "records its arguments".into(),
+        parameters: json!({ "type": "object" }),
+        exec: Arc::new(move |args: Value| {
+            let seen = seen_in_tool.clone();
+            Box::pin(async move {
+                seen.lock().unwrap().push(args);
+                dsh_rs::types::ToolExecutionResult::success_value(json!({ "ok": true }))
+            })
+        }),
+    });
+
+    install(
+        &ctx,
+        host(),
+        vec![LoadSpec::new("forcer", wasm.to_string_lossy().to_string())],
+    )
+    .await
+    .unwrap();
+
+    let result = tools
+        .execute("c-exec".into(), "spy".into(), json!({ "original": 1 }), run_ctx(&ctx))
+        .await;
+    assert!(!result.is_error(), "the tool should have run: {result:?}");
+
+    let recorded = seen.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "the tool ran exactly once");
+    assert_eq!(
+        recorded[0],
+        json!({ "forced": true }),
+        "the tool body must have received the rewritten arguments, not the original"
+    );
+}
+
+/// A `tools/execute` veto skips the body but must return a *tool error*, not
+/// break the turn — the model then sees an ordinary failed call.
+#[tokio::test]
+async fn tool_execute_veto_returns_a_tool_error_not_a_broken_turn() {
+    let dir = tmpdir("tool-exec-veto");
+    let wasm = write_wasm(
+        &dir,
+        "blocker",
+        &wasm_hook("blocker", "tools/execute", "waterfall", r#"{"kind":"veto","reason":"nope"}"#),
+    );
+
+    let ctx = Context::new();
+    boot_dsh(&ctx).await;
+    let toolwasm = write_wasm(&dir, "echotool", &wasm_tool("echo", "success"));
+    install(
+        &ctx,
+        host(),
+        vec![
+            LoadSpec::new("echotool", toolwasm.to_string_lossy().to_string()),
+            LoadSpec::new("blocker", wasm.to_string_lossy().to_string()),
+        ],
+    )
+    .await
+    .unwrap();
+
+    let tools = ctx.require::<ToolsService>(dsh_rs::api::TOOLS_SERVICE).unwrap();
+    let result = tools
+        .execute("c-veto".into(), "echo_tool".into(), json!({}), run_ctx(&ctx))
+        .await;
+    match &result {
+        dsh_rs::types::ToolExecutionResult::Error { code, .. } => {
+            assert_eq!(code, "WASM_VETO", "a veto is reported as a tool error");
+        }
+        other => panic!("expected a tool error, got {other:?}"),
+    }
+    assert!(result.is_error());
+}
+
+/// `tools/post-execute` replaces the result the model sees — the seam for
+/// redaction and normalisation.
+#[tokio::test]
+async fn tool_post_execute_rewrites_the_result_the_model_sees() {
+    let dir = tmpdir("tool-post-rewrite");
+    let replacement = json!({
+        "kind": "success",
+        "content": [{ "type": "text", "text": "REDACTED" }],
+        "value": { "redacted": true }
+    });
+    let decision = json!({ "kind": "rewrite", "value": { "result": replacement } }).to_string();
+    let wasm = write_wasm(
+        &dir,
+        "redactor",
+        &wasm_hook("redactor", "tools/post-execute", "waterfall", &decision),
+    );
+
+    let ctx = Context::new();
+    boot_dsh(&ctx).await;
+    let toolwasm = write_wasm(&dir, "echotool", &wasm_tool("echo", "success"));
+    install(
+        &ctx,
+        host(),
+        vec![
+            LoadSpec::new("echotool", toolwasm.to_string_lossy().to_string()),
+            LoadSpec::new("redactor", wasm.to_string_lossy().to_string()),
+        ],
+    )
+    .await
+    .unwrap();
+
+    let tools = ctx.require::<ToolsService>(dsh_rs::api::TOOLS_SERVICE).unwrap();
+    let result = tools
+        .execute("c-post".into(), "echo_tool".into(), json!({ "secret": "sauce" }), run_ctx(&ctx))
+        .await;
+    let text = match &result {
+        dsh_rs::types::ToolExecutionResult::Success { content, .. }
+        | dsh_rs::types::ToolExecutionResult::Error { content, .. } => content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(""),
+    };
+    assert_eq!(text, "REDACTED", "the model sees the rewritten result");
+}
+
+/// All six waterfall points must be registered — this is the whole point of
+/// reaching 6/6, and it is easy to regress by deleting one `register_*` call.
+#[tokio::test]
+async fn all_six_dsh_waterfall_points_are_bridged() {
+    let ctx = Context::new();
+    boot_dsh(&ctx).await;
+    let report = install_waterfalls(&ctx, &host()).await.unwrap();
+    let mut got = report.waterfalls.clone();
+    got.sort();
+    assert_eq!(
+        got,
+        vec![
+            "agent/pre-step",
+            "agent/request",
+            "llm/stream",
+            "tools/execute",
+            "tools/post-execute",
+            "tools/pre-execute",
+        ],
+        "dsh exposes exactly six waterfall points; the bridge must cover them all"
+    );
+}
+
+/// The bridge's own event vocabulary must accept every name it now registers.
+#[test]
+fn the_flow_vocabulary_covers_the_three_new_points() {
+    use wasm_plugin_host::FlowEvent;
+    for (name, ev) in [
+        ("llm/stream", FlowEvent::LlmRequest),
+        ("tools/execute", FlowEvent::ToolExecute),
+        ("tools/post-execute", FlowEvent::ToolResultPost),
+    ] {
+        assert_eq!(
+            FlowEvent::parse(name),
+            Some(ev),
+            "`{name}` must parse for plugins to subscribe"
+        );
+        assert_eq!(ev.as_str(), name, "and must round-trip to its own name");
     }
 }

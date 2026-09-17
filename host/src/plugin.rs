@@ -66,6 +66,37 @@ pub struct PluginDecl {
     pub ui: Option<UiDecl>,
 }
 
+/// A page a plugin contributes to the host UI.
+///
+/// Declaring a route yields **both** halves at once — the page and (optionally)
+/// its navigation entry. They are deliberately not separate declarations: a nav
+/// item without a route is a dead link, and a route without a nav item is
+/// invisible. One declaration cannot drift from itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteDecl {
+    /// Path under the app root, without a leading slash, e.g. `usage`.
+    /// Nested paths (`tools/usage`) are allowed. Must not collide with a
+    /// built-in page; the host reports the conflict rather than shadowing.
+    pub path: String,
+    /// Which registered component renders the page (same namespace as
+    /// `injects[].component` and `windows[].component`).
+    pub component: String,
+    /// Nav label. Required when `nav` is true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Single glyph shown before the label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// Whether to add a sidebar entry for this route. Defaults to true — a page
+    /// nobody can reach is rarely what a plugin wants.
+    #[serde(default = "route_nav_default")]
+    pub nav: bool,
+}
+
+fn route_nav_default() -> bool {
+    true
+}
+
 /// One plugin's *adjustment* to UI that other plugins already contribute.
 ///
 /// This is the capability this host has and dsh-web does not: a plugin loaded
@@ -151,6 +182,9 @@ pub struct UiDecl {
     /// Extra top-level windows this plugin wants to open.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub windows: Vec<WindowDecl>,
+    /// Pages this plugin contributes, each optionally with a nav entry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<RouteDecl>,
     /// Adjustments this plugin applies to *other* plugins' contributions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub adjusts: Vec<UiAdjust>,
@@ -687,6 +721,38 @@ mod tests {
         assert!(
             err.to_string().contains("conceal") || err.to_string().contains("unknown variant"),
             "expected a variant error, got: {err}"
+        );
+    }
+
+    /// A `routes` entry is both a page and (by default) its nav entry, so the
+    /// `nav` default matters: omitting it must mean "show me in the sidebar".
+    #[test]
+    fn parses_a_routes_block_and_defaults_nav_to_true() {
+        let json = r#"{
+            "name": "usage", "tools": [],
+            "ui": { "routes": [
+                { "path": "usage", "component": "UsagePage", "title": "Usage", "icon": "U" },
+                { "path": "detail", "component": "Detail", "title": "Detail", "nav": false }
+            ]}
+        }"#;
+        let decl: PluginDecl = serde_json::from_str(json).unwrap();
+        let ui = decl.ui.expect("ui block");
+        assert_eq!(ui.routes.len(), 2);
+        assert_eq!(ui.routes[0].path, "usage");
+        assert_eq!(ui.routes[0].component, "UsagePage");
+        assert!(ui.routes[0].nav, "nav defaults to true: a page nobody can reach is rarely wanted");
+        assert!(!ui.routes[1].nav, "and can be turned off explicitly");
+    }
+
+    /// `component` is required — a route with no component is a blank page, so
+    /// it must be a parse error rather than a silent empty result.
+    #[test]
+    fn a_route_without_a_component_is_rejected() {
+        let json = r#"{"name":"p","tools":[],"ui":{"routes":[{"path":"x"}]}}"#;
+        let err = serde_json::from_str::<PluginDecl>(json).unwrap_err();
+        assert!(
+            err.to_string().contains("component"),
+            "expected a missing-field error, got: {err}"
         );
     }
 
