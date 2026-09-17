@@ -35,6 +35,28 @@ pub extern "C" fn plugin_free(_p: i32, _n: i32) {}
 #[no_mangle]
 pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
     let entry_js = r#"
+        studio.register("LlmAdvanced", (el) => {
+            el.innerHTML =
+              '<div style="font-family:system-ui;padding:8px">'
+              + '<h2 style="margin:0 0 4px">Advanced LLM settings</h2>'
+              + '<p style="color:#8f8f8f;font-size:12px">'
+              + 'this whole window is a component from ui-llm-panel</p>'
+              + '<label style="display:block;margin-top:12px;font-size:12px;color:#8f8f8f">'
+              + 'temperature<input id="t" type="range" min="0" max="2" step="0.1" value="0.7" style="width:100%"></label>'
+              + '<pre id="tv" style="font-size:11px"></pre>'
+              + '<div id="sub" style="margin-top:16px;border-top:1px solid #2a2a2a;padding-top:10px"></div>'
+              + '</div>';
+            const t = el.querySelector('#t');
+            const tv = el.querySelector('#tv');
+            if (t && tv) {
+                const show = () => { tv.textContent = 'temperature = ' + t.value; };
+                t.addEventListener('input', show); show();
+            }
+            // A window can host slots too.
+            const sub = el.querySelector('#sub');
+            const d = sub ? studio.renderSlot('ui-llm-panel.config', sub) : null;
+            return () => { if (d) d(); };
+        });
         studio.register("LlmPanel", (el) => {
             el.innerHTML =
               '<div style="font-family:system-ui">'
@@ -70,7 +92,17 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
             "injects": [
                 { "slot": "settings.tabs", "priority": 10, "component": "LlmPanel" }
             ],
-            "assets": { "entry.js": entry_js }
+            "assets": { "entry.js": entry_js },
+            "windows": [
+                {
+                    "name": "advanced",
+                    "component": "LlmAdvanced",
+                    "title": "LLM — Advanced",
+                    "width": 620,
+                    "height": 480,
+                    "open": "manual"
+                }
+            ]
         }
     })
     .to_string();

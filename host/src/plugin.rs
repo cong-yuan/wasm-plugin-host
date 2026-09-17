@@ -89,6 +89,46 @@ pub struct UiDecl {
     /// Kept as strings so the ABI stays language- and scheme-agnostic.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub assets: std::collections::BTreeMap<String, String>,
+    /// Extra top-level windows this plugin wants to open.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<WindowDecl>,
+}
+
+/// A top-level window a plugin offers.
+///
+/// The window loads the *app* (not a plugin-supplied page) and renders one of
+/// the plugin's registered `component`s full-window, with no app chrome. This
+/// keeps the plugin's UI code identical to its in-slot components — only the
+/// mount point differs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowDecl {
+    /// Stable identifier, unique within the plugin. The real window label is
+    /// derived from it (prefixed with the slot) so two plugins cannot collide.
+    pub name: String,
+    /// Which registered component to render in the window.
+    pub component: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<f64>,
+    /// When to open it.
+    #[serde(default)]
+    pub open: WindowOpen,
+}
+
+/// How a declared window comes into existence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowOpen {
+    /// Never opened by the host; the plugin's UI opens it on demand (e.g. a
+    /// button in one of its panels).
+    #[default]
+    Manual,
+    /// Opened by the host as soon as the plugin becomes active, and closed when
+    /// it stops.
+    Auto,
 }
 
 /// A slot a plugin opens for others.
