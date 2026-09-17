@@ -13,4 +13,5 @@ members = [
     "plugins/fs-reader",
     "plugins/ui-llm-panel",
     "plugins/ui-theme-widget",
+    "plugins/ui-curator",
 ]

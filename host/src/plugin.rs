@@ -76,6 +76,65 @@ pub struct PluginDecl {
 /// slot that disappears hides its contributors until it returns.
 ///
 /// The **assets** are opaque strings — the frontend decides how to run them.
+///
+/// The **adjusts** let a later-loaded plugin reshape UI another plugin already
+/// contributes — see [`UiAdjust`].
+
+/// One plugin's *adjustment* to UI that other plugins already contribute.
+///
+/// This is the capability dsh-web does not have: a plugin loaded **later** can
+/// reshape existing UI without touching the contributing plugin's code. The
+/// frontend applies these at **resolution** time (when a slot's mount list is
+/// computed), never by mutating another plugin's DOM — so adjustments compose,
+/// stay reversible, and follow the same order-independence rules as claims.
+///
+/// `slot` is a glob: `settings.tabs` matches that slot; `*` matches every slot.
+/// A glob may also match the contributing plugin's owner id, so an adjustment
+/// can target "everything plugin `noisy` contributes anywhere".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiAdjust {
+    /// Which contributions this applies to. Supports a trailing `*` wildcard.
+    #[serde(default = "adjust_target_default")]
+    pub slot: String,
+    /// Which plugin's contribution to affect (the owner id). `None` = any.
+    /// Supports a trailing `*` wildcard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// What to do.
+    pub action: AdjustAction,
+    /// For `priority`: the new priority (lower renders first).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<i32>,
+    /// For `priority`: new position for the target's own priority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<i32>,
+    /// For `replace`: the component name the *adjusting* plugin registered, to
+    /// render in place of the original. Ignored by other actions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
+}
+
+fn adjust_target_default() -> String {
+    "*".to_string()
+}
+
+/// The adjustments a plugin can apply to existing contributions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AdjustAction {
+    /// Remove the contribution from the rendered list (the plugin stays loaded;
+    /// an `unhide` by another plugin can bring it back).
+    Hide,
+    /// Re-show a contribution hidden by `hide`.
+    Unhide,
+    /// Replace the contribution's component with another name the *adjusting*
+    /// plugin registered. Falls back to the original when it is not registered.
+    Replace,
+    /// Move the contribution in render order: `to` is an absolute priority,
+    /// `by` a delta on its own.
+    Priority,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UiDecl {
     /// Slots this plugin **opens** for others to contribute into.
@@ -92,6 +151,9 @@ pub struct UiDecl {
     /// Extra top-level windows this plugin wants to open.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub windows: Vec<WindowDecl>,
+    /// Adjustments this plugin applies to *other* plugins' contributions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adjusts: Vec<UiAdjust>,
 }
 
 /// A top-level window a plugin offers.
@@ -570,4 +632,68 @@ where
     instance
         .get_typed_func::<T, P>(store, name)
         .map_err(|e| anyhow!("plugin `{plugin}` is missing export `{name}`: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An `adjusts` block is what lets a plugin reshape UI it does not own, so
+    /// parsing must be exact — a typo in `action` must be rejected, not
+    /// silently ignored, or a plugin would appear to apply no adjustment.
+    #[test]
+    fn parses_an_adjusts_block() {
+        let json = r#"{
+            "name": "curator",
+            "tools": [],
+            "ui": {
+                "adjusts": [
+                    {"slot": "settings.*", "from": "noisy-*", "action": "hide"},
+                    {"slot": "*", "action": "priority", "from": "llm-ui", "to": -5},
+                    {"slot": "dashboard.cards", "action": "replace", "component": "Mine"}
+                ]
+            }
+        }"#;
+        let decl: PluginDecl = serde_json::from_str(json).unwrap();
+        let ui = decl.ui.expect("ui block");
+        assert_eq!(ui.adjusts.len(), 3);
+
+        assert_eq!(ui.adjusts[0].action, AdjustAction::Hide);
+        assert_eq!(ui.adjusts[0].slot, "settings.*");
+        assert_eq!(ui.adjusts[0].from.as_deref(), Some("noisy-*"));
+
+        assert_eq!(ui.adjusts[1].action, AdjustAction::Priority);
+        assert_eq!(ui.adjusts[1].to, Some(-5));
+        assert_eq!(ui.adjusts[1].by, None);
+
+        assert_eq!(ui.adjusts[2].action, AdjustAction::Replace);
+        assert_eq!(ui.adjusts[2].component.as_deref(), Some("Mine"));
+    }
+
+    /// `slot` defaults to "*" so `{"action":"hide"}` means "hide everything",
+    /// which is the useful shorthand for a plugin that wants to prune the UI.
+    #[test]
+    fn an_adjusts_slot_defaults_to_match_all() {
+        let json = r#"{"name":"c","tools":[],"ui":{"adjusts":[{"action":"hide"}]}}"#;
+        let decl: PluginDecl = serde_json::from_str(json).unwrap();
+        assert_eq!(decl.ui.unwrap().adjusts[0].slot, "*");
+    }
+
+    /// The action vocabulary is closed: a typo must fail loudly.
+    #[test]
+    fn an_unknown_adjust_action_is_rejected() {
+        let json = r#"{"name":"c","tools":[],"ui":{"adjusts":[{"action":"conceal"}]}}"#;
+        let err = serde_json::from_str::<PluginDecl>(json).unwrap_err();
+        assert!(
+            err.to_string().contains("conceal") || err.to_string().contains("unknown variant"),
+            "expected a variant error, got: {err}"
+        );
+    }
+
+    /// Adjustments are optional; a plugin without a `ui` block still parses.
+    #[test]
+    fn a_plugin_without_ui_blocks_still_parses() {
+        let decl: PluginDecl = serde_json::from_str(r#"{"name":"p","tools":[]}"#).unwrap();
+        assert!(decl.ui.is_none());
+    }
 }

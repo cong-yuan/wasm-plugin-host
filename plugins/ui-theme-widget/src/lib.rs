@@ -43,7 +43,12 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
         "tools": [],
         "ui": {
             "injects": [
-                { "slot": "ui-llm-panel.config", "priority": 0, "component": "ThemeWidget" }
+                { "slot": "ui-llm-panel.config", "priority": 0, "component": "ThemeWidget" },
+                // Also into the built-in tab strip, at a LOWER priority number
+                // than ui-llm-panel's default. This makes ui-curator's
+                // `priority` adjustment observable: absent the adjustment,
+                // theme-widget would sort first.
+                { "slot": "settings.tabs", "priority": -50, "component": "ThemeWidget" }
             ],
             "assets": { "entry.js": entry_js }
         }

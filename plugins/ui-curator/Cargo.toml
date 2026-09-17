@@ -1,0 +1,14 @@
+[package]
+name = "ui-curator"
+version = "0.1.0"
+edition = "2021"
+
+# A plugin that ships no UI of its own — it only *adjusts* other plugins' UI.
+# This is the capability dsh-web lacks: a later-loaded plugin reshaping UI that
+# earlier plugins already contributed.
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+serde_json = "1"
