@@ -223,6 +223,37 @@ Rules:
 See `plugins/ui-multifile` for a worked example: three lines of `entry.js` and
 three modules, one of which requires another.
 
+### `routes` — pages and their sidebar entries
+
+```json
+"routes": [
+  { "path": "usage", "component": "UsagePage", "title": "Usage", "icon": "◷" },
+  { "path": "usage/detail", "component": "UsageDetail", "nav": false }
+]
+```
+
+| Field | Meaning |
+|---|---|
+| `path` | Path under the app root, no leading slash. Nested paths allowed. |
+| `component` | The registered component that renders the page (required). |
+| `title` | Nav label. Required for a sidebar entry to appear. |
+| `icon` | Single glyph before the label. |
+| `nav` | Whether to add a sidebar entry. **Defaults to true.** |
+
+**Route and nav entry are one declaration on purpose** — they are two views of the
+same fact, and separate declarations drift into a link with no page.
+
+Rules:
+
+* A path may not be claimed by **two live plugins** (an error, like slot-name
+  conflicts), nor declared twice by one plugin under lookalike spellings
+  (`usage` and `/usage/` are the same path — normalization happens in the
+  registry).
+* **Built-in pages cannot be shadowed.** SvelteKit resolves static routes before
+  the catch-all, so a plugin's `chat` would never render; the attempt is refused
+  and logged rather than silently accepted.
+* Unloading the plugin removes its routes and nav entries.
+
 ### `windows` — top-level OS windows
 
 | Field | Meaning |
@@ -243,7 +274,7 @@ window reads via `studio.windowParams()`. If the window is already open it is
 focused and receives the params via the `studio://window-params` event instead
 of being duplicated.
 
-### `adjusts` — reshaping UI that already exists ⭐
+### `adjusts` — reshaping UI that already exists
 
 **This is the capability that distinguishes this host.** A plugin loaded *later*
 can reshape contributions made by plugins already loaded, **without touching

@@ -10,14 +10,16 @@
 
 穷举 `dsh-rs-0.2.0/src/` 里所有 `.waterfall(` 调用，得到 **6 个可 veto/rewrite 的点**：
 
-| # | 事件名 | 位置 | 我们接了吗 |
+| # | 事件名 | 位置 | 状态 |
 |---|---|---|---|
 | 1 | `tools/pre-execute` | `tools/registry.rs:157` | ✅ |
 | 2 | `agent/pre-step` | `core/loop_driver.rs:116` | ✅ |
 | 3 | `agent/request` | `core/loop_driver.rs:388` | ✅ |
-| 4 | **`llm/stream`** | `llm/runtime.rs:238` | ❌ |
-| 5 | **`tools/execute`** | `tools/registry.rs:197` | ❌ |
-| 6 | **`tools/post-execute`** | `tools/registry.rs:232` | ❌ |
+| 4 | `llm/stream` | `llm/runtime.rs:238` | ✅ **已接** |
+| 5 | `tools/execute` | `tools/registry.rs:197` | ✅ **已接** |
+| 6 | `tools/post-execute` | `tools/registry.rs:232` | ✅ **已接** |
+
+**6/6 全部已接**，并有测试覆盖（去掉任一注册，5 个测试失败）。
 
 外加一个**只读**的 `session/event` 洪泛（`ctx.emit`，非 waterfall）—— 我们已接（见
 `dsh-wasm-host/src/bridge.rs` 的 `install_observe`），但 observe 改不了流程。
@@ -28,7 +30,13 @@
 
 ## 2. 缺的三个点各自意味着什么
 
-### `llm/stream` —— 缺口中最重要的一个
+### `llm/stream` —— 最深的一个（已接）
+
+> **实现时踩到的坑**：这个 waterfall 的**返回值不是请求**——dsh 从返回值里读
+> `stream_id`，再从表里取流。所以 rewrite 必须**转发进 continuation**，
+> 并把 continuation 的 `{stream_id}` 原样返回。第一版我直接返回了改写后的
+> options，结果没有 `stream_id`，dsh 报 `produced no stream_id`，请求**根本没发出去**。
+> 测试断言的是"模型实际收到了什么"，因此抓到了它。
 
 ```rust
 // dsh-rs/src/llm/runtime.rs:238
@@ -104,7 +112,7 @@ SessionPersistenceService / ManifestService         // 全可 provide
 
 | 顺序 | 做什么 | 成本 | 收益 |
 |---|---|---|---|
-| ① | 流程补满 **3/6 → 6/6** | 小、纯增量 | `llm/stream` 解锁最深的介入面 |
+| ① | 流程补满 **3/6 → 6/6** | ✅ **已完成** | 6 个点全部可 veto/rewrite |
 | ② | 服务深接（`LlmService` / `tools`） | 中 | 比 waterfall 更彻底的替换能力 |
 | ③ | 前端：`nav` 槽位 + 路由 catch-all | 小 | 兑现"插件贡献菜单/页面" |
 | ④ | 主题：写测试证明可覆盖 | 极小 | 见 [`前端可塑性.md`](前端可塑性.md) |
