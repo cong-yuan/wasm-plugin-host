@@ -2649,6 +2649,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ui-multifile"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "ui-theme-widget"
 version = "0.1.0"
 dependencies = [

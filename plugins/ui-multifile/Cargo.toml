@@ -1,0 +1,13 @@
+[package]
+name = "ui-multifile"
+version = "0.1.0"
+edition = "2021"
+
+# Demonstrates the multi-file plugin DX: its UI is split across several `.js`
+# assets pulled in with `studio.require`, instead of one giant entry.js string.
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+serde_json = "1"
