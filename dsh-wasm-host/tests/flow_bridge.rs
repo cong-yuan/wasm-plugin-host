@@ -523,3 +523,97 @@ fn the_flow_vocabulary_covers_the_three_new_points() {
         assert_eq!(ev.as_str(), name, "and must round-trip to its own name");
     }
 }
+
+/// A `llm/stream` **veto** must prevent the provider call entirely — the
+/// mechanism by which a plugin substitutes its own backend.
+///
+/// Written as a **two-phase** test on purpose. The first run (no plugin) must
+/// reach the adapter, which is what makes the second run's zero meaningful. An
+/// earlier version registered the counting adapter under a provider the agent
+/// never used, so it asserted "0 calls" for the wrong reason and passed even
+/// with the veto removed — a vacuous test. The counter is proved live here
+/// before it is used as evidence.
+#[tokio::test]
+async fn llm_stream_veto_prevents_the_provider_call() {
+    use dsh_rs::api::services::{LlmAdapterApi, LlmService};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct CountingAdapter(Arc<AtomicUsize>);
+    impl LlmAdapterApi for CountingAdapter {
+        fn name(&self) -> &'static str {
+            "counting"
+        }
+        fn stream(
+            &self,
+            _options: dsh_rs::types::GenerateOptions,
+        ) -> cordis::plugin::BoxFuture<
+            Result<
+                dsh_rs::llm::runtime::BoxStream<dsh_rs::types::StreamChunk>,
+                dsh_rs::types::LlmError,
+            >,
+        > {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            // Emit a trivial response so a turn can complete normally.
+            Box::pin(async move {
+                Ok(dsh_rs::llm::runtime::stream_from_chunks(
+                    dsh_rs::llm::adapters::mock::MockAdapter::text_response("ok"),
+                ))
+            })
+        }
+    }
+
+    let dir = tmpdir("llm-veto");
+    let wasm = write_wasm(
+        &dir,
+        "blocker",
+        &wasm_hook("blocker", "llm/stream", "waterfall", r#"{"kind":"veto","reason":"no"}"#),
+    );
+
+    let ctx = Context::new();
+    boot_dsh(&ctx).await;
+
+    // Take over the "mock" route: `AgentOptions::mock` hardcodes
+    // `provider: "mock"`, so any other route would never be consulted.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let llm = ctx.require::<LlmService>(dsh_rs::api::LLM_SERVICE).unwrap();
+    llm.unregister_adapter(&["mock"]);
+    llm.register_adapter(&["mock"], Arc::new(CountingAdapter(calls.clone())))
+        .unwrap();
+
+    let agents = ctx.require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE).unwrap();
+
+    // --- Phase 1: no plugin. The provider MUST be reached. ---
+    let agent = agents
+        .create(None, AgentOptions::mock("mock-1"), Some("/tmp".to_string()), None)
+        .unwrap();
+    agent.followup(Message::user("u-1", vec![ContentBlock::text("hi")]));
+    agent.when_idle().await;
+    assert!(
+        calls.load(Ordering::SeqCst) > 0,
+        "sanity: without a plugin the adapter must be reached, otherwise a zero \
+         count later would prove nothing"
+    );
+    let after_first = calls.load(Ordering::SeqCst);
+
+    // --- Phase 2: with the veto installed, the provider must NOT be reached. ---
+    install(
+        &ctx,
+        host(),
+        vec![LoadSpec::new("blocker", wasm.to_string_lossy().to_string())],
+    )
+    .await
+    .unwrap();
+
+    let agent2 = agents
+        .create(None, AgentOptions::mock("mock-1"), Some("/tmp".to_string()), None)
+        .unwrap();
+    agent2.followup(Message::user("u-2", vec![ContentBlock::text("hi again")]));
+    agent2.when_idle().await;
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        after_first,
+        "a veto at llm/stream must stop the provider call from happening at all"
+    );
+}

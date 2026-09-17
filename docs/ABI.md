@@ -318,17 +318,43 @@ A plugin that declares only `tools` is a **leaf**: the flow calls it. A plugin
 that declares `hooks` is a **participant**: the flow calls it *at* flow points,
 where it can observe or intervene. This is the dsh model.
 
+The **six** events marked below are dsh's own waterfall points — the complete
+set it exposes, with no way to add more. A plugin subscribing to one of those
+can change the flow; the rest are observe-only fan-out from the session log.
+
 | Event | Fires | Payload in | May change? |
 |---|---|---|---|
 | `turn/start` | a turn begins | `{turn, input}` | observe |
-| `agent/pre-step` | before a step | `{turn, input}` | **rewrite / veto** |
-| `agent/request` | before the model call | `{turn, messages}` | **rewrite / veto** |
+| `agent/pre-step` | before a step | `{turn, input}` | **rewrite / veto** ⬅ |
+| `agent/request` | resolve the turn's `LlmCallConfig` | `{agent, turn}` | **rewrite** ⬅ |
+| `llm/stream` | the assembled model request, just before it is sent | `GenerateOptions` (`provider`, `model`, `messages`, …) | **rewrite / veto** ⬅ |
 | `assistant/chunk` | each streamed chunk | `{turn, index, text}` | **rewrite** |
 | `assistant/message` | a full message | `{turn, text}` | observe |
 | `tool/call` | a tool is about to run | `{turn, name, args}` | observe |
-| `tools/pre-execute` | right before a tool body | `{turn, name, args}` | **rewrite / veto** |
+| `tools/pre-execute` | right before a tool body (the allow/deny gate) | `{name, arguments}` | **veto** ⬅ |
+| `tools/execute` | wrapping the tool body itself | `{name, arguments}` | **rewrite / veto** ⬅ |
+| `tools/post-execute` | after the body ran | `{name, result}` | **rewrite** ⬅ |
 | `tool/result` | after a tool returns | `{turn, name, result}` | **rewrite** |
 | `turn/end` | a turn finishes | `{turn, ...}` | observe |
+
+⬅ = a dsh waterfall point.
+
+**Notes on the waterfall points:**
+
+* **`llm/stream` is the deepest.** Its continuation performs the actual provider
+  call, and it parses the payload it is given — so a `rewrite` changes what the
+  model is asked (`system`, `messages`, `temperature`, `stop`, …) and a `veto`
+  prevents the call entirely. A rewritten payload is **validated** first
+  (`provider`/`model`/`messages` must survive); a malformed one is refused and
+  the original request used, rather than being forwarded for dsh to fail on
+  deep inside its own code.
+* **`tools/execute` changes arguments.** dsh reads `arguments` out of the
+  payload handed to the continuation, so a rewrite alters what the tool body
+  receives. A `veto` skips the body and returns a normal tool error.
+* **`tools/post-execute` has no veto.** The tool already ran and there is no
+  undo, so a veto is ignored.
+* **`agent/request` has no veto vocabulary** — a rewrite replaces the resolved
+  config, anything else defers to dsh's default.
 
 > **名称变更(P3.6)**:流式分片事件现叫 **`assistant/chunk`**(与 dsh 一致)。
 > 旧名 `llm/chunk` **仍被接受**作为别名,老插件无需修改。
