@@ -20,7 +20,7 @@ pub use hooks::{Decision, Dispatch, Event as FlowEvent, Hooks};
 pub use pipe::{log_pipes, Channel, LogPipe};
 pub use plugin::{
     HookDecl, HookMode, Plugin, PluginDecl, PluginState, SlotDecl, SlotInject, ToolDecl, UiDecl,
-    WindowDecl, WindowOpen,
+    WindowContent, WindowDecl, WindowOpen,
 };
 pub use registry::{LoadedReport, Registry, ReloadReport};
 pub use runtime::{AllocationStrategy, CacheStats, Runtime};

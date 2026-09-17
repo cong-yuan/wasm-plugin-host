@@ -116,6 +116,28 @@ pub struct WindowDecl {
     /// When to open it.
     #[serde(default)]
     pub open: WindowOpen,
+    /// How the window is populated.
+    #[serde(default)]
+    pub content: WindowContent,
+    /// The page source, when `content == "html"`. A full HTML fragment
+    /// (scripts and styles allowed). Ignored for `content == "app"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub html: Option<String>,
+}
+
+/// What a window loads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowContent {
+    /// The app itself, rendering the declared `component` full-window. The
+    /// plugin's UI code is identical to its in-slot components.
+    #[default]
+    App,
+    /// A **fully self-contained page** the plugin supplies: the host loads an
+    /// empty document and injects the plugin's `html` (which may include its own
+    /// `<style>` and `<script>`). Maximum freedom, no app shell, no `studio` API
+    /// unless the plugin opts into it.
+    Html,
 }
 
 /// How a declared window comes into existence.

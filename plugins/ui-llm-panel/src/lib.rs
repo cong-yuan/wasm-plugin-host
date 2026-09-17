@@ -45,6 +45,8 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
               + 'temperature<input id="t" type="range" min="0" max="2" step="0.1" value="0.7" style="width:100%"></label>'
               + '<pre id="tv" style="font-size:11px"></pre>'
               + '<div id="sub" style="margin-top:16px;border-top:1px solid #2a2a2a;padding-top:10px"></div>'
+              + '<button id="openwin" style="margin-top:12px">open advanced in a new window</button>'
+              + '<button id="openhtml" style="margin-top:12px;margin-left:6px">open standalone page</button>'
               + '</div>';
             const t = el.querySelector('#t');
             const tv = el.querySelector('#tv');
@@ -52,6 +54,15 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
                 const show = () => { tv.textContent = 'temperature = ' + t.value; };
                 t.addEventListener('input', show); show();
             }
+            // Open a declared window, passing params it reads on startup.
+            const ob = el.querySelector('#openwin');
+            if (ob) ob.addEventListener('click', () => {
+                studio.openWindow('advanced', { temperature: t ? t.value : null });
+            });
+            const oh = el.querySelector('#openhtml');
+            if (oh) oh.addEventListener('click', () => {
+                studio.openWindow('standalone', { from: 'ui-llm-panel' });
+            });
             // A window can host slots too.
             const sub = el.querySelector('#sub');
             const d = sub ? studio.renderSlot('ui-llm-panel.config', sub) : null;
@@ -100,7 +111,18 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
                     "title": "LLM — Advanced",
                     "width": 620,
                     "height": 480,
-                    "open": "manual"
+                    "open": "manual",
+                    "content": "app"
+                },
+                {
+                    "name": "standalone",
+                    "component": "",
+                    "title": "LLM — Standalone page",
+                    "width": 520,
+                    "height": 360,
+                    "open": "manual",
+                    "content": "html",
+                    "html": "<style>body{font-family:system-ui;background:#0f0f0f;color:#ededed;padding:24px}h1{font-size:18px;margin:0 0 8px}pre{background:#161616;padding:10px;border-radius:6px;font-size:12px}</style><h1>Standalone page</h1><p style=\"color:#8f8f8f;font-size:13px\">This whole window is HTML supplied by the plugin — no app shell.</p><pre id=out>reading params…</pre><script>setTimeout(()=>{const p=(window.__STUDIO_WINDOW__||{}).params||null;document.getElementById('out').textContent='params = '+JSON.stringify(p);},50)</script>"
                 }
             ]
         }
