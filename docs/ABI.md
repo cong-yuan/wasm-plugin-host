@@ -177,14 +177,51 @@ Resolution rules (identical to the service graph):
 
 ### `assets` — what the frontend runs
 
-An opaque map of strings, conventionally `entry.js` and `style.css`. The
-frontend executes `entry.js` with a `studio` object that exposes `register`,
-`components`, `provideSlot`, `inject`, `renderSlot`, `openWindow`,
+An opaque map of strings. `style.css` is injected as a stylesheet; every other
+`.js` asset is executable plugin code. `entry.js` is the designated entry point;
+**any other `.js` asset is a module** the plugin can pull in on demand.
+
+The frontend runs `entry.js` with a `studio` object that exposes `register`,
+`components`, `require`, `provideSlot`, `inject`, `renderSlot`, `openWindow`,
 `closeWindow`, `windowParams`, `windowLabel`, and `dispose`.
 
 `studio.renderSlot(slot, el)` is the missing half of opening a slot: a plugin
 that **provides** a slot must also render its children somewhere, or nothing it
 hosts will ever appear.
+
+#### Multi-file plugins (`studio.require`)
+
+A plugin is not limited to one file. Put helpers and components in their own
+assets and require them:
+
+```json
+"assets": {
+  "lib/dom.js":   "return { h: (tag) => document.createElement(tag) };",
+  "panels.js":    "const { h } = studio.require('lib/dom'); …",
+  "entry.js":     "studio.require('panels'); studio.inject('settings.tabs', 'Panel', 10);"
+}
+```
+
+```js
+const { h } = studio.require("lib/dom");   // the ".js" is optional
+```
+
+Rules:
+
+* **Lazy** — a module runs on first `require`, so an unused one costs nothing
+  and a broken unused one cannot take the plugin down.
+* **Cached** — each module body evaluates **once** per plugin load.
+* **Nestable** — modules may require each other.
+* **Cycles throw** (`circular require of module "x"`) instead of recursing.
+* **Unknown names throw** and list the modules that do exist, so a typo is a
+  clear error rather than a silent `undefined`.
+* **Edits take effect** — changing a module invalidates its cached body *and*
+  re-runs `entry.js`, because the registrations the entry makes close over
+  whatever the module returned. (Without the re-run, editing a helper would
+  appear to do nothing.)
+
+See `plugins/ui-multifile` for a worked example: three lines of `entry.js` and
+three modules, one of which requires another.
 
 ### `windows` — top-level OS windows
 
