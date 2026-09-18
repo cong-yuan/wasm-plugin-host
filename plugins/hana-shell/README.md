@@ -49,9 +49,15 @@ Every panel edge is draggable, and the sizes persist per target:
 preview's ceiling is computed live, so widening it can never push the
 conversation below its 400px minimum.
 
-The titlebar height drives **only** the titlebar: the column headers read their
-own `--dw-header-h`, because dragging one bar and watching five headers grow is
-not what "resize the titlebar" means.
+The drag target **is** the visible 3px line, not an invisible band laid over the
+column's edge — the sidebar is full of rows to click and a wide invisible strip
+swallows those clicks. The line is faintly visible at rest so "put the cursor on
+the line" is discoverable at all, and turns accent-coloured on hover.
+
+The titlebar height is shared: the column headers read the same
+`--dw-titlebar-h`, so a drag on any of them keeps the four bars aligned. (An
+earlier version gave the headers their own variable; dragging one bar and
+watching the headers stay put was worse, not better.)
 
 The mechanism is `lib/resize.js` — one function for both axes, talking in
 `data-resize` names rather than pixels, so a plugin that opens its own side
