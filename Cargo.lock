@@ -569,6 +569,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "demo-shell-addon"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -651,6 +658,13 @@ dependencies = [
  "tokio",
  "wasm-plugin-host",
  "wat",
+]
+
+[[package]]
+name = "dsh-web-shell"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

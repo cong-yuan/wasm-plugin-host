@@ -17,4 +17,6 @@ members = [
     "plugins/ui-multifile",
     "plugins/ui-startup-demo",
     "plugins/qoder-shell",
+    "plugins/dsh-web-shell",
+    "plugins/demo-shell-addon",
 ]

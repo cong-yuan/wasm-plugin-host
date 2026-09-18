@@ -1,0 +1,21 @@
+/* The few rules with no inline equivalent: scrollbars, motion, and the
+   "empty slot takes no space" rule that keeps an unclaimed region invisible. */
+
+/* A plugin that contributes nothing must not leave a gap. The host renders an
+   empty container, so collapse it. `:empty` covers the no-contribution case. */
+[data-host-slot]:empty { display: none; }
+
+/* Scrollbars stay invisible until hovered, so the columns look calm. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: transparent; border-radius: 5px; }
+*:hover::-webkit-scrollbar-thumb { background: var(--dw-fill, #31312d); }
+
+/* A paint never flashes the wrong colour before the component mounts. */
+html[data-theme="dark"] { background: #0e0e0e; }
+html[data-theme="light"] { background: #fdfdfd; }
+
+button { transition: background 120ms cubic-bezier(0.4, 0, 0.2, 1); }
+
+@media (prefers-reduced-motion: reduce) {
+  button { transition: none; }
+}
