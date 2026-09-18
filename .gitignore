@@ -23,3 +23,6 @@
 # Disk compile cache (rebuilt by the runtime)
 /demo/.cwasm-cache/
 *.cwasm
+
+# Node (the shell's test harnesses need no deps, but guard anyway)
+node_modules/

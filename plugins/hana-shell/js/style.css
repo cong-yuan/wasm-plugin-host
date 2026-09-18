@@ -57,6 +57,9 @@ html[data-theme="midnight"]   body { background: #3B4A54; }
    44px, the row above everything. A flex row of three clusters; the centre one
    takes the slack so a long title stays centred without absolute positioning. */
 .hn-tb {
+  /* The bottom handle is absolutely positioned inside the bar, so the bar is the
+     containing block. Without this the handle anchors to the viewport. */
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--dw-space-8);
@@ -161,59 +164,40 @@ html[data-theme="midnight"]   body { background: #3B4A54; }
 }
 
 /* ── Resize handles ────────────────────────────────────────────────────────
-   A thin grab strip on a column's inner edge. The visible feedback is a short
-   gradient line that appears on hover — the full-height bar upstream draws
-   reads as a border and competes with the column's own edge, so only the
-   near edge lights up. The strip itself is wide enough to grab (8px) while
-   staying invisible. ───────────────────────────────────────────────────────── */
+   The handle **is** the visible line — not an invisible band laid over the
+   column's edge. A wide hit area swallows clicks meant for the column behind
+   it, and the sidebar is full of rows to click; so the line is kept as thin as
+   a scrollbar (3px) and nothing outside it receives the pointer at all.
+
+   The line is faintly visible at rest rather than appearing only on hover,
+   because "put the cursor on the line" is not discoverable otherwise. Hovering
+   or dragging lights it in the accent colour. ─────────────────────────────── */
 .hn-resize-handle {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 8px;
+  width: 3px;
   z-index: 20;
   cursor: col-resize;
+  background: var(--dw-overlay-medium);
+  transition: background var(--dw-duration-fast) var(--dw-ease-out);
 }
-.hn-resize-right { right: -4px; }
-.hn-resize-left { left: -4px; }
-/* The titlebar's bottom edge: a horizontal strip, and only as wide as the bar's
-   centre so it does not sit under the window controls. */
+.hn-resize-handle:hover,
+.hn-resize-handle.active { background: var(--dw-accent); }
+
+/* Vertical edges sit flush against the column's own edge — the columns clip
+   their overflow, so anything hung outside them would be cut in half. */
+.hn-resize-right { top: 0; bottom: 0; right: 0; }
+.hn-resize-left { top: 0; bottom: 0; left: 0; }
+
+/* The titlebar's bottom edge: a horizontal line, centred so it is clear the
+   whole bar's height moves, and kept clear of the window controls. */
 .hn-resize-bottom {
-  top: auto;
-  bottom: -4px;
   left: 50%;
+  bottom: -1px;
   width: 96px;
-  height: 8px;
+  height: 3px;
   transform: translateX(-50%);
   cursor: row-resize;
 }
-
-.hn-resize-handle::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 2px;
-  margin-left: -1px;
-  background: var(--dw-accent);
-  opacity: 0;
-  transition: opacity var(--dw-duration-fast) var(--dw-ease-out);
-  pointer-events: none;
-}
-/* The vertical handle lights a horizontal line instead. */
-.hn-resize-bottom::after {
-  top: 50%;
-  bottom: auto;
-  left: 0;
-  right: 0;
-  width: auto;
-  margin-left: 0;
-  height: 2px;
-  margin-top: -1px;
-}
-.hn-resize-handle:hover::after,
-.hn-resize-handle.active::after { opacity: 0.4; }
 
 /* While dragging, the whole window keeps the resize cursor and stops selecting
    text — otherwise a fast drag selects the conversation behind the handle. */
@@ -237,10 +221,6 @@ body.resizing .hn-col-preview,
 body.resizing .hn-col-rail,
 body.resizing-y .hn-tb { transition: none !important; }
 
-/* The titlebar is a drag region (`-webkit-app-region: drag`) so the window can be
-   moved by it. The handle must opt out, or a vertical drag would move the window
-   instead of resizing the bar. */
-.hn-tb .hn-resize-handle { -webkit-app-region: no-drag; }
 
 /* A collapsed column has no edge to drag, so its handle must not sit there
    eating clicks meant for the column beside it. */
@@ -283,7 +263,7 @@ body.resizing-y .hn-tb { transition: none !important; }
   align-items: center;
   gap: var(--dw-space-8);
   padding: var(--dw-space-12) var(--dw-space-12) var(--dw-space-8);
-  min-height: var(--dw-header-h);
+  min-height: var(--dw-titlebar-h);
   flex-shrink: 0;
 }
 .hn-side-title {
@@ -350,7 +330,7 @@ body.resizing-y .hn-tb { transition: none !important; }
   align-items: center;
   gap: var(--dw-space-10);
   padding: var(--dw-space-8) var(--dw-space-24);
-  min-height: var(--dw-header-h);
+  min-height: var(--dw-titlebar-h);
   flex-shrink: 0;
   border-bottom: 1px solid var(--dw-overlay-light);
 }
@@ -509,7 +489,7 @@ body.resizing-y .hn-tb { transition: none !important; }
   display: flex;
   align-items: center;
   gap: var(--dw-space-8);
-  min-height: var(--dw-header-h);
+  min-height: var(--dw-titlebar-h);
   padding: var(--dw-space-8) var(--dw-space-16);
   flex-shrink: 0;
   border-bottom: 1px solid var(--dw-overlay-light);
@@ -532,7 +512,7 @@ body.resizing-y .hn-tb { transition: none !important; }
   display: flex;
   align-items: center;
   gap: var(--dw-space-8);
-  min-height: var(--dw-header-h);
+  min-height: var(--dw-titlebar-h);
   padding: var(--dw-space-8) var(--dw-space-16);
   flex-shrink: 0;
 }

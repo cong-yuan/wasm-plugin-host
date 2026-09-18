@@ -14,10 +14,13 @@ return (function () {
   const S = studio.require('lib/slots');
 
   const render = (el, opts) => {
+    // No `data-tauri-drag-region`: these windows keep their OS titlebar (Tauri's
+    // default decorations), so there is nothing to drag — and the attribute
+    // asks for `core:window:allow-start-dragging`, which the capability does not
+    // grant, so it logs an error on every click.
     const titlebar = h('div', {
       class: 'hn-tb',
       'data-slot': 'titlebar',
-      'data-tauri-drag-region': '',
     });
 
     // ── left cluster ──

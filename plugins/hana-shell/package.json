@@ -1,0 +1,9 @@
+{
+  "name": "hana-shell-tests",
+  "private": true,
+  "type": "module",
+  "description": "Node harnesses for hana-shell. They load the plugin's JS the way the host does (`new Function`) and drive it against a small DOM shim, which is how the drag handling and the render tree get covered — `cargo test` cannot see either.",
+  "scripts": {
+    "test": "node tests/render.test.mjs && node tests/resize.test.mjs"
+  }
+}
