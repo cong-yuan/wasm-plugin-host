@@ -1,5 +1,5 @@
-// Element builder + the token accessor. Kept tiny on purpose: a plugin should
-// be readable without learning a framework.
+// Element builder. Prefer CSS classes over inline styles so the chrome matches
+// official DSH tokens (`var(--dsw-*)`) rather than baking colours into JS.
 return (function () {
   const h = (tag, attrs, ...kids) => {
     const el = document.createElement(tag);
@@ -18,10 +18,20 @@ return (function () {
     }
     return el;
   };
-  const sv = (n) => `var(--dw-${n})`;
-  const muted = (size) => `font-size:${size || 12}px;color:${sv('text-tertiary')}`;
-  /** A region wrapper: carries a data-slot attribute so CSS and tests can find it. */
-  const region = (name, style, ...kids) =>
-    h('div', { 'data-slot': name, style }, ...kids);
-  return { h, sv, muted, region };
+
+  /** Official token reference helper for the rare inline case. */
+  const dsw = (name) => `var(--dsw-${name})`;
+
+  /** Region wrapper: `data-slot` (official) + optional `data-dsh-surface`. */
+  const region = (slotName, attrs, ...kids) =>
+    h('div', Object.assign({ 'data-slot': slotName }, attrs || {}), ...kids);
+
+  const svgIcon = (d, size) =>
+    h('svg', {
+      width: size || 16, height: size || 16, viewBox: '0 0 24 24', fill: 'none',
+      stroke: 'currentColor', 'stroke-width': '1.7', 'stroke-linecap': 'round',
+      'stroke-linejoin': 'round', 'aria-hidden': 'true',
+    }, h('path', { d }));
+
+  return { h, dsw, region, svgIcon };
 })();

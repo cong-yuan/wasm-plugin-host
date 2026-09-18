@@ -111,8 +111,8 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
                 "name": "main",
                 "component": "DshWebShell",
                 "title": "dsh",
-                "width": 1320,
-                "height": 860,
+                "width": 1440,
+                "height": 900,
                 "open": "startup"
             }]
         }

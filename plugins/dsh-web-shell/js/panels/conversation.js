@@ -1,10 +1,6 @@
-// The centre column: session header, message stream, composer.
-//
-// Every region carries a slot, so a later plugin can add a header button, an
-// overlay on the stream, something beside the send button, or a panel around
-// the composer — without this file changing.
+// Centre column — official conversation root + composer classes. No fake chrome.
 return (function () {
-  const { h, sv, region } = studio.require('lib/dom');
+  const { h, svgIcon } = studio.require('lib/dom');
   const S = studio.require('lib/slots');
   const api = studio.require('lib/api');
 
@@ -12,127 +8,179 @@ return (function () {
     const state = { agentId: null, turns: [], busy: false };
 
     const root = h('main', {
+      class: 'dw-conv-root',
       'data-slot': 'main.conversation',
-      style: 'flex:1;min-width:0;display:flex;flex-direction:column;min-height:0',
+      'data-dsh-surface': 'conversation',
+      'data-phase': 'hero',
     });
 
-    // ── session header ───────────────────────────────────────────────────────
     const header = h('header', {
+      class: 'dw-conv-header',
       'data-slot': 'conversation.session.header',
-      style:
-        'display:flex;align-items:center;gap:10px;padding:9px 16px;min-height:44px;' +
-        'border-bottom:1px solid ' + sv('border-secondary'),
-    },
-      h('span', { style: 'font-size:13px;font-weight:500', text: 'New session' }),
-      h('span', { style: 'font-size:11px;color:' + sv('text-quaternary'), text: 'dsh agent loop' }),
-    );
+      'data-dsh-surface': 'session-header',
+    });
+    const titleRow = h('div', { class: 'dw-conv-titleRow' });
+    const titleEl = h('div', {
+      class: 'dw-conv-titleCluster',
+      style: 'font-size:16px;font-weight:500;line-height:24px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
+      text: 'New session',
+    });
     const headerActions = h('div', {
+      class: 'dw-conv-headerActions',
       'data-slot': 'conversation.session.header.actions',
-      style: 'margin-left:auto;display:flex;align-items:center;gap:6px',
     });
     S.mount('dsh-web.conversation.header.actions', headerActions);
-    header.appendChild(headerActions);
+    titleRow.appendChild(titleEl);
+    titleRow.appendChild(headerActions);
+    header.appendChild(titleRow);
     root.appendChild(header);
 
-    // ── message stream (the scroll port) ─────────────────────────────────────
-    const stream = h('div', {
+    const body = h('div', { class: 'dw-conv-body' });
+    const scroll = h('div', {
+      class: 'dw-conv-scrollBody dw-scroll-quiet',
+      'data-conversation-scroll': '',
+      'data-dsh-part': 'scrollport',
       'data-slot': 'conversation',
-      style: 'flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:14px;position:relative',
     });
-    const hero = h('div', {
-      'data-slot': 'conversation.hero',
-      style: 'margin:auto;text-align:center;max-width:46ch;color:' + sv('text-tertiary'),
-    },
-      h('div', { style: 'font-size:15px;margin-bottom:6px;color:' + sv('text-secondary'),
-        text: 'What should we build?' }),
-      h('div', { style: 'font-size:12px;line-height:1.7',
-        text: 'Your first message creates a dsh agent and streams its reply here.' }),
-    );
-    const heroSlot = h('div', { style: 'margin-top:14px' });
-    S.mount('dsh-web.conversation.hero', heroSlot);
-    hero.appendChild(heroSlot);
-    stream.appendChild(hero);
 
+    const hero = h('div', {
+      class: 'dw-conv-composerHero',
+      'data-slot': 'conversation.hero',
+    },
+      h('div', { class: 'dw-hero-root' },
+        h('div', { class: 'dw-hero-stack' },
+          h('div', { class: 'dw-hero-headline' },
+            h('span', { class: 'dw-hero-titleGroup', text: 'How can I help you today?' }),
+          ),
+          h('div', { class: 'dw-hero-body' }),
+        ),
+      ),
+    );
+    const heroSlot = h('div');
+    S.mount('dsh-web.conversation.hero', heroSlot);
+    hero.querySelector('.dw-hero-body').appendChild(heroSlot);
+
+    const stream = h('div', {
+      class: 'dw-msg-stream',
+      'data-slot': 'conversation.session',
+    });
     const overlay = h('div', {
+      style: 'position:absolute;top:0;right:0;pointer-events:none',
       'data-slot': 'conversation.overlay',
-      style: 'position:absolute;top:0;right:0;pointer-events:none;display:flex;flex-direction:column;gap:6px;padding:10px',
     });
     S.mount('dsh-web.conversation.overlay', overlay);
-    stream.appendChild(overlay);
-    root.appendChild(stream);
+
+    scroll.appendChild(hero);
+    scroll.appendChild(stream);
+    scroll.appendChild(overlay);
+    body.appendChild(scroll);
+
+    const seat = h('div', { class: 'dw-conv-composerSeat' });
+    const stack = h('div', { class: 'dw-conv-composerStack' });
+    const dockSlot = h('div', { 'data-slot': 'conversation.input.dock' });
+    S.mount('dsh-web.conversation.input.dock', dockSlot);
+    stack.appendChild(dockSlot);
+
+    const ta = h('textarea', {
+      class: 'dw-comp-input',
+      rows: 1,
+      placeholder: 'Ask anything…',
+      'data-phase': 'idle',
+      'data-dsh-part': 'composer-input',
+      style: 'resize:none;border:0;background:transparent;width:100%;display:block',
+    });
+
+    const sendBtn = h('button', {
+      class: 'dw-comp-primary',
+      type: 'button',
+      title: 'Send',
+      'aria-label': 'Send',
+    }, svgIcon('M5 12h14M13 6l6 6-6 6', 16));
+
+    const rightSlot = h('div', { style: 'display:flex;align-items:center;gap:8px' });
+    S.mount('dsh-web.conversation.input.right', rightSlot);
+
+    const card = h('div', {
+      class: 'dw-comp-card',
+      'data-slot': 'conversation.composer',
+      'data-dsh-surface': 'composer',
+    },
+      h('div', { class: 'dw-comp-scroll' }, ta),
+      h('div', { class: 'dw-comp-row' },
+        h('div', { class: 'dw-comp-tools' },
+          h('button', {
+            class: 'dw-comp-add', type: 'button', title: 'Add', 'aria-label': 'Add',
+          }, svgIcon('M12 5v14M5 12h14', 14)),
+        ),
+        h('div', { class: 'dw-comp-trailing' }, rightSlot, sendBtn),
+      ),
+    );
+
+    const composerRoot = h('div', { class: 'dw-comp-root' }, card);
+    stack.appendChild(composerRoot);
+    seat.appendChild(stack);
+    body.appendChild(seat);
+    root.appendChild(body);
+
+    const setPhase = (phase) => root.setAttribute('data-phase', phase);
 
     const draw = () => {
-      // Keep hero + overlay; replace only the message rows.
-      for (const n of [...stream.children]) {
-        if (n !== hero && n !== overlay) n.remove();
-      }
-      hero.style.display = state.turns.length ? 'none' : '';
+      stream.replaceChildren();
+      const empty = state.turns.length === 0;
+      hero.style.display = empty ? '' : 'none';
+      setPhase(empty ? 'hero' : 'active');
       for (const t of state.turns) {
-        const mine = t.role === 'user';
-        stream.appendChild(h('div', {
-          'data-chat-message': t.role,
-          style: 'display:flex;gap:10px;' + (mine ? 'justify-content:flex-end' : ''),
-        },
-          h('div', {
-            style:
-              'max-width:78%;padding:9px 12px;border-radius:8px;font-size:13px;line-height:1.65;' +
-              'white-space:pre-wrap;word-break:break-word;' +
-              (mine
-                ? 'background:' + sv('primary-bg') + ';border:1px solid ' + sv('primary-border')
-                : 'background:' + sv('fill-secondary')),
-          }, t.text),
-        ));
+        if (t.role === 'user') {
+          stream.appendChild(h('div', {
+            class: 'dw-msg-userRow',
+            'data-role': 'user',
+            'data-dsh-part': 'message-row',
+          },
+            h('div', { class: 'dw-msg-userStack' },
+              h('div', {
+                class: 'dw-msg-bubble',
+                'data-dsh-part': 'message-body',
+                text: t.text,
+              }),
+            ),
+          ));
+        } else {
+          stream.appendChild(h('div', {
+            'data-role': t.role,
+            'data-dsh-part': 'message-row',
+          },
+            h('div', {
+              class: t.role === 'system' ? 'dw-msg-system' : 'dw-msg-assistant',
+              'data-dsh-part': 'message-body',
+              text: t.text,
+            }),
+          ));
+        }
       }
-      stream.scrollTop = stream.scrollHeight;
+      scroll.scrollTop = scroll.scrollHeight;
     };
 
-    // ── composer ─────────────────────────────────────────────────────────────
-    const dock = h('div', {
-      'data-slot': 'conversation.input.dock',
-      style: 'padding:0 16px 14px;display:flex;flex-direction:column;gap:6px',
-    });
-    const dockSlotTop = h('div', { style: 'display:flex;gap:6px;align-items:center' });
-    S.mount('dsh-web.conversation.input.dock', dockSlotTop);
-    dock.appendChild(dockSlotTop);
-
-    const input = h('textarea', {
-      rows: 1,
-      placeholder: 'Message the agent…  (Enter to send, Shift+Enter for newline)',
-      style:
-        'flex:1;resize:none;border:0;outline:none;background:transparent;font:inherit;' +
-        'font-size:13px;line-height:1.55;color:' + sv('text') + ';max-height:170px',
-    });
-    const sendBtn = h('button', {
-      text: 'Send',
-      style:
-        'padding:6px 14px;border-radius:6px;border:1px solid ' + sv('primary') + ';font:inherit;' +
-        'font-size:12px;cursor:pointer;background:' + sv('primary') + ';color:' + sv('text-on-primary'),
-    });
-    // Slot *inside* the composer, right of the send button.
-    const rightSlot = h('div', { style: 'display:flex;align-items:center;gap:6px' });
-    S.mount('dsh-web.conversation.input.right', rightSlot);
-    const composer = h('div', {
-      'data-slot': 'conversation.composer',
-      style:
-        'display:flex;align-items:flex-end;gap:10px;padding:10px 12px;border-radius:10px;' +
-        'border:1px solid ' + sv('border') + ';background:' + sv('bg-elevated'),
-    }, input, sendBtn, rightSlot);
-    dock.appendChild(composer);
-    root.appendChild(dock);
-
     const submit = async () => {
-      const text = input.value.trim();
+      const text = ta.value.trim();
       if (!text || state.busy) return;
       state.busy = true;
+      sendBtn.disabled = true;
       state.turns.push({ role: 'user', text });
-      input.value = '';
+      if (titleEl.textContent === 'New session') {
+        titleEl.textContent = text.length > 42 ? text.slice(0, 42) + '…' : text;
+      }
+      ta.value = '';
+      ta.style.height = '';
       draw();
       if (!state.agentId) {
         const a = await api.createAgent('mock', 'mock-1');
         state.agentId = typeof a === 'string' && a ? a : (a && a.id) || null;
         if (!state.agentId) {
-          state.turns.push({ role: 'system', text: 'Could not create an agent — is the harness online?' });
-          state.busy = false; draw(); return;
+          state.turns.push({ role: 'system', text: 'Harness offline — could not create an agent.' });
+          state.busy = false;
+          sendBtn.disabled = false;
+          draw();
+          return;
         }
       }
       await api.send(state.agentId, text, 'm' + state.turns.length);
@@ -142,14 +190,25 @@ return (function () {
         const last = t && t[t.length - 1];
         if (last && last.role !== 'user') {
           state.turns = t.map((m) => ({ role: m.role, text: m.text ?? '' }));
-          draw(); break;
+          draw();
+          break;
         }
       }
       state.busy = false;
+      sendBtn.disabled = false;
     };
+
     sendBtn.onclick = submit;
-    input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } };
-    input.oninput = () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 170) + 'px'; };
+    ta.onkeydown = (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        submit();
+      }
+    };
+    ta.oninput = () => {
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 336) + 'px';
+    };
 
     draw();
     el.appendChild(root);
