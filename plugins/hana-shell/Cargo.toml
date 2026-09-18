@@ -1,9 +1,10 @@
 [package]
-name = "dsh-web-shell"
+name = "hana-shell"
 version = "0.1.0"
 edition = "2021"
 
-# A recreation of the dsh-web shell (zhu1090093659/dsh-web), as a WASM plugin.
+# HanaAgent's chrome (liliMozi/openhanako), recreated as a WASM plugin on top of
+# dsh-web's slot discipline.
 #
 # It owns the launch view and opens a **fine-grained slot at every region** of
 # the layout, so later plugins can add features without touching this one.

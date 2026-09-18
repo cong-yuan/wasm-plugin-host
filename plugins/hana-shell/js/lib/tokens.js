@@ -49,9 +49,12 @@ return (function () {
 
     // Layout. The composer is narrower than the window and the columns are
     // fixed widths, which is what makes the proportions read as a document
-    // rather than a dashboard.
+    // rather than a dashboard. `titlebar-h` is the row above the columns; the
+    // rail and preview are the two right-hand columns (Hana's `jian-sidebar`
+    // and preview panel).
     'sidebar-width': '240px',
-    'details-width': '260px',
+    'rail-width': '260px',
+    'preview-width': '580px',
     'titlebar-h': '44px',
     'chat-column-width': '720px',
     'chat-column-extra': '1.25rem',

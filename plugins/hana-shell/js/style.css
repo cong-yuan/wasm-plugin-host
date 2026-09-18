@@ -1,0 +1,475 @@
+/* hana-shell — HanaAgent's chrome on a slot-bearing shell.
+ *
+ * Source of the look: `liliMozi/openhanako` (Apache-2.0). Three decisions carry
+ * it, and naming them matters because they are what separates this from a
+ * generic admin panel:
+ *
+ *   1. Warm paper, not grey. Light-theme surfaces are off-white (#F8F4ED) and
+ *      the borders/shadows are tinted brown, not neutral.
+ *   2. Serif display, sans UI. Headings and the assistant's prose are serif;
+ *      everything interactive stays sans.
+ *   3. Low-contrast accents. Accent-tinted surfaces sit at 6–12% opacity, so
+ *      the accent is a wash rather than a colour block.
+ *
+ * Structure follows upstream's `styles.css`:
+ *
+ *   .app-shell (flex column)          → .hn-shell
+ *   ├─ .titlebar 44px                 → .hn-tb
+ *   └─ .app (flex row)                → .hn-app
+ *       ├─ .sidebar 240px             → .hn-col-sidebar
+ *       ├─ .main-content flex:1       → .hn-col-main
+ *       ├─ preview 580px              → .hn-col-preview
+ *       └─ .jian-sidebar 260px        → .hn-col-rail
+ *
+ * Class names are this plugin's own (`hn-…`), because the panels here are ours
+ * — see lib/slots.js. Motion comes from lib/motion.js, installed alongside
+ * this sheet.
+ */
+
+/* ── The window ────────────────────────────────────────────────────────────
+   A plugin that owns the window must paint `html` AND `body`. The host app's
+   own stylesheet sets `body { background: var(--bg-canvas) }` (a near-black),
+   which sits *below* this plugin's shell and shows through wherever the shell
+   does not reach — a dark band under a translucent surface, or a border of the
+   wrong colour at the edges. Setting both is the only reliable fix; there is no
+   "unset the host" option, and depending on the host's variable names would
+   couple the two. ────────────────────────────────────────────────────────── */
+html, body { margin: 0; height: 100%; overflow: hidden; }
+html[data-theme="warm-paper"] { background: #F8F4ED; }
+html[data-theme="midnight"]   { background: #3B4A54; }
+html[data-theme="warm-paper"] body { background: #F8F4ED; }
+html[data-theme="midnight"]   body { background: #3B4A54; }
+
+.hn-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--dw-bg);
+  color: var(--dw-text);
+  font-family: var(--dw-font-ui);
+  font-size: var(--dw-fs-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Titlebar ──────────────────────────────────────────────────────────────
+   44px, the row above everything. A flex row of three clusters; the centre one
+   takes the slack so a long title stays centred without absolute positioning. */
+.hn-tb {
+  display: flex;
+  align-items: center;
+  gap: var(--dw-space-8);
+  flex-shrink: 0;
+  height: var(--dw-titlebar-h);
+  padding: 0 var(--dw-space-12);
+  background: var(--dw-bg);
+  border-bottom: 1px solid var(--dw-overlay-light);
+}
+
+.hn-tb-left, .hn-tb-right { display: flex; align-items: center; gap: 2px; }
+.hn-tb-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dw-space-8);
+}
+.hn-tb-title {
+  font-size: var(--dw-fs-caption);
+  color: var(--dw-text-light);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hn-tb-slot { display: flex; align-items: center; gap: 2px; }
+.hn-tb-slot:empty { display: none; }
+
+.hn-tb-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px; height: 28px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--dw-radius-sm);
+  background: transparent;
+  color: var(--dw-text-light);
+  cursor: default;
+  opacity: 0.8;
+  transition: background var(--dw-duration-fast) var(--dw-ease-out),
+              color var(--dw-duration-fast) var(--dw-ease-out),
+              opacity var(--dw-duration-fast) var(--dw-ease-out);
+}
+.hn-tb-toggle:hover { background: var(--dw-overlay-light); color: var(--dw-text); opacity: 1; }
+
+/* ── The column row ──────────────────────────────────────────────────────── */
+.hn-app {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  max-width: 100%;
+}
+
+.hn-col-sidebar,
+.hn-col-main,
+.hn-col-preview,
+.hn-col-rail { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+
+.hn-col-sidebar {
+  width: var(--dw-sidebar-width);
+  flex-shrink: 0;
+  background: var(--dw-sidebar-bg);
+  border-right: 1px solid var(--dw-overlay-light);
+  overflow: hidden;
+  transition: width var(--dw-duration-slow) var(--dw-ease-out),
+              border-color var(--dw-duration-slow) var(--dw-ease-out);
+}
+.hn-col-sidebar[data-collapsed] { width: 0; border-right-color: transparent; }
+
+.hn-col-main { flex: 1; position: relative; }
+
+.hn-col-preview {
+  width: var(--dw-preview-width);
+  flex-shrink: 0;
+  border-left: 1px solid var(--dw-overlay-light);
+  overflow: hidden;
+  transition: width var(--dw-duration-slow) var(--dw-ease-out),
+              border-color var(--dw-duration-slow) var(--dw-ease-out);
+}
+.hn-col-preview[data-collapsed] { width: 0; border-left-color: transparent; }
+
+/* The rail mirrors the sidebar: fixed width, collapses to zero so a slot inside
+   keeps its contributions rather than being unmounted. */
+.hn-col-rail {
+  width: var(--dw-rail-width);
+  flex-shrink: 0;
+  overflow: hidden;
+  box-shadow: -8px 0 24px var(--dw-shadow);
+  transition: width var(--dw-duration-slow) var(--dw-ease-out),
+              box-shadow var(--dw-duration-slow) var(--dw-ease-out);
+}
+.hn-col-rail[data-collapsed] { width: 0; box-shadow: none; }
+
+.hn-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+
+/* ── Shared bits ─────────────────────────────────────────────────────────── */
+
+/* An unclaimed slot must take no space, or every slot nobody uses becomes a
+   gap in the layout. */
+.hn-slot:empty,
+[data-host-slot]:empty { display: none; }
+.hn-slot-inline { display: inline-flex; align-items: center; }
+.hn-slot-inline:empty { display: none; }
+
+.hn-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px; height: 26px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--dw-radius-sm);
+  background: none;
+  color: var(--dw-text-muted);
+  cursor: default;
+  transition: background var(--dw-duration-fast) var(--dw-ease-out),
+              color var(--dw-duration-fast) var(--dw-ease-out);
+}
+.hn-icon-btn:hover { background: var(--dw-overlay-light); color: var(--dw-text); }
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+.hn-side { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+/* Inner content keeps its width while the column animates to zero. */
+.hn-side > * { width: var(--dw-sidebar-width); flex-shrink: 0; }
+
+.hn-side-header {
+  display: flex;
+  align-items: center;
+  gap: var(--dw-space-8);
+  padding: var(--dw-space-12) var(--dw-space-12) var(--dw-space-8);
+  min-height: var(--dw-titlebar-h);
+  flex-shrink: 0;
+}
+.hn-side-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--dw-fs-caption);
+  font-weight: 600;
+  color: var(--dw-text);
+  letter-spacing: -0.005em;
+}
+.hn-side-headerActions { display: flex; align-items: center; gap: 2px; }
+
+.hn-side-activities {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 var(--dw-space-8) var(--dw-space-8);
+  flex-shrink: 0;
+}
+.hn-side-activity {
+  display: flex;
+  align-items: center;
+  gap: var(--dw-space-10);
+  width: 100%;
+  padding: var(--dw-space-8) var(--dw-space-10);
+  border: none;
+  border-radius: var(--dw-radius-sm);
+  background: transparent;
+  color: var(--dw-text-light);
+  font: inherit;
+  font-size: var(--dw-fs-caption);
+  text-align: left;
+  cursor: default;
+  transition: background var(--dw-duration-fast) var(--dw-ease-out),
+              color var(--dw-duration-fast) var(--dw-ease-out);
+}
+.hn-side-activity:hover { background: var(--dw-overlay-light); color: var(--dw-text); }
+.hn-side-activityLabel { flex: 1; }
+
+.hn-side-sessions {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--dw-space-8);
+}
+
+.hn-side-notice { flex-shrink: 0; padding: 0 var(--dw-space-8) var(--dw-space-8); }
+
+.hn-side-footer {
+  flex-shrink: 0;
+  padding: var(--dw-space-10) var(--dw-space-16) var(--dw-space-12);
+  border-top: 1px solid var(--dw-overlay-light);
+  font-size: var(--dw-fs-hint);
+  line-height: 1.7;
+  color: var(--dw-text-muted);
+}
+.hn-side-footerStatus { display: flex; align-items: center; justify-content: space-between; gap: var(--dw-space-8); }
+
+/* ── Conversation ────────────────────────────────────────────────────────── */
+.hn-conv { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+
+.hn-conv-header {
+  display: flex;
+  align-items: center;
+  gap: var(--dw-space-10);
+  padding: var(--dw-space-8) var(--dw-space-24);
+  min-height: var(--dw-titlebar-h);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--dw-overlay-light);
+}
+.hn-conv-titleRow { display: flex; align-items: center; gap: var(--dw-space-8); min-width: 0; flex: 1; }
+.hn-conv-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--dw-text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hn-conv-headerActions { margin-left: auto; display: flex; align-items: center; gap: var(--dw-space-4); }
+
+.hn-conv-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.hn-conv-scroll { flex: 1; overflow-y: auto; min-height: 0; padding: var(--dw-space-16) 0; }
+
+.hn-msg-stream { display: flex; flex-direction: column; }
+
+/* The user's turn gets a surface; the assistant's is prose in a column. */
+.hn-msg-userRow { display: flex; justify-content: center; padding: var(--dw-space-6) var(--dw-space-24); }
+.hn-msg-userStack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: calc(var(--dw-chat-column-width) - 4rem);
+  width: fit-content;
+}
+.hn-msg-bubble {
+  padding: var(--dw-space-10) var(--dw-space-14);
+  border-radius: var(--dw-radius-chat-card);
+  background: var(--dw-user-bg);
+  color: var(--dw-text);
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.hn-msg-assistant {
+  max-width: var(--dw-chat-column-width);
+  margin: 0 auto;
+  padding: var(--dw-space-12) var(--dw-space-24);
+  /* Serif prose — the single most identifiable part of the look. */
+  font-family: var(--dw-font-serif);
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--dw-hanako-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  animation: dw-stream-tail-in var(--dw-duration-slow) var(--dw-ease-out);
+}
+.hn-msg-system {
+  max-width: var(--dw-chat-column-width);
+  margin: var(--dw-space-8) auto;
+  padding: var(--dw-space-8) var(--dw-space-24);
+  font-size: var(--dw-fs-caption);
+  color: var(--dw-text-muted);
+}
+
+/* Empty state, in the serif display face. */
+.hn-hero { margin: auto; text-align: center; max-width: 44ch; color: var(--dw-text-muted); }
+.hn-hero-stack { display: flex; flex-direction: column; gap: var(--dw-space-6); }
+.hn-hero-titleGroup { display: flex; flex-direction: column; gap: var(--dw-space-4); }
+.hn-hero-headline {
+  font-family: var(--dw-font-serif);
+  font-size: 1.55rem;
+  font-weight: 500;
+  color: var(--dw-text);
+  letter-spacing: -0.01em;
+}
+.hn-hero-body { font-size: var(--dw-fs-caption); line-height: 1.7; }
+
+/* Composer. The 16px radius and the 720px column are the two numbers that make
+   it look like Hana's input rather than a textarea. */
+.hn-conv-composerSeat { padding: 0 var(--dw-space-24) var(--dw-space-24); flex-shrink: 0; }
+.hn-conv-composerStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dw-space-6);
+  max-width: var(--dw-chat-column-width);
+  margin: 0 auto;
+  width: 100%;
+}
+
+.hn-comp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dw-space-8);
+  padding: var(--dw-space-10) var(--dw-space-12);
+  background: var(--dw-bg-card);
+  border: 1px solid rgba(var(--dw-accent-rgb), 0.12);
+  border-radius: var(--dw-radius-chat-surface);
+  box-shadow: 0 1px 2px var(--dw-shadow);
+  transition: border-color var(--dw-duration-fast) var(--dw-ease-out),
+              box-shadow var(--dw-duration-fast) var(--dw-ease-out);
+}
+.hn-comp:focus-within { border-color: rgba(var(--dw-accent-rgb), 0.32); box-shadow: 0 2px 8px var(--dw-shadow); }
+.hn-comp-input {
+  flex: 1;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: var(--dw-fs-body);
+  line-height: 1.6;
+  color: var(--dw-text);
+  max-height: 170px;
+}
+.hn-comp-input::placeholder { color: var(--dw-text-muted); }
+.hn-comp-row { display: flex; align-items: center; justify-content: space-between; gap: var(--dw-space-6); }
+.hn-comp-trailing, .hn-comp-trailingSlot { display: flex; align-items: center; gap: var(--dw-space-6); }
+.hn-comp-trailingSlot:empty { display: none; }
+.hn-comp-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px; height: 28px;
+  flex: 0 0 28px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dw-text-muted);
+  cursor: default;
+  transition: background var(--dw-duration-fast) var(--dw-ease-out);
+}
+.hn-comp-add:hover { background: var(--dw-overlay-light); color: var(--dw-text); }
+.hn-comp-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px; height: 28px;
+  flex: 0 0 28px;
+  border: none;
+  border-radius: 50%;
+  background: var(--dw-accent);
+  color: #fff;
+  cursor: default;
+  transition: background var(--dw-duration-fast) var(--dw-ease-out),
+              transform var(--dw-duration-fast) var(--dw-ease-out);
+}
+.hn-comp-primary:hover { background: var(--dw-accent-hover); transform: scale(1.04); }
+.hn-comp-primary:disabled { background: var(--dw-overlay-medium); color: var(--dw-text-muted); transform: none; }
+.hn-comp-tools { display: flex; align-items: center; gap: var(--dw-space-6); flex-wrap: wrap; }
+.hn-comp-card {
+  padding: var(--dw-space-16);
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+  background: var(--dw-bg-card);
+}
+
+/* ── Preview column ──────────────────────────────────────────────────────── */
+.hn-preview { display: flex; flex-direction: column; height: 100%; min-height: 0; width: var(--dw-preview-width); }
+.hn-preview-header {
+  display: flex;
+  align-items: center;
+  gap: var(--dw-space-8);
+  min-height: var(--dw-titlebar-h);
+  padding: var(--dw-space-8) var(--dw-space-16);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--dw-overlay-light);
+}
+.hn-preview-title {
+  flex: 1;
+  font-size: var(--dw-fs-ui);
+  font-weight: 600;
+  color: var(--dw-text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.hn-preview-actions { display: flex; align-items: center; gap: 2px; }
+.hn-preview-body { flex: 1; min-height: 0; overflow-y: auto; }
+
+/* ── Right rail ──────────────────────────────────────────────────────────── */
+.hn-rail { display: flex; flex-direction: column; height: 100%; min-height: 0; width: var(--dw-rail-width); }
+.hn-rail > * { width: var(--dw-rail-width); flex-shrink: 0; }
+.hn-rail-header {
+  display: flex;
+  align-items: center;
+  gap: var(--dw-space-8);
+  min-height: var(--dw-titlebar-h);
+  padding: var(--dw-space-8) var(--dw-space-16);
+  flex-shrink: 0;
+}
+.hn-rail-title {
+  flex: 1;
+  font-size: var(--dw-fs-ui);
+  font-weight: 600;
+  color: var(--dw-text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.hn-rail-actions { display: flex; align-items: center; gap: 2px; }
+.hn-rail-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--dw-space-8) var(--dw-space-12); }
+
+/* ── Scrollbars: invisible until hovered. ────────────────────────────────── */
+.hn-scroll-quiet { overflow-y: auto; }
+.hn-scroll-quiet::-webkit-scrollbar { width: 10px; height: 10px; }
+.hn-scroll-quiet::-webkit-scrollbar-thumb { background: transparent; border-radius: 5px; }
+.hn-scroll-quiet:hover::-webkit-scrollbar-thumb { background: var(--dw-overlay-medium); }
+
+/* ── Motion is opt-out, everywhere, as upstream does it. ─────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

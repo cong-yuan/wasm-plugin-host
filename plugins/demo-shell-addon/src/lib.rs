@@ -1,4 +1,4 @@
-//! `demo-shell-addon` — a second plugin that extends `dsh-web-shell`.
+//! `demo-shell-addon` — a second plugin that extends `hana-shell`.
 //!
 //! It exists to demonstrate the compatibility guarantee: it contributes to four
 //! of the shell's slots while knowing **nothing** about the shell's internals.
@@ -6,7 +6,7 @@
 
 #[no_mangle] pub extern "C" fn plugin_abi_version() -> i32 { 1 }
 #[no_mangle] pub extern "C" fn plugin_init() -> i32 {
-    println!("demo-shell-addon: up (extends dsh-web-shell through its slots)");
+    println!("demo-shell-addon: up (extends hana-shell through its slots)");
     0
 }
 #[no_mangle] pub extern "C" fn plugin_shutdown() {}
@@ -20,10 +20,10 @@
 /// The slots this plugin fills. Declared so the host can show the wiring in the
 /// slot inspector without running the plugin's JS.
 const INJECTS: &[(&str, &str)] = &[
-    ("dsh-web.sidebar.items", "AddonSidebarRows"),
-    ("dsh-web.conversation.header.actions", "AddonHeaderButton"),
-    ("dsh-web.conversation.input.right", "AddonComposerChip"),
-    ("dsh-web.details.items", "AddonDetailsPanel"),
+    ("hana.sidebar.sessions", "AddonSidebarRows"),
+    ("hana.titlebar.right", "AddonHeaderButton"),
+    ("hana.conversation.input.right", "AddonComposerChip"),
+    ("hana.rail.items", "AddonDetailsPanel"),
 ];
 
 #[no_mangle]

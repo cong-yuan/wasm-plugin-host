@@ -1,13 +1,14 @@
-// Adds four things to the dsh-web shell, using only its public slot names.
+// Adds four things to the Hana shell, using only its public slot names.
 //
 // Nothing here imports the shell's code or knows how it is built — which is the
 // whole point of a slot: the shell can be rewritten and this keeps working, as
-// long as the names hold.
+// long as the names hold. It contributes to the sidebar list, the titlebar's
+// right cluster, the composer, and the right rail.
 studio.register('AddonClock', (el) => {
   const tick = () => { el.textContent = new Date().toLocaleTimeString(); };
   tick();
   const iv = setInterval(tick, 1000);
-  el.style.cssText = 'font-size:11px;color:var(--dw-text-tertiary)';
+  el.style.cssText = 'font-size:11px;color:var(--dw-text-muted)';
   return () => clearInterval(iv);
 });
 
@@ -15,9 +16,10 @@ studio.register('AddonHeaderButton', (el) => {
   const b = document.createElement('button');
   b.textContent = 'Addon';
   b.setAttribute('data-addon', 'header-button');
+  b.className = 'hn-tb-toggle';
   b.style.cssText =
-    'padding:3px 10px;border-radius:6px;font:inherit;font-size:11px;cursor:pointer;' +
-    'border:1px solid var(--dw-border);background:transparent;color:var(--dw-text-secondary)';
+    'width:auto;padding:0 10px;border-radius:6px;font:inherit;' +
+    'font-size:11px;color:var(--dw-text-light)';
   b.onclick = () => {
     b.textContent = b.textContent === 'Addon' ? 'clicked!' : 'Addon';
   };
@@ -29,8 +31,8 @@ studio.register('AddonComposerChip', (el) => {
   s.textContent = 'mock-1';
   s.setAttribute('data-addon', 'composer-chip');
   s.style.cssText =
-    'font-size:11px;padding:2px 8px;border-radius:999px;background:var(--dw-fill-secondary);' +
-    'color:var(--dw-text-tertiary)';
+    'font-size:11px;padding:2px 8px;border-radius:999px;background:var(--dw-overlay-light);' +
+    'color:var(--dw-text-muted)';
   el.appendChild(s);
 });
 
@@ -39,29 +41,28 @@ studio.register('AddonSidebarRows', (el) => {
     const b = document.createElement('button');
     b.textContent = label;
     b.setAttribute('data-addon', 'sidebar-row');
-    b.style.cssText =
-      'display:flex;align-items:center;gap:9px;width:100%;padding:7px 9px;border:0;' +
-      'border-radius:6px;cursor:pointer;font:inherit;font-size:13px;text-align:left;' +
-      'color:var(--dw-text-tertiary);background:transparent';
-    b.onmouseenter = () => { b.style.background = 'var(--dw-fill-secondary)'; };
-    b.onmouseleave = () => { b.style.background = 'transparent'; };
+    b.className = 'hn-side-activity';
+    b.style.cssText = 'margin:1px 0';
     el.appendChild(b);
   }
 });
 
 studio.register('AddonDetailsPanel', (el) => {
-  el.style.cssText = 'padding:12px 14px;border-bottom:1px solid var(--dw-border-tertiary)';
+  el.style.cssText =
+    'padding:12px 14px;margin:8px;border:1px solid var(--dw-border);' +
+    'border-radius:var(--dw-radius-card);background:var(--dw-bg-card)';
   el.innerHTML =
     '<div style="font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;' +
-    'color:var(--dw-text-quaternary);margin-bottom:6px">From the addon</div>' +
-    '<div style="font-size:12px;color:var(--dw-text-tertiary);line-height:1.7">' +
+    'color:var(--dw-text-muted);margin-bottom:6px">From the addon</div>' +
+    '<div style="font-size:12px;color:var(--dw-text-light);line-height:1.7">' +
     'This panel is contributed by a <b>different plugin</b>, through a slot the shell opened. ' +
     'The shell has no knowledge of it.</div>';
 });
 
 // One declaration per host slot. No ordering requirement: this plugin may load
 // before or after the shell.
-studio.inject('dsh-web.sidebar.items', 'AddonSidebarRows', 10);
-studio.inject('dsh-web.conversation.header.actions', 'AddonHeaderButton', 10);
-studio.inject('dsh-web.conversation.input.right', 'AddonComposerChip', 10);
-studio.inject('dsh-web.details.items', 'AddonDetailsPanel', 10);
+studio.inject('hana.sidebar.sessions', 'AddonSidebarRows', 10);
+studio.inject('hana.titlebar.right', 'AddonHeaderButton', 10);
+studio.inject('hana.conversation.input.right', 'AddonComposerChip', 10);
+studio.inject('hana.rail.items', 'AddonClock', 10);
+studio.inject('hana.rail.items', 'AddonDetailsPanel', 20);

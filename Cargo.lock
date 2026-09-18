@@ -661,13 +661,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dsh-web-shell"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "either"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -948,6 +941,13 @@ dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
  "stable_deref_trait",
+]
+
+[[package]]
+name = "hana-shell"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

@@ -1,16 +1,18 @@
-//! `dsh-web-shell` — the shell from `zhu1090093659/dsh-web`, as a WASM plugin.
+//! `hana-shell` — HanaAgent's layout (`liliMozi/openhanako`) as a WASM plugin.
 //!
 //! It claims the launch view (`open: "startup"`), so the app opens **this**
-//! window at startup and keeps its own hidden.
+//! window at startup and keeps its own hidden. That is what makes "the Hana
+//! shell is the app" true rather than aspirational: the plugin owns the window,
+//! and the studio's own page is a fallback for when no shell is installed.
 //!
 //! ## The point is the slot surface, not the pixels
 //!
-//! Every region of the three-column layout opens a slot, so a plugin written
+//! Every region of HanaAgent's chrome opens a slot, so a plugin written
 //! **later** can add a feature with a one-line declaration — no change here, no
 //! rebuild, no ordering requirement:
 //!
 //! ```json
-//! "ui": { "injects": [{ "slot": "dsh-web.sidebar.footer", "component": "Status" }] }
+//! "ui": { "injects": [{ "slot": "hana.sidebar.notice", "component": "Status" }] }
 //! ```
 //!
 //! The inventory is declared below in `SLOTS` and mirrored in `js/lib/slots.js`,
@@ -19,19 +21,29 @@
 //! inspector, and a name collision with another plugin is reported as an error
 //! instead of silently producing two half-filled regions.
 //!
+//! ## Two sources, kept separate
+//!
+//! | Concern | From | Why |
+//! |---|---|---|
+//! | **Layout** | `liliMozi/openhanako` | The chrome that is being recreated |
+//! | **Slot discipline** | `zhu1090093659/dsh-web` | Named regions, explicit order, no DOM surgery |
+//!
+//! HanaAgent's plugin model is an iframe with an SDK handshake; ours is a slot
+//! that renders directly. So the *chrome* is copied and the *plugin surface* is
+//! ours — the slot inventory below is the contract that difference produces.
+//!
 //! ## Naming
 //!
-//! Slot names follow dsh-web's `data-slot` convention (`sidebar.…`,
-//! `conversation.…`, `details`, `shell.overlay`) so the layout reads the same as
-//! the project this recreates. The `dsh-web.` prefix is ours: it keeps these
-//! distinct from any other plugin's slots.
+//! Slot names follow HanaAgent's regions (`titlebar.…`, `sidebar.…`,
+//! `conversation.…`, `preview`, `rail`, `shell.overlay`). The `hana.` prefix is
+//! ours: it keeps these distinct from any other plugin's slots.
 
 #[no_mangle]
 pub extern "C" fn plugin_abi_version() -> i32 { 1 }
 
 #[no_mangle]
 pub extern "C" fn plugin_init() -> i32 {
-    println!("dsh-web-shell: up (owns the launch view; 12 slots open for later plugins)");
+    println!("hana-shell: up (owns the launch view; 17 slots open for later plugins)");
     0
 }
 
@@ -57,19 +69,38 @@ pub extern "C" fn plugin_invoke(_a: i32, _b: i32, _c: i32, _d: i32, _e: i32, _f:
 /// Declaring them here (rather than only in JS) is what makes the layout a
 /// **contract**: the host knows the surface a plugin host offers, and a second
 /// declaration of the same name is an error rather than a silent merge.
+///
+/// The order mirrors the layout, so "where would this go?" is answerable by
+/// reading this list top to bottom.
 const SLOTS: &[(&str, &str)] = &[
-    ("dsh-web.sidebar.brand", "Beside the brand mark, top of the sidebar"),
-    ("dsh-web.sidebar.actions", "Icon buttons in the sidebar header row"),
-    ("dsh-web.sidebar.items", "The main sidebar list, below the header"),
-    ("dsh-web.sidebar.footer", "Sidebar footer: status, account, extra actions"),
-    ("dsh-web.conversation.header.actions", "Buttons in the session header"),
-    ("dsh-web.conversation.hero", "Empty-state area, shown before the first message"),
-    ("dsh-web.conversation.overlay", "Floated over the message stream"),
-    ("dsh-web.conversation.input.dock", "Around the composer (above/below the box)"),
-    ("dsh-web.conversation.input.right", "Right of the send button, inside the composer"),
-    ("dsh-web.details.header", "Right column header row"),
-    ("dsh-web.details.items", "Right column body"),
-    ("dsh-web.shell.overlay", "Spans the whole window, above everything"),
+    // ── Titlebar (44px, the row above everything) ──
+    ("hana.titlebar.left", "Left cluster: sidebar toggle, new session"),
+    ("hana.titlebar.center", "Centre: the session title / channel tabs"),
+    ("hana.titlebar.right", "Right cluster: widget buttons, panel toggles"),
+
+    // ── Left sidebar (240px) ──
+    ("hana.sidebar.header", "Header row: title, new-chat, settings, collapse"),
+    ("hana.sidebar.activities", "The activity bars: bridge, activity, automation, skills"),
+    ("hana.sidebar.sessions", "The session list"),
+    ("hana.sidebar.notice", "The notice slot above the footer (update stickers)"),
+    ("hana.sidebar.footer", "Sidebar footer: status, account, extra actions"),
+
+    // ── Centre column ──
+    ("hana.conversation.header", "Session header: title and actions"),
+    ("hana.conversation.hero", "Empty state, shown before the first message"),
+    ("hana.conversation.stream", "The message stream itself"),
+    ("hana.conversation.input.dock", "Around the composer (above/below the box)"),
+    ("hana.conversation.input.right", "Inside the composer, after Send"),
+
+    // ── Preview panel (580px, collapsible) ──
+    ("hana.preview.panel", "The right-hand preview/document panel"),
+
+    // ── Right column / rail (260px) ──
+    ("hana.rail.header", "Right column header row"),
+    ("hana.rail.items", "Right column body (activity, todos, files)"),
+
+    // ── Frame level ──
+    ("hana.shell.overlay", "Spans the whole window, above everything"),
 ];
 
 /// Assets, each a real file pulled in at compile time. The script text stays a
@@ -81,9 +112,11 @@ const ASSETS: &[(&str, &str)] = &[
     ("lib/motion.js", include_str!("../js/lib/motion.js")),
     ("lib/slots.js", include_str!("../js/lib/slots.js")),
     ("lib/api.js", include_str!("../js/lib/api.js")),
+    ("panels/titlebar.js", include_str!("../js/panels/titlebar.js")),
     ("panels/sidebar.js", include_str!("../js/panels/sidebar.js")),
     ("panels/conversation.js", include_str!("../js/panels/conversation.js")),
-    ("panels/details.js", include_str!("../js/panels/details.js")),
+    ("panels/preview.js", include_str!("../js/panels/preview.js")),
+    ("panels/rail.js", include_str!("../js/panels/rail.js")),
     ("panels/shell.js", include_str!("../js/panels/shell.js")),
     ("style.css", include_str!("../js/style.css")),
     ("entry.js", include_str!("../js/entry.js")),
@@ -102,7 +135,7 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
         .collect();
 
     let decl = serde_json::json!({
-        "name": "dsh-web-shell",
+        "name": "hana-shell",
         "abi": 1,
         "tools": [],
         "ui": {
@@ -110,8 +143,8 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
             "provides": provides,
             "windows": [{
                 "name": "main",
-                "component": "DshWebShell",
-                "title": "dsh",
+                "component": "HanaShell",
+                "title": "Hana",
                 "width": 1440,
                 "height": 900,
                 "open": "startup"

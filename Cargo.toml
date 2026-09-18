@@ -16,6 +16,6 @@ members = [
     "plugins/ui-curator",
     "plugins/ui-multifile",
     "plugins/ui-startup-demo",
-    "plugins/dsh-web-shell",
+    "plugins/hana-shell",
     "plugins/demo-shell-addon",
 ]
