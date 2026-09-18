@@ -247,6 +247,15 @@ pub enum WindowOpen {
     /// Opened by the host as soon as the plugin becomes active, and closed when
     /// it stops.
     Auto,
+    /// The window the app opens **at launch, instead of its own default view**.
+    ///
+    /// Unlike [`Auto`](Self::Auto), this applies only at startup: a plugin
+    /// loaded later does not steal the view. At most one plugin in the whole
+    /// app may declare it — two is an error, because "which window starts" has
+    /// exactly one answer, and silently picking one would leave the other's
+    /// author with an unexplainable result. The same reasoning makes a
+    /// duplicate slot name an error rather than a race.
+    Startup,
 }
 
 /// A slot a plugin opens for others.

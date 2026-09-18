@@ -263,11 +263,26 @@ Rules:
 | `content` | `"app"` renders a registered component full-window; `"html"` makes the window a **fully self-contained page** the plugin supplies (no app shell). |
 | `html` | The page source when `content` is `"html"`. |
 | `title`, `width`, `height` | Window chrome. |
-| `open` | `"manual"` (the plugin opens it) or `"auto"` (the host opens it when the plugin activates). |
+| `open` | `"manual"` (the plugin opens it), `"auto"` (the host opens it when the plugin activates), or `"startup"` (the app opens it **at launch, instead of its own default view**). |
 
 Plugin UI code is identical in slots and windows: the same component factory,
 only the mount point differs. A window's own Tauri label is its identity, so a
 window asks the backend what to render rather than being told via a URL param.
+
+**`open: "startup"`** claims the launch view: on startup the app opens that
+window and keeps its own window hidden. Differences from `"auto"`:
+
+* It applies **only at launch**. A plugin loaded later never steals the view.
+* **At most one** plugin in the whole app may declare it. Two is an error that
+  names both claimants, because "which window starts" has exactly one answer —
+  silently picking one by load order would leave the other plugin's author with
+  an unexplainable result (the same reasoning that makes a duplicate slot name
+  an error rather than a race).
+* If the claimed window fails to open, the app falls back to its own window
+  rather than leaving you with nothing on screen.
+
+Closing the window that owns the launch view reveals the app's own window, so a
+plugin window is never a trap.
 
 Windows carry **params**: `studio.openWindow(name, params)` passes JSON that the
 window reads via `studio.windowParams()`. If the window is already open it is

@@ -15,4 +15,5 @@ members = [
     "plugins/ui-theme-widget",
     "plugins/ui-curator",
     "plugins/ui-multifile",
+    "plugins/ui-startup-demo",
 ]
