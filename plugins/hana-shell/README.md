@@ -163,6 +163,24 @@ cargo build --release -p hana-shell -p demo-shell-addon --target wasm32-wasip1
 Load `hana_shell.wasm` and `demo_shell_addon.wasm` from the Plugins page. The
 shell takes the launch view immediately.
 
+## Tests
+
+```sh
+npm test        # in this directory; no dependencies to install
+```
+
+Two node harnesses under `tests/`. They load the plugin's JS the way the host
+does (`new Function('studio', source)`) and drive it against a small DOM shim,
+which is how the two things `cargo test` cannot see get covered:
+
+* `render.test.mjs` — the tree builds and every declared slot is mounted.
+* `resize.test.mjs` — drags are simulated as real mouse events: both axes,
+  clamping at both ends, persistence, double-click reset, the dynamic preview
+  ceiling, and that a collapsed column refuses to resize.
+
+This is not ceremony: it caught the drag sign being inverted (every handle moved
+the wrong way), which no manifest-level test could have seen.
+
 ## Honest limitations
 
 * **One shell at a time.** Only one plugin may declare `open: "startup"`.
