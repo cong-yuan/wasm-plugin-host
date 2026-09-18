@@ -43,22 +43,21 @@ return (function () {
       'data-slot': 'conversation',
     });
 
-    const hero = h('div', {
-      class: 'dw-conv-composerHero',
-      'data-slot': 'conversation.hero',
-    },
-      h('div', { class: 'dw-hero-root' },
-        h('div', { class: 'dw-hero-stack' },
-          h('div', { class: 'dw-hero-headline' },
-            h('span', { class: 'dw-hero-titleGroup', text: 'How can I help you today?' }),
-          ),
-          h('div', { class: 'dw-hero-body' }),
+    // Empty state, in the serif display face. Centred by margin:auto so it sits
+    // in the middle of the scroll area without absolute positioning.
+    const hero = h('div', { class: 'dw-hero-root' },
+      h('div', { class: 'dw-hero-stack' },
+        h('div', { class: 'dw-hero-titleGroup' },
+          h('div', { class: 'dw-hero-headline', text: 'How can I help you today?' }),
+          h('div', { class: 'dw-hero-body',
+            text: 'Your first message creates a dsh agent and streams its reply here.' }),
         ),
+        // Slot inside the empty state, so a plugin can add a suggestion row or
+        // a starter card without this file changing.
+        h('div', { class: 'dw-slot', 'data-slot': 'conversation.hero' }),
       ),
     );
-    const heroSlot = h('div');
-    S.mount('dsh-web.conversation.hero', heroSlot);
-    hero.querySelector('.dw-hero-body').appendChild(heroSlot);
+    S.mount('dsh-web.conversation.hero', hero.querySelector('[data-slot="conversation.hero"]'));
 
     const stream = h('div', {
       class: 'dw-msg-stream',
@@ -100,12 +99,14 @@ return (function () {
     const rightSlot = h('div', { style: 'display:flex;align-items:center;gap:8px' });
     S.mount('dsh-web.conversation.input.right', rightSlot);
 
-    const card = h('div', {
-      class: 'dw-comp-card',
+    // The composer is a column: the input on top, a toolbar row beneath it.
+    // That is Hana's shape, and it is what makes the 16px radius read as a
+    // single surface rather than a bordered box around a textarea.
+    const composer = h('div', {
+      class: 'dw-comp-root',
       'data-slot': 'conversation.composer',
-      'data-dsh-surface': 'composer',
     },
-      h('div', { class: 'dw-comp-scroll' }, ta),
+      ta,
       h('div', { class: 'dw-comp-row' },
         h('div', { class: 'dw-comp-tools' },
           h('button', {
@@ -115,9 +116,7 @@ return (function () {
         h('div', { class: 'dw-comp-trailing' }, rightSlot, sendBtn),
       ),
     );
-
-    const composerRoot = h('div', { class: 'dw-comp-root' }, card);
-    stack.appendChild(composerRoot);
+    stack.appendChild(composer);
     seat.appendChild(stack);
     body.appendChild(seat);
     root.appendChild(body);

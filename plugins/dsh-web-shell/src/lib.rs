@@ -78,6 +78,7 @@ const SLOTS: &[(&str, &str)] = &[
 const ASSETS: &[(&str, &str)] = &[
     ("lib/dom.js", include_str!("../js/lib/dom.js")),
     ("lib/tokens.js", include_str!("../js/lib/tokens.js")),
+    ("lib/motion.js", include_str!("../js/lib/motion.js")),
     ("lib/slots.js", include_str!("../js/lib/slots.js")),
     ("lib/api.js", include_str!("../js/lib/api.js")),
     ("panels/sidebar.js", include_str!("../js/panels/sidebar.js")),

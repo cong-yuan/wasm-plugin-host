@@ -1,5 +1,8 @@
-// Element builder. Prefer CSS classes over inline styles so the chrome matches
-// official DSH tokens (`var(--dsw-*)`) rather than baking colours into JS.
+// Element builder and the small helpers every panel uses.
+//
+// Styling lives in `style.css` rather than inline, so the look can be changed
+// in one place and the panels stay readable. The one exception is a token
+// reference (`v('accent')`) for the rare property that has no class.
 return (function () {
   const h = (tag, attrs, ...kids) => {
     const el = document.createElement(tag);
@@ -19,13 +22,14 @@ return (function () {
     return el;
   };
 
-  /** Official token reference helper for the rare inline case. */
-  const dsw = (name) => `var(--dsw-${name})`;
+  /** A token reference, for the few properties with no class to carry them. */
+  const v = (name) => `var(--dw-${name})`;
 
-  /** Region wrapper: `data-slot` (official) + optional `data-dsh-surface`. */
+  /** A region wrapper: carries `data-slot` so CSS and tests can address it. */
   const region = (slotName, attrs, ...kids) =>
     h('div', Object.assign({ 'data-slot': slotName }, attrs || {}), ...kids);
 
+  /** A 24×24-grid stroke icon, sized to the shell's glyph scale. */
   const svgIcon = (d, size) =>
     h('svg', {
       width: size || 16, height: size || 16, viewBox: '0 0 24 24', fill: 'none',
@@ -33,5 +37,5 @@ return (function () {
       'stroke-linejoin': 'round', 'aria-hidden': 'true',
     }, h('path', { d }));
 
-  return { h, dsw, region, svgIcon };
+  return { h, v, region, svgIcon };
 })();

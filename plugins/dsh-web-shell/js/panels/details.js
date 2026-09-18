@@ -1,4 +1,6 @@
-// Right column — slot surface only. No metrics / theme chrome.
+// The right column. The shell contributes only its header and a close control;
+// everything else is a slot, because what belongs here depends on the plugin
+// filling it (a diff, a file tree, a session inspector).
 return (function () {
   const { h } = studio.require('lib/dom');
   const S = studio.require('lib/slots');
@@ -14,9 +16,9 @@ return (function () {
       'data-slot': 'details.header',
       style:
         'flex:none;display:flex;align-items:center;min-height:48px;padding:12px 16px;' +
-        'border-bottom:0.5px solid var(--dsw-alias-border-l3);' +
-        'color:var(--dsw-alias-label-caption);font-size:11px;font-weight:600;' +
-        'letter-spacing:.06em;text-transform:uppercase',
+        'border-bottom:1px solid var(--dw-overlay-light);' +
+        'color:var(--dw-text-muted);font-size:var(--dw-fs-ui);font-weight:600;' +
+        'letter-spacing:.08em;text-transform:uppercase',
     }, 'Details');
     const headerSlot = h('div', { style: 'margin-left:auto;display:flex;gap:4px' });
     headerSlot.appendChild(h('button', {
@@ -24,7 +26,8 @@ return (function () {
       title: 'Close',
       style:
         'width:28px;height:28px;border:0;border-radius:50%;cursor:pointer;' +
-        'background:transparent;color:var(--dsw-alias-label-secondary)',
+        'background:transparent;color:var(--dw-text-muted);cursor:default;' +
+        'transition:background var(--dw-duration-fast), color var(--dw-duration-fast)',
       onclick: () => opts && opts.close && opts.close(),
     }, '×'));
     S.mount('dsh-web.details.header', headerSlot);

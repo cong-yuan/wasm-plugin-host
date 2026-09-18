@@ -1,154 +1,150 @@
-// Official DSH Web theme tokens (`@deepseek-ai/dsh-client-ui-theme`).
+// Design tokens: HanaAgent's visual language, kept as Hana names them.
 //
-// Source of truth: the installed package's dark/light alias + specific surface
-// values (resolved from `--dsw-static-*`). Names stay `--dsw-*` so CSS written
-// against the real shell (and dsh-web skins) can land here without remapping.
+// Source: `liliMozi/openhanako` (Apache-2.0) — `desktop/src/styles.css` for the
+// structural scale and `desktop/src/themes/*.css` for the palettes. The names
+// are kept verbatim (`--bg`, `--accent`, `--fs-body`, `--radius-lg`) so a rule
+// copied from their code lands here unchanged, and so anyone who knows Hana can
+// read this file.
 //
-// Craft kept from earlier experiments (not their palette): quiet scrollbars,
-// reduced-motion respect, dense calm chrome — those live in `style.css`.
+// Two layers, as upstream separates them:
+//
+//   1. structural — spacing, radius, type scale, motion. Theme-independent.
+//   2. palette    — colours. One block per theme.
+//
+// A plugin only ever sets `--dw-*` on the document root, so nothing leaks into
+// another plugin's names.
 return (function () {
-  const FONT =
-    '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", ' +
-    '"Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif';
+  // ── layer 1: structural (theme-independent) ──────────────────────────────
+  const STRUCTURAL = {
+    // Spacing, a 4px grid — the real subset upstream uses, not a full ramp.
+    'space-2': '0.125rem', 'space-4': '0.25rem', 'space-6': '0.375rem',
+    'space-8': '0.5rem', 'space-10': '0.625rem', 'space-12': '0.75rem',
+    'space-16': '1rem', 'space-24': '1.5rem', 'space-32': '2rem', 'space-40': '2.5rem',
 
-  const ELEVATION_SOFT =
-    '0 0 0 0.5px color-mix(in srgb, var(--dsw-alias-border-l2) 80%, transparent), ' +
-    '0 4px 16px 0 #00000008, 0 0 24px 0 #00000008';
+    // Radius. `--radius-input` / `--radius-chat-surface` are the two that give
+    // the interface its softness: controls are 6px, the composer is 16px.
+    'radius-xs': '3px', 'radius-sm': '5px', 'radius-md': '8px', 'radius-lg': '12px',
+    'radius-input': '6px', 'radius-chat-surface': '16px', 'radius-card': '8px',
 
-  /** Dark theme — `body[data-ds-dark-theme]` in the official shell. */
-  const dark = {
-    '--dsw-alias-bg-base': '#151517',
-    '--dsw-alias-bg-layer-1': '#232324',
-    '--dsw-alias-bg-layer-2': '#2c2c2e',
-    '--dsw-alias-bg-layer-3': '#353638',
-    '--dsw-alias-bg-overlay': '#61666b',
-    '--dsw-alias-bg-module-platform': '#353638',
-    '--dsw-alias-border-l1': '#ffffff0f',
-    '--dsw-alias-border-l2': '#ffffff1f',
-    '--dsw-alias-border-l3': '#ffffff29',
-    '--dsw-alias-border-l4': '#fff3',
-    '--dsw-alias-brand-primary': '#f9fafb',
-    '--dsw-alias-brand-text': '#f9fafb',
-    '--dsw-alias-brand-primary-invert': '#f9fafb',
-    '--dsw-alias-label-primary': '#f9fafb',
-    '--dsw-alias-label-secondary': '#cfd3d6',
-    '--dsw-alias-label-tertiary': '#adb2b8',
-    '--dsw-alias-label-dimmed': '#43454a',
-    '--dsw-alias-label-caption': '#81858c',
-    '--dsw-alias-label-primary-foreground': '#0f1115',
-    '--dsw-alias-label-primary-inverted': '#353638',
-    '--dsw-alias-label-primary-dimmed': '#ebeef2',
-    '--dsw-alias-label-primary-bluish': '#f9fafb',
-    '--dsw-alias-button-primary-fill': '#f9fafb',
-    '--dsw-alias-button-primary-hover': '#ebeef2',
-    '--dsw-alias-button-floating-fill': '#2c2c2e',
-    '--dsw-alias-button-floating-hover': '#353638',
-    '--dsw-alias-button-elevated-fill': '#43454a',
-    '--dsw-alias-button-info-fill': '#679efe',
-    '--dsw-alias-button-info-hover': '#4176e6',
-    '--dsw-alias-interactive-bg-hover': '#ffffff14',
-    '--dsw-alias-interactive-bg-active': '#ffffff24',
-    '--dsw-alias-interactive-bg-hover-solid': '#353638',
-    '--dsw-alias-interactive-bg-hover-accent': '#ffffff3d',
-    '--dsw-alias-state-error-primary': '#f25a5a',
-    '--dsw-alias-state-warn-primary': '#f59e0b',
-    '--dsw-alias-state-success-primary': '#22c55e',
-    '--dsw-alias-state-business-primary': '#679efe',
-    '--dsw-alias-state-business-tertiary': '#34415b',
-    '--dsw-alias-scrollbar-bg-l1': '#3c3c3d',
-    '--dsw-alias-scrollbar-bg-l2': '#545557',
-    '--dsw-alias-scrollbar-hover-l1': '#545557',
-    '--dsw-alias-scrollbar-hover-l2': '#65676b',
-    '--dsw-alias-toast-bg': '#43454a',
-    '--dsw-alias-tooltip-bg': '#43454a',
-    '--dsw-specific-sidebar-fill': '#1b1b1c',
-    '--dsw-specific-sidebar-nav-item-hover': '#2c2c2e',
-    '--dsw-specific-sidebar-nav-item-active': '#43454a',
-    '--dsw-specific-sidebar-nav-item-active-accent': '#353638',
-    '--dsw-specific-input-major': '#2c2c2e',
-    '--dsw-specific-bubble': '#2c2c2e',
-    '--dsw-specific-bubble-highlight': '#43454a',
-    '--dsw-specific-menu': '#353638',
-    '--dsw-specific-selector': '#353638',
-    '--dsw-specific-tip': '#353638',
+    // Type scale — six steps, smaller than a typical web ramp because the UI is
+    // dense. Body text is 0.9rem, not 1rem.
+    'fs-title': '1rem', 'fs-body': '0.9rem', 'fs-ui': '0.82rem',
+    'fs-caption': '0.78rem', 'fs-hint': '0.7rem', 'fs-micro': '0.62rem',
+
+    // Fonts. The serif is the identifiable part of the look: headings and
+    // display text are serif, UI text is sans. Only system faces are listed —
+    // we do not ship Inter or EB Garamond, and a missing webfont would flash
+    // fallback anyway. The stacks degrade in the same order upstream's do.
+    'font-ui': "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif",
+    'font-serif': "'Songti SC', 'STSong', 'Noto Serif SC', Georgia, 'Times New Roman', serif",
+    'font-mono': "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace",
+
+    // Motion. Three durations and four curves cover every transition upstream
+    // ships; `--ease-out` is the one that makes things feel soft.
+    'duration-instant': '0.1s', 'duration-fast': '0.15s', 'duration-slow': '0.25s',
+    'ease-out': 'cubic-bezier(0.16, 1, 0.3, 1)',
+    'ease-in': 'cubic-bezier(0.7, 0, 0.84, 0)',
+    'ease-standard': 'cubic-bezier(0.2, 0, 0, 1)',
+    'ease-smooth': 'cubic-bezier(0.22, 0.68, 0, 1)',
+
+    // Layout. The composer is narrower than the window and the columns are
+    // fixed widths, which is what makes the proportions read as a document
+    // rather than a dashboard.
+    'sidebar-width': '240px',
+    'details-width': '260px',
+    'titlebar-h': '44px',
+    'chat-column-width': '720px',
+    'chat-column-extra': '1.25rem',
   };
 
-  /** Light theme — official `:root` / `body` defaults. */
-  const light = {
-    '--dsw-alias-bg-base': '#ffffff',
-    '--dsw-alias-bg-layer-1': '#ffffff',
-    '--dsw-alias-bg-layer-2': '#ffffff',
-    '--dsw-alias-bg-layer-3': '#ffffff',
-    '--dsw-alias-bg-overlay': '#e9ecf2',
-    '--dsw-alias-bg-module-platform': '#f5f6f7',
-    '--dsw-alias-border-l1': '#0000000a',
-    '--dsw-alias-border-l2': '#0000001a',
-    '--dsw-alias-border-l3': '#0000001f',
-    '--dsw-alias-border-l4': '#00000029',
-    '--dsw-alias-brand-primary': '#0f1115',
-    '--dsw-alias-brand-text': '#0f1115',
-    '--dsw-alias-brand-primary-invert': '#0f1115',
-    '--dsw-alias-label-primary': '#0f1115',
-    '--dsw-alias-label-secondary': '#61666b',
-    '--dsw-alias-label-tertiary': '#81858c',
-    '--dsw-alias-label-dimmed': '#e1e5ee',
-    '--dsw-alias-label-caption': '#adb2b8',
-    '--dsw-alias-label-primary-foreground': '#ffffff',
-    '--dsw-alias-label-primary-inverted': '#ffffff',
-    '--dsw-alias-label-primary-dimmed': '#151517',
-    '--dsw-alias-label-primary-bluish': '#0e3074',
-    '--dsw-alias-button-primary-fill': '#0f1115',
-    '--dsw-alias-button-primary-hover': '#43454a',
-    '--dsw-alias-button-floating-fill': '#ffffff',
-    '--dsw-alias-button-floating-hover': '#f1f3f5',
-    '--dsw-alias-button-elevated-fill': '#ffffff',
-    '--dsw-alias-button-info-fill': '#4176e6',
-    '--dsw-alias-button-info-hover': '#679efe',
-    '--dsw-alias-interactive-bg-hover': '#2631480f',
-    '--dsw-alias-interactive-bg-active': '#2631481a',
-    '--dsw-alias-interactive-bg-hover-solid': '#f1f3f5',
-    '--dsw-alias-interactive-bg-hover-accent': '#26314824',
-    '--dsw-alias-state-error-primary': '#ec1313',
-    '--dsw-alias-state-warn-primary': '#f59e0b',
-    '--dsw-alias-state-success-primary': '#22c55e',
-    '--dsw-alias-state-business-primary': '#4176e6',
-    '--dsw-alias-state-business-tertiary': '#e4edfd',
-    '--dsw-alias-scrollbar-bg-l1': '#e5e5e5',
-    '--dsw-alias-scrollbar-bg-l2': '#e5e5e5',
-    '--dsw-alias-scrollbar-hover-l1': '#d4d4d4',
-    '--dsw-alias-scrollbar-hover-l2': '#d4d4d4',
-    '--dsw-alias-toast-bg': '#353638',
-    '--dsw-alias-tooltip-bg': '#2c2c2e',
-    '--dsw-specific-sidebar-fill': '#f9fafb',
-    '--dsw-specific-sidebar-nav-item-hover': '#f1f3f5',
-    '--dsw-specific-sidebar-nav-item-active': '#ebeef2',
-    '--dsw-specific-sidebar-nav-item-active-accent': '#e4edfd',
-    '--dsw-specific-input-major': '#ffffff',
-    '--dsw-specific-bubble': '#edf3fe',
-    '--dsw-specific-bubble-highlight': '#d3e2ff',
-    '--dsw-specific-menu': '#ffffff',
-    '--dsw-specific-selector': '#f5f6f7',
-    '--dsw-specific-tip': '#f9fafb',
+  // ── layer 2: palettes ────────────────────────────────────────────────────
+  //
+  // `warm-paper` — the default, and the one that defines the product: warm
+  // off-white paper, dusty blue accent, an all-over brown-tinted border.
+  const warmPaper = {
+    'bg': '#F8F4ED',
+    'bg-card': '#FCFAF5',
+    'bg-glass': 'rgba(250, 248, 242, 0.92)',
+    'sidebar-bg': '#F4F0EA',
+    'accent': '#537D96',
+    'accent-hover': '#456A80',
+    'accent-light': 'rgba(83, 125, 150, 0.08)',
+    'accent-rgb': '83, 125, 150',
+    'text': '#3B3D3F',
+    'text-light': '#6B6F73',
+    'text-muted': '#8E9196',
+    // Borders are tinted brown, not grey — the single change that stops the
+    // light theme looking like every other neutral admin panel.
+    'border': 'rgba(122, 96, 88, 0.18)',
+    'shadow': 'rgba(59, 61, 63, 0.09)',
+    'green': '#7BAE7F',
+    'green-rgb': '123, 174, 127',
+    'coral': '#EC8F8D',
+    'coral-rgb': '236, 143, 141',
+    'danger': '#8B3A3A',
+    'danger-rgb': '139, 58, 58',
+    'hanako-text': '#2B3A4E',
+    'user-bg': 'rgba(83, 125, 150, 0.08)',
+    'tool-bg': 'rgba(0, 0, 0, 0.03)',
+    'tool-text': '#6B6F73',
+    'jian-note-bg': '#FAF5E9',
+    'jian-note-border': 'rgba(180, 160, 130, 0.15)',
+    'overlay-subtle': 'rgba(0, 0, 0, 0.03)',
+    'overlay-light': 'rgba(0, 0, 0, 0.05)',
+    'overlay-medium': 'rgba(0, 0, 0, 0.08)',
+    'overlay-strong': 'rgba(0, 0, 0, 0.15)',
+    'scheme': 'light',
   };
 
-  const THEMES = { dark, light };
+  // `midnight` — deep teal-blue with a warm rose accent. Kept as the dark
+  // counterweight; the accent turning pink is what makes it recognisably the
+  // same family rather than "a dark grey theme".
+  const midnight = {
+    'bg': '#3B4A54',
+    'bg-card': '#445560',
+    'bg-glass': 'rgba(59, 74, 84, 0.92)',
+    'sidebar-bg': '#34424B',
+    'accent': '#C99AAF',
+    'accent-hover': '#D8AFC0',
+    'accent-light': 'rgba(201, 154, 175, 0.11)',
+    'accent-rgb': '201, 154, 175',
+    'text': '#E1EAF0',
+    'text-light': '#B7C5CE',
+    'text-muted': '#A3B5C0',
+    'border': 'rgba(170, 121, 141, 0.16)',
+    'shadow': 'rgba(0, 0, 0, 0.36)',
+    'green': '#8CC790',
+    'green-rgb': '140, 199, 144',
+    'coral': '#EAB2A0',
+    'coral-rgb': '234, 178, 160',
+    'danger': '#C77070',
+    'danger-rgb': '199, 112, 112',
+    'hanako-text': '#DCE6EC',
+    'user-bg': 'rgba(170, 121, 141, 0.10)',
+    'tool-bg': 'rgba(255, 255, 255, 0.03)',
+    'tool-text': '#B7C5CE',
+    'jian-note-bg': '#4B5A63',
+    'jian-note-border': 'rgba(170, 121, 141, 0.14)',
+    'overlay-subtle': 'rgba(255, 255, 255, 0.03)',
+    'overlay-light': 'rgba(255, 255, 255, 0.05)',
+    'overlay-medium': 'rgba(255, 255, 255, 0.08)',
+    'overlay-strong': 'rgba(255, 255, 255, 0.15)',
+    'scheme': 'dark',
+  };
 
-  /** Paint a palette onto `el` (usually `<html>`), mirroring official attrs. */
+  const THEMES = { 'warm-paper': warmPaper, midnight: midnight };
+
+  /** Write a theme onto an element as CSS custom properties. */
   const apply = (el, name) => {
-    const theme = THEMES[name] || THEMES.dark;
-    for (const [k, v] of Object.entries(theme)) el.style.setProperty(k, v);
-    el.style.setProperty('--dsw-font-family', FONT);
-    el.style.setProperty('--dsw-elevation-soft', ELEVATION_SOFT);
-    el.style.setProperty('--ds-ease-in-out', 'cubic-bezier(0.4, 0, 0.2, 1)');
-    el.style.setProperty('--ds-transition-duration-slow', '200ms');
-    el.dataset.theme = name;
-    el.style.colorScheme = name === 'light' ? 'light' : 'dark';
-    // Official dark flag lives on `document.body`.
-    if (el.ownerDocument && el.ownerDocument.body) {
-      if (name === 'dark') el.ownerDocument.body.setAttribute('data-ds-dark-theme', '');
-      else el.ownerDocument.body.removeAttribute('data-ds-dark-theme');
+    const palette = THEMES[name] || THEMES['warm-paper'];
+    for (const [k, v] of Object.entries(STRUCTURAL)) el.style.setProperty('--dw-' + k, v);
+    for (const [k, v] of Object.entries(palette)) {
+      if (k === 'scheme') continue;
+      el.style.setProperty('--dw-' + k, v);
     }
-    return theme;
+    el.dataset.theme = name;
+    el.style.colorScheme = palette.scheme;
+    return palette;
   };
 
   return { THEMES, apply, names: Object.keys(THEMES) };
