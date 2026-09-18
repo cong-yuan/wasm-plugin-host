@@ -11,6 +11,14 @@ return (function () {
   const render = (el, opts) => {
     const root = h('aside', { class: 'hn-preview', 'data-slot': 'preview' });
 
+    // Drag handle on the inner edge — the panel is on the right, so its width
+    // is dragged from the side that faces the conversation.
+    root.appendChild(h('div', {
+      class: 'hn-resize-handle hn-resize-left',
+      'data-resize': 'preview',
+      title: 'Drag to resize · double-click to reset',
+    }));
+
     const header = h('div', { class: 'hn-preview-header', 'data-slot': 'preview.header' });
     header.appendChild(h('span', { class: 'hn-preview-title', text: 'Preview' }));
     const actions = h('div', { class: 'hn-preview-actions' });

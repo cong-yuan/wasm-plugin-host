@@ -111,6 +111,7 @@ const ASSETS: &[(&str, &str)] = &[
     ("lib/tokens.js", include_str!("../js/lib/tokens.js")),
     ("lib/motion.js", include_str!("../js/lib/motion.js")),
     ("lib/slots.js", include_str!("../js/lib/slots.js")),
+    ("lib/resize.js", include_str!("../js/lib/resize.js")),
     ("lib/api.js", include_str!("../js/lib/api.js")),
     ("panels/titlebar.js", include_str!("../js/panels/titlebar.js")),
     ("panels/sidebar.js", include_str!("../js/panels/sidebar.js")),

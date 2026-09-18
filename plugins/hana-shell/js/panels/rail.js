@@ -13,6 +13,13 @@ return (function () {
   const render = (el, opts) => {
     const root = h('aside', { class: 'hn-rail', 'data-slot': 'rail' });
 
+    // Drag handle on the inner edge, mirroring the sidebar.
+    root.appendChild(h('div', {
+      class: 'hn-resize-handle hn-resize-left',
+      'data-resize': 'rail',
+      title: 'Drag to resize · double-click to reset',
+    }));
+
     const header = h('div', { class: 'hn-rail-header', 'data-slot': 'rail.header' });
     header.appendChild(h('span', { class: 'hn-rail-title', text: 'Workspace' }));
     const actions = h('div', { class: 'hn-rail-actions' });

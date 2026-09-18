@@ -34,6 +34,29 @@ Compared with the studio's own shell, this adds the **titlebar**, the
 **companion rail** (HanaAgent's "笺" sidebar). Columns collapse by width rather
 than unmounting, so a slot inside a hidden column keeps its contributions.
 
+## Resizing
+
+Every panel edge is draggable, and the sizes persist per target:
+
+| Handle | Drags | Range | Storage key |
+|---|---|---|---|
+| Sidebar's right edge | `--dw-sidebar-width` | 180–480 | `hana-shell-sidebar-width` |
+| Preview's left edge | `--dw-preview-width` | 320–(window − others − 400) | `hana-shell-preview-width` |
+| Rail's left edge | `--dw-rail-width` | 200–600 | `hana-shell-rail-width` |
+| Titlebar's bottom edge | `--dw-titlebar-h` | 36–120 | `hana-shell-titlebar-height` |
+
+**Double-click any handle** to reset that target to its token default. The
+preview's ceiling is computed live, so widening it can never push the
+conversation below its 400px minimum.
+
+The titlebar height drives **only** the titlebar: the column headers read their
+own `--dw-header-h`, because dragging one bar and watching five headers grow is
+not what "resize the titlebar" means.
+
+The mechanism is `lib/resize.js` — one function for both axes, talking in
+`data-resize` names rather than pixels, so a plugin that opens its own side
+column can reuse it.
+
 ## The 17 slots
 
 The value of a shell is the surface it opens, not the pixels it draws. A plugin
@@ -111,6 +134,7 @@ js/
     motion.js              12 keyframes, one name each
     dom.js                 element builder, token ref, region helper
     slots.js               the slot inventory + mount helper
+    resize.js              drag-to-resize, both axes (see "Resizing")
     api.js                 backend commands (degrades without IPC)
   panels/
     titlebar.js            the 44px row: three clusters + the panel toggles
@@ -146,5 +170,5 @@ shell takes the launch view immediately.
 * **The activity bars and session list are empty frames.** Real content needs
   backend features we do not have yet (sessions, git, terminal) — they are slots
   for now, which is the point.
-* **The preview column starts collapsed** and has no toggle in the titlebar yet;
-  a plugin fills `hana.preview.panel` and the column opens.
+* **The preview column starts collapsed.** The titlebar's ⧉ button opens it;
+  until a plugin fills `hana.preview.panel` it is an empty frame.

@@ -85,6 +85,36 @@ return (function () {
     const dPreview = preview.render(previewCol, { onClose: () => setPreview(false) });
     const dRail = rail.render(railCol, { onClose: () => setRail(false) });
 
+    // ── column resizing ─────────────────────────────────────────────────────
+    // Each panel renders its own handle tagged with `data-resize`; the frame owns
+    // the drag logic. The shell root carries the size variable, so one value
+    // sizes a column and its inner content together. The preview's ceiling is
+    // dynamic: a fixed one would let a wide window push the conversation below
+    // its minimum, which is the failure upstream's `getPreviewMaxWidth` guards.
+    const resize = studio.require('lib/resize');
+    const disposers = [];
+    const wireHandle = (side, column, max) => {
+      const handle = column.querySelector('[data-resize="' + side + '"]');
+      if (!handle) return;
+      disposers.push(resize.install(handle, { root: shell, target: column, side, max }));
+    };
+    const CONV_MIN = 400;
+    const previewCeiling = () => {
+      const others = sideCol.getBoundingClientRect().width + railCol.getBoundingClientRect().width;
+      return Math.max(320, window.innerWidth - others - CONV_MIN);
+    };
+    wireHandle('sidebar', sideCol);
+    wireHandle('preview', previewCol, previewCeiling);
+    wireHandle('rail', railCol);
+
+    // The titlebar's bottom edge resizes it vertically. Its target is the whole
+    // shell (the bar spans it), so the handle is measured against the bar
+    // itself — `--dw-titlebar-h` is what the bar reads, so the drag tracks it.
+    const hTitlebar = shell.querySelector('[data-resize="titlebar"]');
+    if (hTitlebar) {
+      disposers.push(resize.install(hTitlebar, { root: shell, target: shell.querySelector('.hn-tb'), side: 'titlebar' }));
+    }
+
     // ── frame-level overlay ─────────────────────────────────────────────────
     // Above every column, `pointer-events:none` while empty so it never eats a
     // click; a plugin adding content re-enables it locally.
@@ -94,6 +124,9 @@ return (function () {
 
     el.appendChild(shell);
     return () => {
+      for (const d of disposers) {
+        if (typeof d === 'function') d();
+      }
       for (const d of [dSide, dConv, dPreview, dRail]) {
         if (typeof d === 'function') d();
       }

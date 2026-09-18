@@ -74,6 +74,16 @@ return (function () {
     titlebar.appendChild(left);
     titlebar.appendChild(centre);
     titlebar.appendChild(right);
+
+    // The bar's bottom edge is a vertical drag handle. It sits *inside* the row
+    // and centred horizontally, so it is clear the whole bar's height is what
+    // moves.
+    titlebar.appendChild(h('div', {
+      class: 'hn-resize-handle hn-resize-bottom',
+      'data-resize': 'titlebar',
+      title: 'Drag to resize · double-click to reset',
+    }));
+
     el.appendChild(titlebar);
     return undefined;
   };

@@ -56,6 +56,9 @@ return (function () {
     'rail-width': '260px',
     'preview-width': '580px',
     'titlebar-h': '44px',
+    // Column headers are their own height, not the titlebar's: resizing the
+    // titlebar should move the titlebar, not every header with it.
+    'header-h': '44px',
     'chat-column-width': '720px',
     'chat-column-extra': '1.25rem',
   };

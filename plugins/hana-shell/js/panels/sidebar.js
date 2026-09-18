@@ -28,6 +28,15 @@ return (function () {
       'data-slot': 'sidebar',
     });
 
+    // Drag handle for the column width. It carries `data-resize` rather than a
+    // click handler: the frame owns the drag logic (see lib/resize.js), so a
+    // panel only has to say *where* the handle is, not what dragging means.
+    root.appendChild(h('div', {
+      class: 'hn-resize-handle hn-resize-right',
+      'data-resize': 'sidebar',
+      title: 'Drag to resize · double-click to reset',
+    }));
+
     // ── header row: title + actions ─────────────────────────────────────────
     const header = h('div', { class: 'hn-side-header', 'data-slot': 'sidebar.header' });
     header.appendChild(h('span', { class: 'hn-side-title', text: 'Hana' }));
