@@ -150,6 +150,49 @@ studio 的 `the_shell_slots_a_panel_mounts_are_the_ones_it_declares` 断言这�
 机制是一支 `lib/resize.js`:两个轴共用一个 `install()`,面板只声明
 `data-resize="sidebar"` 这种**名字**,拖曳的语义由外壳拥有。
 
+### 一个真的踩过的坑:广选择器把线撑成了整条栏
+
+```css
+.hn-side > * { width: var(--dw-sidebar-width) }   /* ✗ 也选中了那 3px 的 handle */
+```
+
+拖曳线是栏的**直接子元素**,所以 `> *` 把它从 3px 撑成了 240px——**整条侧栏都成了
+拖曳面,里面什么都点不动**。修法是排掉它:
+
+```css
+.hn-side > *:not(.hn-resize-handle) { width: var(--dw-sidebar-width) }
+```
+
+**这个 bug 值得单独记一笔**,因为它是测试的盲区形状:
+
+| 手段 | 能看到吗 |
+|---|---|
+| 肉眼 | ✗ 直到你去点一行才发现 |
+| DOM shim(无布局引擎) | ✗ 它不算宽度 |
+| 读 CSS 当文本(`css-guards`) | ✓ 能抓“宽选择器”这个**形状** |
+| **真级联**(`css-cascade`,jsdom) | ✓ 能抓任何**赢过 handle 的规则** |
+
+所以 `npm test` 里现在有两层:静态守卫(零依赖,永远跑)+ 真级联(需要 jsdom,
+缺了**响亮地跳过**而不是静默)。后者已做非空洞验证:把 `:not(...)` 去掉,
+它立刻以 `computed width was var(--dw-sidebar-width)` 失败。
+
+### 为什么不用现成的拖曳库
+
+Split.js / `interact.js` / `react-resizable-panels` 都存在且不差,但它们解的
+问题形状与本外壳不同:
+
+| | Split.js 等 | 本外壳 |
+|---|---|---|
+| 布局 | 接管子元素,尺寸写成 `calc(% - px)` | CSS 变量 + 固定宽 |
+| 折叠 | 不管 | 宽 → 0,但保留槽位贡献 |
+| 持久化 | 不提供 | 按目标存,且可复位 |
+| 模块 | npm 包,需打包 | `include_str!` 进 wasm,无 bundler |
+| 运行时依赖 | 0(Split.js) | 0,刻意 |
+
+换过去等于为了删 ~140 行而放弃“折到零”与 token 模型,而且真正麻烦的部分
+(实时夹取、持久化、动态上限)**本来就不是这些库提供的**。从生态里真正值得拿的
+是**测试思路**,那已经进了 `npm test`。
+
 ## 4. 视觉语言,三个决定
 
 上游的 `styles.css`(4216 行)里,真正定义这套观感的是三条。命名它们很重要,
