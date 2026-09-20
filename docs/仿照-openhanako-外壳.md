@@ -179,14 +179,41 @@ studio 的 `the_shell_slots_a_panel_mounts_are_the_ones_it_declares` 断言这�
 
 ## 6. 已知边界
 
-- **同时只能有一个外壳。** 只有 `open: "startup"` 的唯一宣告者能接管启动视图。
-- **活动栏与会话列表是空框。** 真实内容需要我们还没有的后端能力(会话/git/终端)
-  ——它们现在是槽位,这正是重点。
+- **同时只能有一个外壳。** 只有 `open: "startup"` 的唯一宣称者能接管启动视图。
+- **活动栏是空框。** Bridge / Activity / Automation / Skills 是没有功能背后的
+  可点击位置——外壳不拥有 automations 或 skills。点击它们在有插件绑定到
+  `data-activity` 之前是空操作。
+- **没有流式。** dsh 在这边没有推送到前端的通道,所以回复靠每 250ms 轮询
+  transcript,有上限。长回合因此表现为**一次性出现**,而不是自己打字出来。
+- **推理默认收起**,工具调用只汇总成名字列表——transcript 里带着它们的参数,
+  但外壳还没渲染。
 - **预览栏默认收起。** titlebar 的 ⧉ 按钮打开它;在插件填
   `hana.preview.panel` 之前是个空框。
 - **`content: "html"` 窗口仍渲染空白**(见 `已知问题.md`)。
 
-## 7. 验收(可复核)
+## 7. 数据面(哪些是真的)
+
+外壳不是 mock-up。每个区域的数据来源:
+
+| 区域 | 来源 |
+|---|---|
+| 会话列表 | `list_agents` — 标题取首条用户消息 |
+| 会话 token | session 的 `AssistantMessage` 事件,按 session 汇总 |
+| 输入框 | 用**已配置**的 provider 建 agent,发送,轮询回复 |
+| 侧栏页脚 | `studio_status` — 启动状态 + 已注册 provider |
+| 右栏 | `studio_status` + `list_plugins` + `plugin_windows` + `list_tools` |
+| 预览栏 | 仍只是槽位 |
+
+两条不显而易见的规则:
+
+1. **优先非 `mock` 的 provider。** `mock` 只回显输入,是测试替身不是模型;
+   用户配了真端点就是想用它。硬编码 `mock` 会无声忽略配置。
+2. **未报告的用量显示为空,而不是 0。** dsh 在每条 assistant 消息上附 usage,
+   但不是每个 provider 都报;而且把 usage chunk 放在 `Finish` **之后**的流式
+   provider 永远听不到——agent loop 读到 `Finish` 就 break。`calls === 0`
+   因此渲染成“什么都没有”,因为 “0 tokens” 读起来像个测量值,而且是个假的。
+
+## 8. 验收(可复核)
 
 | 项 | 方式 |
 |---|---|
@@ -194,5 +221,8 @@ studio 的 `the_shell_slots_a_panel_mounts_are_the_ones_it_declares` 断言这�
 | 17 个槽全部挂载 | `the_shell_slots_a_panel_mounts_are_the_ones_it_declares`(双向) |
 | 贡献经槽位抵达 | `demo-shell-addon` 填 4 个槽,不 import 外壳任何代码 |
 | 模块全部随包发出 | `the_shell_ships_every_module_its_entry_requires` |
-| 拖曳行为 | node harness 模拟真实拖曳事件,26 条断言(含夹取/持久化/复位/动态上限/收起栏拒拖) |
+| 拖曳行为 | node harness 模拟真实拖曳事件(含夹取/持久化/复位/动态上限/收起栏拒拖) |
+| **真数据渲染** | node harness 带**假后端**,断言标题/用量/provider 真的出现 |
+| **建 agent 用真 provider** | harness 断言 provider 是 `deepseek` 而非 `mock`(已非空洞验证) |
+| 后端字段正确 | studio 的 5 个新测试(标题截断、用量汇总、不上报则不显示) |
 | 暖纸主题生效 | 采样实际像素:`#F6F3EB` 主体、`#DDDBD5` 侧栏 |
