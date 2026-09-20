@@ -22,7 +22,7 @@ return (function () {
   };
 
   const render = (el, opts) => {
-    const state = { agentId: null, turns: [], busy: false };
+    const state = { agentId: null, turns: [], busy: false, locked: false };
 
     const root = h('main', {
       class: 'hn-conv',
@@ -123,6 +123,24 @@ return (function () {
 
     const setPhase = (phase) => root.setAttribute('data-phase', phase);
 
+    /**
+     * Lock the composer when the open session has no live agent behind it.
+     *
+     * A stored session whose resume failed is still worth *reading*, but sending
+     * to it cannot work. Disabling the input says so up front, rather than
+     * accepting a message and failing on send — which reads as the app losing
+     * the message.
+     */
+    const setLocked = (locked) => {
+      state.locked = locked;
+      root.setAttribute('data-locked', locked ? 'true' : 'false');
+      ta.disabled = locked;
+      sendBtn.disabled = locked || state.busy;
+      ta.placeholder = locked
+        ? 'This session could not be resumed, so it is read-only.'
+        : 'Ask anything…';
+    };
+
     /** The shell's own message rows only; a stream slot's box is left alone. */
     const ownRows = () => Array.from(stream.querySelectorAll('[data-own-turn]'));
 
@@ -191,9 +209,34 @@ return (function () {
     };
 
     // ── opening an existing session ─────────────────────────────────────────
-    const openSession = async (agentId) => {
-      state.agentId = agentId;
-      const transcript = await api.transcript(agentId);
+    // `session` is the whole row, not just an id, because a *stored* session
+    // needs work before it can be read or sent to: there is no agent behind it
+    // yet, so `transcript` would fail until it is resumed. Handling that here
+    // keeps the distinction out of the sidebar, which only picks rows.
+    const openSession = async (session) => {
+      const id = typeof session === 'string' ? session : session && session.id;
+      if (!id) return;
+      // A stored row has no driver; put one behind it. Resuming is idempotent,
+      // so doing it whenever the row says `live === false` is safe even if the
+      // sidebar's view is a poll behind.
+      const wasStored = typeof session === 'object' && session && session.live === false;
+      if (wasStored) {
+        const ok = await api.resume(id);
+        if (ok === null) {
+          // Could not resume: still show the history so the session is not
+          // invisible, but say why it cannot be continued rather than offering
+          // a composer that will fail on send.
+          state.agentId = null;
+          setLocked(true);
+        } else {
+          state.agentId = id;
+          setLocked(false);
+        }
+      } else {
+        state.agentId = id;
+        setLocked(false);
+      }
+      const transcript = await api.transcript(id);
       state.turns = transcript.map((m) => ({
         role: m.role,
         text: m.text || '',
@@ -204,13 +247,15 @@ return (function () {
       const firstUser = state.turns.find((t) => t.role === 'user');
       setTitle(firstUser ? firstUser.text.slice(0, 60) : 'Session');
       draw();
-      setUsage(agentId);
+      setUsage(state.agentId);
+      if (opts && opts.onSessionChanged) opts.onSessionChanged();
     };
 
     // ── sending ─────────────────────────────────────────────────────────────
     const submit = async () => {
       const text = ta.value.trim();
       if (!text || state.busy) return;
+      if (state.locked) return;
       state.busy = true;
       sendBtn.disabled = true;
       state.turns.push({ role: 'user', text });
@@ -221,7 +266,7 @@ return (function () {
       ta.style.height = '';
       draw();
 
-      if (!state.agentId) {
+      if (!state.agentId && !state.locked) {
         // Pick a **configured** provider, not `mock`: a real endpoint the user
         // set up should be used, and defaulting to mock would silently ignore
         // it while appearing to work.
@@ -304,6 +349,7 @@ return (function () {
           state.agentId = null;
           state.turns = [];
           setTitle('');
+          setLocked(false);
           usageEl.replaceChildren();
           setUsage(null);
           draw();

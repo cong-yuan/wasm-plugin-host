@@ -345,6 +345,17 @@ body.resizing-y .hn-tb { transition: none !important; }
   background: var(--dw-overlay-strong);
 }
 .hn-sess-dot.busy { background: var(--dw-green); animation: dw-pulse 1.2s ease-in-out infinite; }
+/* A session on disk with no driver behind it: a hollow ring, so "not live" is
+   legible at a glance without relying on colour alone. */
+.hn-sess-dot.stored {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--dw-overlay-strong);
+}
+.hn-sess.stored .hn-sess-label { opacity: .75; }
+
+/* A session that could not be resumed: readable, but not sendable. */
+.hn-conv[data-locked="true"] .hn-comp { opacity: .6; }
+.hn-conv[data-locked="true"] .hn-comp-input { cursor: not-allowed; }
 
 .hn-sess-label {
   flex: 1;

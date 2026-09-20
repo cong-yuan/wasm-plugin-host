@@ -216,12 +216,21 @@ The shell talks to the **real** backend, not a mock-up:
 
 | Region | Source |
 |---|---|
-| Session list | `list_agents` — every agent, titled from its first user message |
+| Session list | `list_sessions` — live agents **and** sessions on disk, titled from the first user message |
 | Session tokens | the session's `AssistantMessage` events, summed per session |
 | Composer | creates an agent on a **configured** provider, sends, polls the reply |
 | Sidebar footer | `studio_status` — boot state and the registered providers |
 | Rail | `studio_status` + `list_plugins` + `plugin_windows` + `list_tools` |
 | Preview | a slot only; nothing fills it yet |
+
+**Stored sessions are rows too, and opening one continues it.** A session left on
+disk by a previous run is listed with a hollow dot and `data-live="false"`;
+clicking it calls `resume_session`, which builds a live agent on the stored log,
+and then it behaves like any other session. They are *marked*, not hidden — a
+list that omitted what is on disk would make persistence look broken — and the
+mark matters because a stored row cannot be sent to until it is resumed. If a
+resume fails the history is still shown, but the composer locks, so the failure
+reads as *read-only* rather than as the app losing the message.
 
 **The provider picker is the important one.** It used to hardcode `mock`, which
 silently ignored any endpoint configured in `studio.json` while appearing to

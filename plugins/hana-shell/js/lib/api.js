@@ -32,6 +32,19 @@ return (function () {
     available,
 
     status: () => safe('studio_status'),
+    /**
+     * Every session for the sidebar: live agents **and** the sessions on disk
+     * that are not loaded. Rows carry `live` so the UI can tell a readable
+     * session from one it can actually send to.
+     *
+     * Falls back to `list_agents` when `list_sessions` is unavailable (an older
+     * backend), so a version skew degrades to the previous behaviour instead of
+     * showing an empty list.
+     */
+    sessions: () => safe('list_sessions').then((r) => (r === null ? safe('list_agents').then((a) => a || []) : r)),
+    /** Put a live agent behind a stored session so it can be continued. */
+    resume: (sessionId) => safe('resume_session', { sessionId }),
+    /** Live agents only ("what can I send to right now"). */
     agents: () => safe('list_agents').then((r) => r || []),
     plugins: () => safe('list_plugins').then((r) => r || []),
     tools: () => safe('list_tools').then((r) => r || []),

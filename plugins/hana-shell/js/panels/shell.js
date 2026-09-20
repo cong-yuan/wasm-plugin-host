@@ -87,9 +87,9 @@ return (function () {
         if (ta) ta.focus();
       },
       onNewSession: () => hub.controls && hub.controls.newSession(),
-      onSelectSession: (id) => {
-        if (hub.select) hub.select(id);
-        if (hub.controls) hub.controls.openSession(id);
+      onSelectSession: (session) => {
+        if (hub.select) hub.select(session.id);
+        if (hub.controls) hub.controls.openSession(session);
       },
       registerRefresh: (fn) => { hub.refresh = fn; },
       registerSelection: (fn) => { hub.select = fn; },

@@ -40,6 +40,16 @@ class El {
       return false;
     };
     const walk = (el) => { for (const c of (el.children || [])) { if (c && c.attrs && match(c)) out.push(c); walk(c); } };
+    // `[attr="value"]` is what the suite uses to find a specific session row;
+    // the earlier selectors here were all slot/class probes.
+    const attrExact = sel.match(/^\[([\w-]+)="([^"]*)"\]$/);
+    if (attrExact) {
+      const [, k, v] = attrExact;
+      const matchAttr = (el) => el.attrs && el.attrs[k] === v;
+      const walkAttr = (el) => { for (const c of (el.children || [])) { if (c && c.attrs && matchAttr(c)) out.push(c); walkAttr(c); } };
+      walkAttr(this);
+      return out;
+    }
     walk(this); return out;
   }
 }
@@ -216,5 +226,49 @@ await new Promise((r) => setTimeout(r, 10));
 check('creating an agent uses a real provider when one is configured',
   sent && sent.provider === 'deepseek',
   'provider was ' + JSON.stringify(sent && sent.provider));
+
+// ── stored sessions are listed, marked, and resumed on open ─────────────────
+// A session on disk has no driver behind it. It must still appear (hiding it
+// would make persistence look broken), be distinguishable from a live one, and
+// turn into a live one when opened — otherwise "restart and keep going"
+// silently degrades to "restart and read".
+BACKEND.list_sessions = [
+  { id: 'live-1', live: true, status: 'idle', kind: 'agent', title: 'a live one',
+    messages: 2, turns: 3, busy: false, usage: { input: 0, output: 0, calls: 0 } },
+  { id: 'disk-1', live: false, status: 'stored', title: 'an older one',
+    messages: 4, turns: 9, busy: false, usage: { input: 0, output: 0, calls: 0 } },
+];
+let resumed = null;
+global.window.__TAURI_INTERNALS__.invoke = (cmd, args) => {
+  invokeLog.push(cmd);
+  if (cmd === 'resume_session') { resumed = args; return Promise.resolve(args.sessionId); }
+  const v = BACKEND[cmd];
+  return v === undefined ? Promise.reject(new Error('unknown ' + cmd)) : Promise.resolve(v);
+};
+// A fresh mount, so the session list is built from `list_sessions`.
+const root2 = new El('div');
+registered['HanaShell'](root2);
+await new Promise((r) => setTimeout(r, 20));
+
+const rowFor = (id) => root2.querySelector('[data-agent="' + id + '"]');
+check('the sidebar lists the session that is only on disk',
+  !!rowFor('disk-1'), 'rows: ' + root2.querySelectorAll('[data-agent]').map((e) => e.attrs['data-agent']).join(','));
+check('a stored session is marked as not live',
+  rowFor('disk-1') && rowFor('disk-1').attrs['data-live'] === 'false',
+  'data-live was ' + (rowFor('disk-1') && rowFor('disk-1').attrs['data-live']));
+check('a live session is marked as live',
+  rowFor('live-1') && rowFor('live-1').attrs['data-live'] === 'true',
+  'data-live was ' + (rowFor('live-1') && rowFor('live-1').attrs['data-live']));
+check('the stored session shows a readable title, not its id',
+  /an older one/.test(JSON.stringify(rowFor('disk-1'))),
+  JSON.stringify(rowFor('disk-1')));
+
+// Opening it must resume, because there is no agent to read from yet.
+rowFor('disk-1').fire('click', {});
+await new Promise((r) => setTimeout(r, 20));
+check('opening a stored session resumes it',
+  resumed && resumed.sessionId === 'disk-1', 'resume args: ' + JSON.stringify(resumed));
+check('opening a stored session does not try to resume a live one',
+  resumed === null || resumed.sessionId !== 'live-1', JSON.stringify(resumed));
 
 console.log(bad ? 'FAILED' : 'OK');

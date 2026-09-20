@@ -122,19 +122,27 @@ return (function () {
 
     const row = (agent) => {
       const active = agent.id === currentId;
+      // A stored session is readable but has no driver behind it. It is marked
+      // rather than hidden: a session list that omits what is on disk would make
+      // persistence look broken. The mark is a hollow dot (vs the live dot), and
+      // selecting one resumes it — see the frame's `onSelectSession`.
+      const stored = agent.live === false;
       const r = h('button', {
-        class: 'hn-sess' + (active ? ' active' : ''),
+        class: 'hn-sess' + (active ? ' active' : '') + (stored ? ' stored' : ''),
         type: 'button',
         'data-agent': agent.id,
-        title: agent.title || agent.id,
-        onclick: () => opts && opts.onSelectSession && opts.onSelectSession(agent.id),
+        'data-live': stored ? 'false' : 'true',
+        title: (agent.title || agent.id) + (stored ? ' · on disk (open to continue)' : ''),
+        onclick: () => opts && opts.onSelectSession && opts.onSelectSession(agent),
       });
       const dot = h('span', {
-        class: 'hn-sess-dot' + (agent.busy ? ' busy' : agent.status === 'running' ? ' busy' : ''),
+        class: 'hn-sess-dot'
+          + (agent.busy ? ' busy' : agent.status === 'running' ? ' busy' : '')
+          + (stored ? ' stored' : ''),
       });
       const label = h('span', {
         class: 'hn-sess-label',
-        text: agent.title || 'New session',
+        text: agent.title || (stored ? 'Untitled session' : 'New session'),
       });
       r.appendChild(dot);
       r.appendChild(label);
@@ -153,7 +161,7 @@ return (function () {
     };
 
     const refresh = async () => {
-      const agents = await api.agents();
+      const agents = await api.sessions();
       const rows = agents.map(row);
       if (!rows.length) {
         const empty = await api.available()
