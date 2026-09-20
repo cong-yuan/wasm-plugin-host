@@ -5,13 +5,23 @@
 // composer at the bottom with a toolbar row beneath the input. That composer
 // column — input on top, tools/send beneath — is what makes the 16px radius
 // read as one surface rather than a bordered box.
+//
+// The panel talks to the **real** backend: it picks a configured provider
+// rather than assuming `mock`, and it can open an existing session's transcript.
 return (function () {
   const { h, svgIcon } = studio.require('lib/dom');
   const S = studio.require('lib/slots');
   const api = studio.require('lib/api');
 
+  /** Collapse an assistant turn's tool activity into a readable summary line. */
+  const toolSummary = (msg) => {
+    const calls = msg.tool_calls || [];
+    if (!calls.length) return '';
+    const names = calls.map((c) => c.name).filter(Boolean);
+    return names.length ? 'used ' + names.join(', ') : '';
+  };
+
   const render = (el, opts) => {
-    const t = opts && opts.titleSetter;
     const state = { agentId: null, turns: [], busy: false };
 
     const root = h('main', {
@@ -27,9 +37,11 @@ return (function () {
     });
     const titleRow = h('div', { class: 'hn-conv-titleRow' });
     const titleEl = h('div', { class: 'hn-conv-title', text: 'New session' });
+    const usageEl = h('div', { class: 'hn-conv-usage' });
     const headerActions = h('div', { class: 'hn-conv-headerActions' });
     S.mount('hana.conversation.header', headerActions);
     titleRow.appendChild(titleEl);
+    titleRow.appendChild(usageEl);
     titleRow.appendChild(headerActions);
     header.appendChild(titleRow);
     root.appendChild(header);
@@ -47,7 +59,7 @@ return (function () {
       h('div', { class: 'hn-hero-stack' },
         h('div', { class: 'hn-hero-titleGroup' },
           h('div', { class: 'hn-hero-headline', text: 'How can I help you today?' }),
-          h('div', { class: 'hn-hero-body',
+          h('div', { class: 'hn-hero-body', 'data-hero-body': '',
             text: 'Your first message creates a dsh agent and streams its reply here.' }),
         ),
         // Slot inside the empty state, for a suggestion row or starter cards.
@@ -111,72 +123,165 @@ return (function () {
 
     const setPhase = (phase) => root.setAttribute('data-phase', phase);
 
+    /** The shell's own message rows only; a stream slot's box is left alone. */
+    const ownRows = () => Array.from(stream.querySelectorAll('[data-own-turn]'));
+
+    const messageNode = (turn) => {
+      if (turn.role === 'user') {
+        return h('div', { class: 'hn-msg-userRow', 'data-role': 'user', 'data-own-turn': '' },
+          h('div', { class: 'hn-msg-userStack' },
+            h('div', { class: 'hn-msg-bubble', text: turn.text }),
+          ),
+        );
+      }
+      if (turn.role === 'assistant') {
+        const node = h('div', { 'data-role': 'assistant', 'data-own-turn': '' });
+        if (turn.reasoning) {
+          node.appendChild(h('details', { class: 'hn-msg-reasoning' },
+            h('summary', { text: 'Reasoning' }),
+            h('div', { class: 'hn-msg-reasoningBody', text: turn.reasoning }),
+          ));
+        }
+        if (turn.text) {
+          node.appendChild(h('div', { class: 'hn-msg-assistant', text: turn.text }));
+        }
+        const tools = toolSummary(turn);
+        if (tools) {
+          node.appendChild(h('div', { class: 'hn-msg-tools', text: tools }));
+        }
+        return node;
+      }
+      return h('div', { 'data-role': 'system', 'data-own-turn': '' },
+        h('div', { class: 'hn-msg-system', text: turn.text }),
+      );
+    };
+
     const draw = () => {
-      // Only the shell's own turns are redrawn; a stream slot's contributions
-      // live in their own box and are left alone.
-      for (const n of Array.from(stream.querySelectorAll('[data-role]'))) n.remove();
+      for (const n of ownRows()) n.remove();
       const empty = state.turns.length === 0;
       hero.style.display = empty ? '' : 'none';
       setPhase(empty ? 'hero' : 'active');
-      for (const turn of state.turns) {
-        if (turn.role === 'user') {
-          stream.appendChild(h('div', { class: 'hn-msg-userRow', 'data-role': 'user' },
-            h('div', { class: 'hn-msg-userStack' },
-              h('div', { class: 'hn-msg-bubble', text: turn.text }),
-            ),
-          ));
-        } else {
-          stream.appendChild(h('div', {
-            'data-role': turn.role,
-          },
-            h('div', {
-              class: turn.role === 'system' ? 'hn-msg-system' : 'hn-msg-assistant',
-              text: turn.text,
-            }),
-          ));
-        }
-      }
+      for (const turn of state.turns) stream.appendChild(messageNode(turn));
       scroll.scrollTop = scroll.scrollHeight;
     };
 
+    const setTitle = (text) => {
+      titleEl.textContent = text || 'New session';
+      if (opts && opts.titleSetter) opts.titleSetter(text || '');
+    };
+
+    /** Show the session's token total, or nothing when none was reported. */
+    const setUsage = async (agentId) => {
+      if (!agentId) { usageEl.replaceChildren(); return; }
+      const agents = await api.agents();
+      const me = agents.find((a) => a.id === agentId);
+      const u = me && me.usage;
+      if (!u || !u.calls) {
+        // A provider that reports nothing must not read as "0 tokens".
+        usageEl.replaceChildren();
+        return;
+      }
+      const parts = [u.input + ' in', u.output + ' out'];
+      if (u.reasoning) parts.push(u.reasoning + ' reasoning');
+      usageEl.replaceChildren(h('span', {
+        class: 'hn-conv-usageText',
+        text: parts.join(' · '),
+        title: `${u.calls} model call(s)`,
+      }));
+    };
+
+    // ── opening an existing session ─────────────────────────────────────────
+    const openSession = async (agentId) => {
+      state.agentId = agentId;
+      const transcript = await api.transcript(agentId);
+      state.turns = transcript.map((m) => ({
+        role: m.role,
+        text: m.text || '',
+        reasoning: m.reasoning || '',
+        tool_calls: m.tool_calls || [],
+      }));
+      // The title comes from the first user message, same as the sidebar's.
+      const firstUser = state.turns.find((t) => t.role === 'user');
+      setTitle(firstUser ? firstUser.text.slice(0, 60) : 'Session');
+      draw();
+      setUsage(agentId);
+    };
+
+    // ── sending ─────────────────────────────────────────────────────────────
     const submit = async () => {
       const text = ta.value.trim();
       if (!text || state.busy) return;
       state.busy = true;
       sendBtn.disabled = true;
       state.turns.push({ role: 'user', text });
-      if (titleEl.textContent === 'New session') {
-        const short = text.length > 42 ? text.slice(0, 42) + '…' : text;
-        titleEl.textContent = short;
-        if (t) t(short);
+      if (!state.agentId || titleEl.textContent === 'New session') {
+        setTitle(text.length > 60 ? text.slice(0, 60) + '…' : text);
       }
       ta.value = '';
       ta.style.height = '';
       draw();
+
       if (!state.agentId) {
-        const a = await api.createAgent('mock', 'mock-1');
-        state.agentId = typeof a === 'string' && a ? a : (a && a.id) || null;
-        if (!state.agentId) {
-          state.turns.push({ role: 'system', text: 'Harness offline — could not create an agent.' });
+        // Pick a **configured** provider, not `mock`: a real endpoint the user
+        // set up should be used, and defaulting to mock would silently ignore
+        // it while appearing to work.
+        const provider = await api.pickProvider();
+        if (!provider) {
+          state.turns.push({
+            role: 'system',
+            text: 'No LLM provider is registered. Add one under extra.llm in studio.json, or use the mock route.',
+          });
           state.busy = false;
           sendBtn.disabled = false;
           draw();
           return;
         }
+        const model = opts && opts.modelFor ? opts.modelFor(provider) : (provider === 'mock' ? 'mock-1' : provider);
+        const created = await api.createAgent(provider, model);
+        state.agentId = typeof created === 'string' && created ? created : (created && created.id) || null;
+        if (!state.agentId) {
+          state.turns.push({ role: 'system', text: `Could not create an agent on provider “${provider}”.` });
+          state.busy = false;
+          sendBtn.disabled = false;
+          draw();
+          return;
+        }
+        if (opts && opts.onSessionCreated) opts.onSessionCreated(state.agentId);
       }
-      await api.send(state.agentId, text, 'm' + state.turns.length);
-      for (let i = 0; i < 80; i++) {
-        await new Promise((r) => setTimeout(r, 300));
+
+      const sent = await api.send(state.agentId, text, 'm' + state.turns.length);
+      if (sent === null) {
+        state.turns.push({ role: 'system', text: 'The turn failed to send.' });
+        state.busy = false;
+        sendBtn.disabled = false;
+        draw();
+        return;
+      }
+
+      // Poll until the assistant's reply for this turn lands. dsh has no
+      // streaming-to-frontend channel here, so this is a short poll rather than
+      // a subscription — deliberately bounded, so a stuck turn cannot spin
+      // forever.
+      const before = state.turns.filter((t) => t.role === 'assistant').length;
+      for (let i = 0; i < 200; i++) {
+        await new Promise((r) => setTimeout(r, 250));
         const transcript = await api.transcript(state.agentId);
-        const last = transcript && transcript[transcript.length - 1];
-        if (last && last.role !== 'user') {
-          state.turns = transcript.map((m) => ({ role: m.role, text: m.text ?? '' }));
+        const assistants = transcript.filter((m) => m.role === 'assistant');
+        if (assistants.length > before) {
+          state.turns = transcript.map((m) => ({
+            role: m.role,
+            text: m.text || '',
+            reasoning: m.reasoning || '',
+            tool_calls: m.tool_calls || [],
+          }));
           draw();
           break;
         }
       }
       state.busy = false;
       sendBtn.disabled = false;
+      setUsage(state.agentId);
+      if (opts && opts.onSessionChanged) opts.onSessionChanged();
     };
 
     sendBtn.onclick = submit;
@@ -190,6 +295,31 @@ return (function () {
       ta.style.height = 'auto';
       ta.style.height = Math.min(ta.scrollHeight, 336) + 'px';
     };
+
+    // ── wiring the frame's controls into this panel ─────────────────────────
+    if (opts && opts.registerControls) {
+      opts.registerControls({
+        /** Start a fresh session: clear the view, keep nothing from the old one. */
+        newSession: () => {
+          state.agentId = null;
+          state.turns = [];
+          setTitle('');
+          usageEl.replaceChildren();
+          setUsage(null);
+          draw();
+          ta.focus();
+        },
+        openSession,
+      });
+    }
+
+    // Tell the user when there is no backend at all, so the empty state is
+    // honest: "no sessions yet" and "backend unreachable" are different facts.
+    // `available()` is synchronous, so this is a plain branch.
+    if (!api.available()) {
+      const body = hero.querySelector('[data-hero-body]');
+      if (body) body.textContent = 'The backend is not reachable from this window.';
+    }
 
     draw();
     el.appendChild(root);

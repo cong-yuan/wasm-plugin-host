@@ -181,6 +181,30 @@ which is how the two things `cargo test` cannot see get covered:
 This is not ceremony: it caught the drag sign being inverted (every handle moved
 the wrong way), which no manifest-level test could have seen.
 
+## What is live, and what is a frame
+
+The shell talks to the **real** backend, not a mock-up:
+
+| Region | Source |
+|---|---|
+| Session list | `list_agents` — every agent, titled from its first user message |
+| Session tokens | the session's `AssistantMessage` events, summed per session |
+| Composer | creates an agent on a **configured** provider, sends, polls the reply |
+| Sidebar footer | `studio_status` — boot state and the registered providers |
+| Rail | `studio_status` + `list_plugins` + `plugin_windows` + `list_tools` |
+| Preview | a slot only; nothing fills it yet |
+
+**The provider picker is the important one.** It used to hardcode `mock`, which
+silently ignored any endpoint configured in `studio.json` while appearing to
+work. It now reads the registered routes and prefers anything over `mock`,
+because `mock` echoes the input — it is a test double, not a model.
+
+**Token counts are shown only when reported.** dsh attaches usage to each
+assistant message, but not every provider reports it — and a streaming provider
+that places its usage chunk *after* `Finish` is never heard, because the agent
+loop stops at `Finish`. `calls === 0` therefore renders as *nothing*, not as
+"0 tokens": the second would read as a measurement, and it would be a false one.
+
 ## Honest limitations
 
 * **One shell at a time.** Only one plugin may declare `open: "startup"`.
@@ -191,8 +215,14 @@ the wrong way), which no manifest-level test could have seen.
   plugin small; adding a Latin subset later is straightforward.
 * **No paper texture.** Upstream's `warm-paper` inlines a base64 PNG grain; it is
   omitted here to keep the asset small.
-* **The activity bars and session list are empty frames.** Real content needs
-  backend features we do not have yet (sessions, git, terminal) — they are slots
-  for now, which is the point.
+* **The activity bars are frames.** Bridge / Activity / Automation / Skills are
+  affordances with no feature behind them — the shell does not own automations
+  or skills. Clicking one is a no-op until a plugin binds to its `data-activity`.
+* **No streaming.** dsh has no push channel to the frontend here, so the reply
+  arrives by polling the transcript every 250 ms, bounded. A long turn therefore
+  appears all at once rather than typing itself out.
 * **The preview column starts collapsed.** The titlebar's ⧉ button opens it;
   until a plugin fills `hana.preview.panel` it is an empty frame.
+* **Reasoning is collapsed by default**, and tool calls are summarised as a list
+  of names — the transcript carries their arguments, but the shell does not
+  render them yet.

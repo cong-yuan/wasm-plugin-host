@@ -37,6 +37,9 @@ studio.register('AddonComposerChip', (el) => {
 });
 
 studio.register('AddonSidebarRows', (el) => {
+  // The shell renders real sessions in the slot's own box; this plugin's rows
+  // land in a separate contribution area beneath them, which is the point of
+  // the slot: two owners, neither knowing about the other.
   for (const label of ['Usage', 'Task board']) {
     const b = document.createElement('button');
     b.textContent = label;

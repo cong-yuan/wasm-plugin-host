@@ -19,6 +19,13 @@ class El {
   hasAttribute(k) { return k in this.attrs; }
   toggleAttribute(k, on) { if (on) this.attrs[k] = ''; else delete this.attrs[k]; }
   addEventListener(ev, fn) { (this._ev ||= {})[ev] = fn; }
+  // `dom.js` assigns handlers as properties (`el.onclick = fn`), so `fire` has
+  // to look in both places.
+  fire(ev, obj = {}) {
+    const prop = this['on' + ev];
+    if (typeof prop === 'function') prop(obj);
+    for (const fn of [].concat(this._ev && this._ev[ev] || [])) fn(obj);
+  }
   appendChild(c) { this.children.push(c); return c; }
   append(...cs) { for (const c of cs) this.appendChild(c); }
   replaceChildren(...cs) { this.children = cs; }
@@ -32,7 +39,7 @@ class El {
       if (sel.startsWith('[data-role]')) return 'data-role' in el.attrs;
       return false;
     };
-    const walk = (el) => { for (const c of el.children) { if (match(c)) out.push(c); walk(c); } };
+    const walk = (el) => { for (const c of (el.children || [])) { if (c && c.attrs && match(c)) out.push(c); walk(c); } };
     walk(this); return out;
   }
 }
@@ -59,6 +66,41 @@ const walkDir = (dir) => {
   }
 };
 walkDir(JS_ROOT);
+
+// ── a fake backend ──────────────────────────────────────────────────────────
+// `api.js` goes through `window.__TAURI_INTERNALS__.invoke`. Standing it up here
+// is what lets the render harness assert what the shell does with **real data**
+// rather than only that its skeleton builds.
+const AGENTS = [
+  { id: 'a1', status: 'idle', messages: 4, turns: 9, busy: false,
+    title: 'refactor the token estimator',
+    usage: { input: 1200, output: 800, calls: 2 } },
+  { id: 'a2', status: 'running', messages: 1, turns: 2, busy: true,
+    title: '', usage: { input: 0, output: 0, calls: 0 } },
+];
+const BACKEND = {
+  studio_status: { booted: true, providers: ['mock', 'deepseek'], tool_count: 7,
+                   service_count: 2, watching: true, slot_count: 2,
+                   plugins_dir: '/p', config_path: '/c', wasm_tool_count: 3 },
+  list_agents: AGENTS,
+  list_plugins: [{ slot: 'shell', plugin: 'hana-shell', state: 'active', tool_count: 0 }],
+  list_tools: [{ name: 'alpha_tool', plugin: 'alpha' }],
+  list_services: [],
+  plugin_windows: [{ label: 'plugin-shell-main', slot: 'shell', title: 'Hana' }],
+  transcript: [{ role: 'user', text: 'hi', reasoning: '', tool_calls: [], tool_results: [] }],
+};
+const invokeLog = [];
+global.window = global.window || {};
+global.window.__TAURI_INTERNALS__ = {
+  invoke: (cmd, args) => {
+    invokeLog.push(cmd);
+    if (cmd === 'create_agent') return Promise.resolve('a-new');
+    const v = BACKEND[cmd];
+    return v === undefined ? Promise.reject(new Error('unknown ' + cmd)) : Promise.resolve(v);
+  },
+};
+
+const drain = () => new Promise((r) => setTimeout(r, 0));
 
 const registered = {};
 const injected = [];
@@ -90,7 +132,7 @@ const root = new El('div');
 registered['HanaShell'](root);
 const shell = root.querySelector('.hn-shell') || root.children[0];
 const slots = [];
-const collect = (el) => { for (const c of el.children) { if (c.attrs['data-host-slot']) slots.push('HOST:'+c.attrs['data-host-slot']); collect(c); } };
+const collect = (el) => { for (const c of (el.children || [])) { if (c && c.attrs && c.attrs['data-host-slot']) slots.push('HOST:'+c.attrs['data-host-slot']); collect(c); } };
 collect(root);
 const mounted = [...new Set(slots)].map((s) => s.replace('HOST:', ''));
 const expected = ['hana.titlebar.left','hana.titlebar.center','hana.titlebar.right',
@@ -113,4 +155,66 @@ check('the shell mounts all ' + expected.length + ' declared slots',
 for (const s of expected) {
   check('mounts ' + s, mounted.includes(s));
 }
+
+// ── the shell renders real backend data ─────────────────────────────────────
+// The panel fetches on mount, so let the microtask queue drain first.
+await drain(); await drain();
+
+const textOf = (el) => {
+  if (!el || typeof el !== 'object') return '';
+  // Text nodes are plain objects in this shim, with no children.
+  let out = el._text || '';
+  if (el.attrs && el.attrs.text) out += ' ' + el.attrs.text;
+  for (const c of (el.children || [])) out += ' ' + textOf(c);
+  return out.replace(/\s+/g, ' ').trim();
+};
+const all = textOf(root);
+
+check('the session list renders agent titles, not ids',
+  all.includes('refactor the token estimator'), all.slice(0, 200));
+check('an untitled session shows a placeholder rather than blank',
+  all.includes('New session'));
+check('usage is shown for a session that reported tokens',
+  all.includes('2.0k'), 'expected 2000 tokens rendered as 2.0k: ' + all.slice(0, 250));
+check('the sidebar lists the configured providers, not just mock',
+  all.includes('deepseek'), all.slice(0, 250));
+
+// The rail's cards come from the same backend.
+check('the rail reports the harness state',
+  all.includes('online'), all.slice(0, 250));
+check('the rail lists the mounted plugin',
+  all.includes('hana-shell'), all.slice(0, 300));
+check('the rail lists the contributed tool',
+  all.includes('alpha_tool'), all.slice(0, 300));
+
+// The panel asked the backend for the right things.
+check('it queried list_agents',
+  invokeLog.includes('list_agents'), invokeLog.join(','));
+check('it queried studio_status',
+  invokeLog.includes('studio_status'), invokeLog.join(','));
+
+// ── sending picks a configured provider, not mock ───────────────────────────
+// This is the bug the whole change exists to fix: the panel used to hardcode
+// `mock`, silently ignoring a configured endpoint.
+const ta = root.querySelector('.hn-comp-input');
+const sendBtn = root.querySelector('.hn-comp-primary');
+let sent = null;
+global.window.__TAURI_INTERNALS__.invoke = (cmd, args) => {
+  invokeLog.push(cmd);
+  if (cmd === 'create_agent') { sent = args; return Promise.resolve('a-new'); }
+  if (cmd === 'send_message') return Promise.resolve(null);
+  const v = BACKEND[cmd];
+  return v === undefined ? Promise.reject(new Error('unknown ' + cmd)) : Promise.resolve(v);
+};
+ta.value = 'hello';
+sendBtn.fire('click', {});
+await drain();
+
+// `send` goes through `safe`, which awaits the invoke promise, so give the
+// promise chain a tick to settle.
+await new Promise((r) => setTimeout(r, 10));
+check('creating an agent uses a real provider when one is configured',
+  sent && sent.provider === 'deepseek',
+  'provider was ' + JSON.stringify(sent && sent.provider));
+
 console.log(bad ? 'FAILED' : 'OK');

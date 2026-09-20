@@ -53,7 +53,7 @@ class El {
       if (sel.startsWith('.')) return (el.className || '').split(/\s+/).includes(sel.slice(1));
       return false;
     };
-    const walk = (el) => { for (const c of el.children) { if (match(c)) out.push(c); walk(c); } };
+    const walk = (el) => { for (const c of (el.children || [])) { if (c && c.attrs && match(c)) out.push(c); walk(c); } };
     walk(this); return out;
   }
 }

@@ -72,15 +72,42 @@ return (function () {
     shell.appendChild(row);
 
     // ── columns ─────────────────────────────────────────────────────────────
+    // The three panels are separate files, but a few actions cross between
+    // them: "new session" lives in the sidebar's header and changes the
+    // conversation; creating a session in the conversation must refresh the
+    // sidebar's list. `hub` is the small join — each panel publishes what it
+    // can do and calls the other's, looked up lazily so render order does not
+    // matter.
+    const hub = {};
+
     const dSide = sidebar.render(sideCol, {
       onCollapse: () => setSidebar(false),
       onOpenSettings: () => {
         const ta = document.querySelector('.hn-comp-input');
         if (ta) ta.focus();
       },
+      onNewSession: () => hub.controls && hub.controls.newSession(),
+      onSelectSession: (id) => {
+        if (hub.select) hub.select(id);
+        if (hub.controls) hub.controls.openSession(id);
+      },
+      registerRefresh: (fn) => { hub.refresh = fn; },
+      registerSelection: (fn) => { hub.select = fn; },
     });
+
     const dConv = conversation.render(mainCol, {
       titleSetter: (text) => titlebar.setTitle(shell, text),
+      registerControls: (c) => { hub.controls = c; },
+      onSessionCreated: (id) => {
+        if (hub.select) hub.select(id);
+        if (hub.refresh) hub.refresh();
+      },
+      onSessionChanged: () => { if (hub.refresh) hub.refresh(); },
+      // The model defaults to the provider name, which is what dsh's OpenAI
+      // adapter expects when the provider is the model family (`deepseek` →
+      // `deepseek-chat` is configured per-provider in studio.json, so the
+      // route name is the honest default here).
+      modelFor: (provider) => provider,
     });
     const dPreview = preview.render(previewCol, { onClose: () => setPreview(false) });
     const dRail = rail.render(railCol, { onClose: () => setRail(false) });
