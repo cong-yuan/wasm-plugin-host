@@ -166,20 +166,49 @@ shell takes the launch view immediately.
 ## Tests
 
 ```sh
-npm test        # in this directory; no dependencies to install
+npm test        # in this directory
 ```
 
-Two node harnesses under `tests/`. They load the plugin's JS the way the host
-does (`new Function('studio', source)`) and drive it against a small DOM shim,
-which is how the two things `cargo test` cannot see get covered:
+Three node harnesses under `tests/`, plus one optional:
 
-* `render.test.mjs` — the tree builds and every declared slot is mounted.
-* `resize.test.mjs` — drags are simulated as real mouse events: both axes,
-  clamping at both ends, persistence, double-click reset, the dynamic preview
-  ceiling, and that a collapsed column refuses to resize.
+* `css-guards.test.mjs` — reads the stylesheet and catches the shapes of
+  mistake a layout-blind test cannot. **Zero dependencies.**
+* `css-cascade.test.mjs` — runs the stylesheet through a real cascade and
+  asserts the handle keeps its own geometry. Needs **jsdom**; skips *loudly*
+  without it (a silent skip would read as "checked and fine").
+* `render.test.mjs` — stands up a fake Tauri IPC and asserts the tree builds,
+  every declared slot mounts, and real backend data renders.
+* `resize.test.mjs` — simulates drags as real mouse events: both axes, clamping,
+  persistence, reset, the dynamic preview ceiling, collapsed-column refusal.
 
-This is not ceremony: it caught the drag sign being inverted (every handle moved
-the wrong way), which no manifest-level test could have seen.
+They are not ceremony. Between them they have caught:
+
+* **the drag sign inverted** — every handle moved the wrong way;
+* **the handle stretched across the whole column** — `.hn-side > *` matched the
+  3px handle too, so the *entire sidebar* became a drag surface and nothing
+  inside it could be clicked. The DOM shim cannot see this (no layout engine)
+  and the eye cannot either until you try to click a row; `css-cascade`
+  reproduces it exactly, and fails with `computed width was
+  var(--dw-sidebar-width)` when the fix is reverted.
+
+### Why not a library for resizing?
+
+Split.js, `interact.js` and `react-resizable-panels` all exist and are fine, but
+they solve a different shape of problem than this shell has:
+
+| | Split.js, etc. | this shell |
+|---|---|---|
+| Layout | take over the children, size them `calc(% - px)` | CSS custom properties, fixed widths |
+| Collapse | not their concern | width → 0, keeping the slot's contributions |
+| Persistence | not provided | per-target, with reset |
+| Modules | npm package, bundled | `include_str!` into the wasm, no bundler |
+| Runtime deps | 0 (Split.js) | 0, deliberately |
+
+Adopting one would mean giving up the collapse-to-zero behaviour and the token
+model, to delete ~140 lines. The part that is genuinely fiddly (clamping live,
+persisting, the dynamic ceiling) is not what these libraries provide anyway.
+What *was* worth taking from the ecosystem is the **testing** approach above: a
+real cascade beats reading CSS as text, and that is now in `npm test`.
 
 ## What is live, and what is a frame
 

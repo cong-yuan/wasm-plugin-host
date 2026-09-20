@@ -255,8 +255,12 @@ body.resizing-y .hn-tb { transition: none !important; }
 
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
 .hn-side { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-/* Inner content keeps its width while the column animates to zero. */
-.hn-side > * { width: var(--dw-sidebar-width); flex-shrink: 0; }
+/* Inner content keeps its width while the column animates to zero.
+   `:not(.hn-resize-handle)` matters: the handle is also a direct child, and
+   without the exclusion it was stretched to the full column width — which made
+   the *entire column* a drag surface and swallowed every click inside it. The
+   handle is absolutely positioned and must keep its own 3px. */
+.hn-side > *:not(.hn-resize-handle) { width: var(--dw-sidebar-width); flex-shrink: 0; }
 
 .hn-side-header {
   display: flex;
@@ -605,7 +609,7 @@ body.resizing-y .hn-tb { transition: none !important; }
 
 /* ── Right rail ──────────────────────────────────────────────────────────── */
 .hn-rail { display: flex; flex-direction: column; height: 100%; min-height: 0; width: var(--dw-rail-width); }
-.hn-rail > * { width: var(--dw-rail-width); flex-shrink: 0; }
+.hn-rail > *:not(.hn-resize-handle) { width: var(--dw-rail-width); flex-shrink: 0; }
 .hn-rail-header {
   display: flex;
   align-items: center;
