@@ -42,7 +42,10 @@ Two consequences for plugin authors:
 > **Do not read this as a liveness guarantee.** Serialisation is about *safety*
 > for shared state, not throughput. A slow tool occupies its slot for the whole
 > call — and, through `WasmHost`, every other slot as well — so a plugin blocking
-> inside `host.http_fetch` delays the rest. (Tracked in `docs/已知问题.md`.)
+> inside `host.http_fetch` delays the rest. `http_fetch` is therefore bounded by
+> a finite timeout (see its section below); the underlying lock is still held
+> across the call, so plugins should keep tools short. (Tracked in
+> `docs/已知问题.md` §1.4.)
 
 ### What a host-side callback must not do
 
@@ -754,5 +757,13 @@ unload — the host removes them from the registry automatically.
 ```json
 { "status": 200, "headers": { "content-type": "..." }, "body": "..." }
 ```
-或 `{ "error": "..." }`(请求根本无法发出时)。**非 2xx 不是错误** —— 插件自己看 status 决定。
+或 `{ "error": "..." }`(请求根本无法发出时——连接失败、超时等)。
+**非 2xx 不是错误** —— 插件自己看 status 决定。
 body 上限 8 MiB。
+
+**超时**:整通调用有**有限**超时(默认 30 秒)。为什么必须有:本调用在宿主
+持有 registry 锁时运行(见上面 Threading 一节),所以一个**永不返回**的请求
+会把**整个宿主**冻住 —— 不只是本插件。ureq 的原生默认是**无超时**,所以这
+不是优化,是活性保证。需要更长时间就发多次请求,不要把宿主按几分钟。
+宿主的 `Runtime::set_http_timeout` 可调;
+回归测试 `host/tests/http_timeout.rs`。

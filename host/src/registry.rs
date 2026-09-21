@@ -460,6 +460,12 @@ impl Registry {
         self.meta.contains_key(slot)
     }
 
+    /// Override the `host.http_fetch` bound for plugins loaded from now on.
+    pub fn set_http_timeout(&mut self, timeout: std::time::Duration) -> &mut Self {
+        self.runtime.set_http_timeout(timeout);
+        self
+    }
+
     pub fn list_plugins(&self) -> Vec<(String, String, PluginState, usize, bool)> {
         let mut v: Vec<_> = self
             .meta

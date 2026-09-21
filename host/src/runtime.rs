@@ -28,8 +28,9 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use wasmtime::{Engine, Instance, Linker, Module, Store};
+use std::time::Duration;
 use wasmtime::PoolingAllocationConfig;
+use wasmtime::{Engine, Instance, Linker, Module, Store};
 
 use crate::state::HostState;
 
@@ -68,9 +69,8 @@ struct DiskCache {
 
 impl DiskCache {
     fn new(dir: PathBuf, engine_key: u64) -> Result<Self> {
-        std::fs::create_dir_all(&dir).map_err(|e| {
-            anyhow::anyhow!("creating compile-cache dir {}: {e}", dir.display())
-        })?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| anyhow::anyhow!("creating compile-cache dir {}: {e}", dir.display()))?;
         Ok(Self {
             dir,
             engine_key,
@@ -80,7 +80,8 @@ impl DiskCache {
 
     /// `<dir>/<content>-<engine>.cwasm`
     fn path_for(&self, content: u64) -> PathBuf {
-        self.dir.join(format!("{content:016x}-{:016x}.cwasm", self.engine_key))
+        self.dir
+            .join(format!("{content:016x}-{:016x}.cwasm", self.engine_key))
     }
 
     fn get(&self, content: u64, engine: &Engine) -> Option<Module> {
@@ -203,6 +204,8 @@ pub struct Runtime {
     modules: Mutex<HashMap<PathBuf, (u128, Module)>>,
     /// Optional on-disk `.cwasm` cache; `None` disables it entirely.
     disk_cache: Option<DiskCache>,
+    /// Bound applied to every `host.http_fetch`. See [`HTTP_TIMEOUT`].
+    http_timeout: Duration,
 }
 
 impl Runtime {
@@ -248,12 +251,16 @@ impl Runtime {
         // Config access: read the current config (JSON) into a guest buffer, and
         // a monotonic version so the guest can cheaply detect changes.
         linker.func_wrap("host", "get_config", host_get_config)?;
-        linker.func_wrap("host", "config_version", |caller: wasmtime::Caller<'_, HostState>| -> i64 {
-            caller
-                .data()
-                .config_version
-                .load(std::sync::atomic::Ordering::SeqCst)
-        })?;
+        linker.func_wrap(
+            "host",
+            "config_version",
+            |caller: wasmtime::Caller<'_, HostState>| -> i64 {
+                caller
+                    .data()
+                    .config_version
+                    .load(std::sync::atomic::Ordering::SeqCst)
+            },
+        )?;
         // Cross-plugin service calls. A plugin invokes another plugin's `op` by
         // *service name* (not slot), so it depends on the capability rather than
         // a specific implementation. See `service::Shared::call_service`.
@@ -272,6 +279,7 @@ impl Runtime {
             strategy,
             modules: Mutex::new(HashMap::new()),
             disk_cache: None,
+            http_timeout: HTTP_TIMEOUT,
         })
     }
 
@@ -281,7 +289,10 @@ impl Runtime {
     /// instead of a full compile (tens to hundreds of ms per plugin). The
     /// directory must be writable by the host and **not** by untrusted code
     /// (see [`CacheStats`] for the trust note).
-    pub fn with_disk_cache(strategy: AllocationStrategy, cache_dir: impl Into<PathBuf>) -> Result<Self> {
+    pub fn with_disk_cache(
+        strategy: AllocationStrategy,
+        cache_dir: impl Into<PathBuf>,
+    ) -> Result<Self> {
         let mut rt = Self::with_strategy(strategy)?;
         let key = engine_fingerprint(&rt.engine, &rt.strategy);
         rt.disk_cache = Some(DiskCache::new(cache_dir.into(), key)?);
@@ -296,6 +307,23 @@ impl Runtime {
     /// Is a disk cache configured?
     pub fn disk_cache_enabled(&self) -> bool {
         self.disk_cache.is_some()
+    }
+
+    /// The bound applied to every `host.http_fetch` in this runtime.
+    pub fn http_timeout(&self) -> Duration {
+        self.http_timeout
+    }
+
+    /// Override the `host.http_fetch` bound for this runtime.
+    ///
+    /// This is a real knob, not a test hook: an embedder that runs plugins in
+    /// front of a slow-but-honest service may want longer than the 30-second
+    /// default. It is *finite* by construction — passing `None` is not possible,
+    /// because an unbounded request would stall the whole host (see
+    /// [`HTTP_TIMEOUT`]). Affects plugins loaded after the call.
+    pub fn set_http_timeout(&mut self, timeout: Duration) -> &mut Self {
+        self.http_timeout = timeout;
+        self
     }
 
     /// Snapshot of the disk cache counters (all zero when disabled).
@@ -354,8 +382,9 @@ impl Runtime {
             match disk.get(content, engine) {
                 Some(module) => module,
                 None => {
-                    let module = Module::new(engine, &bytes)
-                        .map_err(|e| anyhow::anyhow!("compiling wasm module {}: {e}", path.display()))?;
+                    let module = Module::new(engine, &bytes).map_err(|e| {
+                        anyhow::anyhow!("compiling wasm module {}: {e}", path.display())
+                    })?;
                     disk.put(content, &module);
                     disk.stats.lock().unwrap().misses += 1;
                     module
@@ -366,7 +395,10 @@ impl Runtime {
                 .map_err(|e| anyhow::anyhow!("compiling wasm module {}: {e}", path.display()))?
         };
 
-        self.modules.lock().unwrap().insert(key, (mtime, module.clone()));
+        self.modules
+            .lock()
+            .unwrap()
+            .insert(key, (mtime, module.clone()));
         Ok(module)
     }
 
@@ -416,7 +448,12 @@ impl Runtime {
     }
 }
 
-fn host_log(mut caller: wasmtime::Caller<'_, HostState>, level: i32, ptr: i32, len: i32) -> wasmtime::Result<()> {
+fn host_log(
+    mut caller: wasmtime::Caller<'_, HostState>,
+    level: i32,
+    ptr: i32,
+    len: i32,
+) -> wasmtime::Result<()> {
     let mem = caller
         .get_export("memory")
         .and_then(|e| e.into_memory())
@@ -479,6 +516,20 @@ fn host_get_config(
 /// `host.has_service(name_ptr, name_len) -> i32` — 1 if a provider is registered
 /// for that service, 0 otherwise. Lets a plugin check before calling, so an
 /// optional dependency does not have to be a hard `inject`.
+/// How long one `host.http_fetch` may take, end to end.
+///
+/// Deliberately generous — this is a liveness backstop, not a latency budget.
+/// But it must be *finite*: the call runs while the host's registry lock is
+/// held, so without a bound a single unresponsive endpoint freezes the entire
+/// host. Measured before this was added: a request to a server that accepted the
+/// connection and then went quiet blocked an unrelated `list_plugins` for as
+/// long as the server stayed quiet — indefinitely (ureq's default is no timeout
+/// at all).
+///
+/// A plugin needing longer than this should issue several requests rather than
+/// hold the host for minutes.
+pub(crate) const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// `host.http_fetch(req_ptr, req_len, out_ptr, out_cap) -> i64`
 ///
 /// The request is a JSON object:
@@ -497,6 +548,9 @@ fn host_get_config(
 /// This is a deliberate capability decision: plugins are trusted, so they get
 /// unrestricted network access. It runs **blocking** on the guest's thread,
 /// because wasmtime host functions are synchronous.
+///
+/// Every request is subject to [`HTTP_TIMEOUT`] — see that constant for why an
+/// unbounded call would freeze the whole host, not just this plugin.
 fn host_http_fetch(
     mut caller: wasmtime::Caller<'_, HostState>,
     req_ptr: i32,
@@ -515,7 +569,7 @@ fn host_http_fetch(
         String::from_utf8_lossy(&buf).into_owned()
     };
 
-    let reply = http_fetch_json(&req_json);
+    let reply = http_fetch_json(&req_json, caller.data().http_timeout);
     let bytes = serde_json::to_vec(&reply)
         .map_err(|e| wasmtime::Error::msg(format!("serializing http reply: {e}")))?;
 
@@ -537,7 +591,9 @@ fn host_http_fetch(
 /// `ureq::get/post/...` builders: those return different typestates
 /// (`RequestBuilder<WithoutBody>` vs `<WithBody>`), which cannot share a
 /// `match`. The `http::Request` form is method-agnostic.
-fn http_fetch_json(req_json: &str) -> serde_json::Value {
+///
+/// The request is bounded by `timeout` on purpose; see [`HTTP_TIMEOUT`].
+fn http_fetch_json(req_json: &str, timeout: Duration) -> serde_json::Value {
     use serde_json::json;
     use ureq::http;
 
@@ -555,9 +611,7 @@ fn http_fetch_json(req_json: &str) -> serde_json::Value {
         .to_ascii_uppercase();
     let body = req.get("body").and_then(|b| b.as_str()).map(str::to_string);
 
-    let mut builder = http::Request::builder()
-        .method(method.as_str())
-        .uri(url);
+    let mut builder = http::Request::builder().method(method.as_str()).uri(url);
     if let Some(headers) = req.get("headers").and_then(|h| h.as_object()) {
         for (k, v) in headers {
             if let Some(v) = v.as_str() {
@@ -570,7 +624,12 @@ fn http_fetch_json(req_json: &str) -> serde_json::Value {
     // every method (an empty string for GET/HEAD), so there is one path.
     use ureq::RequestExt as _;
     let run = match builder.body(body.unwrap_or_default()) {
-        Ok(r) => r.with_default_agent().run(),
+        Ok(r) => r
+            .with_default_agent()
+            .configure()
+            .timeout_global(Some(timeout))
+            .build()
+            .run(),
         Err(e) => return json!({ "error": format!("building request: {e}") }),
     };
 
@@ -655,14 +714,18 @@ fn host_call_service(
             mem.read(&caller, ptr as usize, &mut buf)?;
             Ok(String::from_utf8_lossy(&buf).into_owned())
         };
-        (read(svc_ptr, svc_len)?, read(op_ptr, op_len)?, read(args_ptr, args_len)?)
+        (
+            read(svc_ptr, svc_len)?,
+            read(op_ptr, op_len)?,
+            read(args_ptr, args_len)?,
+        )
     };
 
     // Call OUTSIDE any store borrow: the callee is a different instance.
     let result: serde_json::Value = {
         let services = caller.data().services.clone();
-        let args: serde_json::Value = serde_json::from_str(&args_json)
-            .unwrap_or(serde_json::Value::Null);
+        let args: serde_json::Value =
+            serde_json::from_str(&args_json).unwrap_or(serde_json::Value::Null);
         match services {
             Some(shared) => match shared.call_service(&svc, &op, &args) {
                 Ok(v) => v,

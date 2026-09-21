@@ -388,7 +388,10 @@ impl Plugin {
             .unwrap_or_else(|| "plugin".to_string());
 
         let module = runtime.compile(engine, path)?;
-        let state = HostState::new(slot, &name, config, log.clone(), services);
+        let mut state = HostState::new(slot, &name, config, log.clone(), services);
+        // The fetch bound is a runtime-level policy; carry it into the instance
+        // so `host.http_fetch` can read it without reaching back to `Runtime`.
+        state.http_timeout = runtime.http_timeout();
         let config_handle = state.config.clone();
         let version_handle = state.config_version.clone();
         let mut store = Store::new(engine, state);
@@ -494,6 +497,7 @@ impl Plugin {
     /// the plugin can react immediately. Returns `false` if the plugin has no
     /// `plugin_on_config` hook (the config is still updated and readable via
     /// `host.get_config`).
+    /// Update how long `host.http_fetch` may run for this instance.
     pub fn set_config(&mut self, config: serde_json::Value) -> Result<bool> {
         // Update shared state first: the guest may read it during the hook.
         *self.config.lock().unwrap() = config;

@@ -217,6 +217,9 @@ pub struct HostState {
     pub log: Arc<LogSink>,
     /// The slot this instance is loaded under (used for log prefixes).
     pub slot: String,
+    /// How long `host.http_fetch` may run, end to end. See
+    /// `runtime::HTTP_TIMEOUT` for why this must be finite.
+    pub http_timeout: std::time::Duration,
     /// The plugin's own name (from its file stem / declaration).
     pub plugin_name: String,
     /// The plugin's live config. The host pushes updates here; the plugin reads
@@ -271,6 +274,7 @@ impl HostState {
             wasi: ctx,
             log,
             slot,
+            http_timeout: crate::runtime::HTTP_TIMEOUT,
             plugin_name,
             config: Arc::new(Mutex::new(config)),
             config_version: Arc::new(AtomicI64::new(1)),
