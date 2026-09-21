@@ -1001,6 +1001,7 @@ dependencies = [
 name = "hello-rust-v2"
 version = "0.1.0"
 dependencies = [
+ "plugin-sdk",
  "serde",
  "serde_json",
 ]

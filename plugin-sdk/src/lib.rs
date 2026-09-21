@@ -125,9 +125,49 @@ pub fn config() -> Value {
     try_config().unwrap_or(Value::Null)
 }
 
-/// The host's monotonic config version; a change means the config changed.
+/// The plugin's monotonic config version; a change means the config changed.
 pub fn config_version() -> i64 {
     raw_config_version()
+}
+
+/// Decode a host-supplied buffer from guest memory as a UTF-8 string.
+///
+/// Returns `Err` for invalid UTF-8 rather than replacing bad bytes with U+FFFD.
+/// That distinction matters: lossy decoding turns unreadable input into a
+/// *slightly different, valid-looking* one — the caller's `a\xFFb` becomes
+/// `a\u{FFFD}b` and the plugin goes on to answer as if it had understood. A
+/// plugin acting on input that was never sent is worse than one that refuses.
+///
+/// An empty buffer (`ptr == 0` or `len <= 0`) is `Ok("")` — "no argument" and
+/// "corrupt argument" are different facts and the caller decides what to do with
+/// each.
+///
+/// # Safety
+///
+/// `ptr`/`len` must describe a readable region of this module's linear memory,
+/// which is the host's guarantee for the pointers it passes to `plugin_invoke`.
+pub unsafe fn read_utf8(ptr: i32, len: i32) -> Result<String, std::string::FromUtf8Error> {
+    if ptr == 0 || len <= 0 {
+        return Ok(String::new());
+    }
+    // SAFETY: the caller guarantees the region is readable for `len` bytes.
+    let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
+    decode_utf8(bytes)
+}
+
+/// The pointer-free core of [`read_utf8`], so the decoding rule is testable on
+/// the host without fabricating guest addresses.
+///
+/// A `plugin_alloc` pointer is a 32-bit guest offset; casting one to a native
+/// pointer would be meaningless, which is exactly why this is split out.
+pub fn decode_utf8(bytes: &[u8]) -> Result<String, std::string::FromUtf8Error> {
+    String::from_utf8(bytes.to_vec())
+}
+
+/// The canonical error reply, in the shape the host's `InvokeResult` expects.
+pub fn error_json(code: &str, message: impl std::fmt::Display) -> String {
+    serde_json::json!({ "kind": "error", "code": code, "message": message.to_string() })
+        .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -251,9 +291,9 @@ mod tests {
         let got = read_with(|buf: &mut [u8]| {
             calls += 1;
             match calls {
-                1 => -6000,               // "you need 6000"
+                1 => -6000, // "you need 6000"
                 _ => {
-                    let want = 7000;      // it grew in the meantime
+                    let want = 7000; // it grew in the meantime
                     if buf.len() < want {
                         -(want as i64)
                     } else {
@@ -266,5 +306,41 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(got.len(), 7000);
+    }
+
+    #[test]
+    fn invalid_utf8_is_an_error_not_a_silent_substitution() {
+        // `from_utf8_lossy` would turn this into `a\u{FFFD}b` and succeed. The
+        // plugin would then answer about a name that was never sent.
+        let bytes = b"a\xffb";
+        let got = decode_utf8(bytes);
+        assert!(got.is_err(), "invalid UTF-8 must not decode: {got:?}");
+    }
+
+    #[test]
+    fn an_empty_buffer_is_an_empty_string_not_an_error() {
+        // "no argument" and "corrupt argument" must stay distinguishable. Both
+        // branches here short-circuit before touching memory, so they are safe
+        // to call with stub addresses.
+        assert_eq!(unsafe { read_utf8(0, 10) }.unwrap(), "");
+        assert_eq!(unsafe { read_utf8(1234, 0) }.unwrap(), "");
+        assert_eq!(unsafe { read_utf8(1234, -1) }.unwrap(), "");
+    }
+
+    #[test]
+    fn valid_utf8_round_trips_including_multibyte() {
+        assert_eq!(decode_utf8("héllo 世界".as_bytes()).unwrap(), "héllo 世界");
+        assert_eq!(decode_utf8(b"").unwrap(), "");
+    }
+
+    #[test]
+    fn the_error_reply_matches_the_hosts_expected_shape() {
+        // The host deserializes this into `InvokeResult`; a misshapen reply is a
+        // hard error at the host, so the shape is pinned here.
+        let s = error_json("BAD_ARG", "who must be a string");
+        let v: Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["kind"], "error");
+        assert_eq!(v["code"], "BAD_ARG");
+        assert!(v["message"].as_str().unwrap().contains("who"));
     }
 }

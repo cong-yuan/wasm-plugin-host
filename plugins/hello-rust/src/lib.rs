@@ -94,6 +94,12 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
 }
 
 /// Run `op`; args/result are UTF-8 JSON.
+///
+/// Bad input is **reported**, never repaired. The op and the arguments are
+/// decoded strictly: invalid UTF-8 is an error reply, and so is arguments JSON
+/// that does not match what this tool declares. The alternative — substituting
+/// defaults and returning `kind: "success"` — tells the model its call worked
+/// while running something it did not ask for.
 #[no_mangle]
 pub extern "C" fn plugin_invoke(
     op_ptr: i32,
@@ -103,26 +109,34 @@ pub extern "C" fn plugin_invoke(
     out: i32,
     cap: i32,
 ) -> i64 {
-    let op = unsafe { read_str(op_ptr, op_len) };
-    let args = unsafe { read_str(args_ptr, args_len) };
+    // SAFETY: the host passes a readable region for each (ptr, len) pair.
+    let (op, args) = unsafe {
+        match (sdk::read_utf8(op_ptr, op_len), sdk::read_utf8(args_ptr, args_len)) {
+            (Ok(op), Ok(args)) => (op, args),
+            (Err(e), _) => return write_out(out, cap, sdk::error_json("BAD_OP", e).as_bytes()),
+            (_, Err(e)) => {
+                return write_out(out, cap, sdk::error_json("BAD_ARGS_UTF8", e).as_bytes())
+            }
+        }
+    };
 
     let result = match op.as_str() {
         "greet" => invite_greet(&args),
         "echo_num" => invoke_echo_num(&args),
-        other => json!({ "kind": "error", "message": format!("unknown op {other}"), "code": "NO_OP" }),
+        other => sdk::error_json("NO_OP", format!("unknown op `{other}`")),
     };
-    write_out(out, cap, result.to_string().as_bytes())
+    write_out(out, cap, result.as_bytes())
 }
 
 // ---------- helpers ----------
 
+/// `greet`'s arguments, with **no** defaults: the tool's own declaration marks
+/// `who` as `required`, so a missing or wrongly-typed `who` is a client error.
+/// Accepting it and defaulting to `"world"` would contradict the schema the
+/// model was given.
 #[derive(Deserialize)]
 struct GreetArgs {
-    #[serde(default = "default_who")]
     who: String,
-}
-fn default_who() -> String {
-    "world".to_string()
 }
 
 fn refresh_config() {
@@ -156,8 +170,12 @@ unsafe fn greet_template() -> String {
         .to_string()
 }
 
-fn invite_greet(args: &str) -> serde_json::Value {
-    let parsed: GreetArgs = serde_json::from_str(args).unwrap_or(GreetArgs { who: default_who() });
+fn invite_greet(args: &str) -> String {
+    // No `unwrap_or(default)`: see `GreetArgs`.
+    let parsed: GreetArgs = match serde_json::from_str(args) {
+        Ok(p) => p,
+        Err(e) => return sdk::error_json("BAD_ARGS", format!("greet expects `who` as a string: {e}")),
+    };
     let now = unsafe { now_ms() };
     let template = unsafe { greet_template() };
     host_log(1, &format!("greet called for `{}`", parsed.who));
@@ -170,24 +188,32 @@ fn invite_greet(args: &str) -> serde_json::Value {
             "config_version": sdk::config_version()
         }
     })
+    .to_string()
 }
 
-fn invoke_echo_num(args: &str) -> serde_json::Value {
-    let parsed: serde_json::Value = serde_json::from_str(args).unwrap_or(json!({}));
-    let n = parsed.get("n").and_then(|v| v.as_i64()).unwrap_or(0);
+fn invoke_echo_num(args: &str) -> String {
+    // `n` is declared as an integer, but **optional** (not in `required`), so a
+    // missing `n` legitimately means 0. A *wrong type* does not: `"n": "x"`
+    // must not silently become 0 and report success.
+    let parsed: serde_json::Value = match serde_json::from_str(args) {
+        Ok(v) => v,
+        Err(e) => return sdk::error_json("BAD_ARGS", format!("echo_num expects JSON: {e}")),
+    };
+    let n = match parsed.get("n") {
+        None | Some(serde_json::Value::Null) => 0,
+        Some(v) => match v.as_i64() {
+            Some(n) => n,
+            None => {
+                return sdk::error_json("BAD_ARGS", format!("echo_num expects `n` to be an integer, got {v}"))
+            }
+        },
+    };
     json!({
         "kind": "success",
         "content": format!("{}", n + 1),
         "value": { "n": n, "n_plus_one": n + 1 }
     })
-}
-
-unsafe fn read_str(ptr: i32, len: i32) -> String {
-    if ptr == 0 || len <= 0 {
-        return String::new();
-    }
-    let bytes = std::slice::from_raw_parts(ptr as *const u8, len as usize);
-    String::from_utf8_lossy(bytes).into_owned()
+    .to_string()
 }
 
 /// Called once by the host at load, after `plugin_init`. Read our config now

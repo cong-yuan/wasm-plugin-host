@@ -566,6 +566,45 @@ func configVersion() int64
 { "kind": "error", "message": "bad argument", "code": "BAD_ARG" }
 ```
 
+### Bad arguments must be reported, not repaired
+
+`plugin_invoke` receives the arguments as UTF-8 JSON. Two mistakes are easy here
+and both are silent:
+
+**Do not decode with `from_utf8_lossy`.** Replacing bad bytes with U+FFFD turns
+unreadable input into a *different, valid-looking* one — `a\xFFb` becomes
+`a\u{FFFD}b` — and the plugin then answers as if it had understood. Use a strict
+decode and reply with an error:
+
+```rust
+// `write_out` is the plugin's own `(out, cap)` writer — see plugins/hello-rust.
+let (op, args) = match unsafe {
+    (plugin_sdk::read_utf8(op_ptr, op_len), plugin_sdk::read_utf8(args_ptr, args_len))
+} {
+    (Ok(op), Ok(args)) => (op, args),
+    (Err(e), _) => return write_out(out, cap, plugin_sdk::error_json("BAD_OP", e).as_bytes()),
+    (_, Err(e)) => return write_out(out, cap, plugin_sdk::error_json("BAD_ARGS_UTF8", e).as_bytes()),
+};
+```
+
+**Do not default a failed parse.** This is the more tempting one:
+
+```rust
+// WRONG. A malformed call reports `success` while running different arguments.
+let parsed: GreetArgs = serde_json::from_str(&args)
+    .unwrap_or(GreetArgs { who: "world".into() });
+```
+
+If the tool's declaration says `"required": ["who"]`, then a missing or
+wrongly-typed `who` is a **client error** — the schema the model was handed
+promises it cannot happen. Replying `error` is what makes that promise mean
+something. The same goes for optional fields with the wrong *type*: `{"n":
+"x"}` is not `{"n": 0}`.
+
+> A relaxed `unwrap_or(default)` is legitimate only where the declaration itself
+> makes the field optional **and** the value is genuinely absent. `plugins/hello-rust`
+> does this for `echo_num`'s `n`: absent → `0`, present-but-not-an-integer → error.
+
 ## Lifecycle (dsh / cordis style)
 
 ```
