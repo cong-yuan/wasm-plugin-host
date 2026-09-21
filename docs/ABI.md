@@ -8,6 +8,66 @@ The contract is deliberately tiny — **JSON strings over linear memory** — so
 is implementable in Rust, Go, C, Zig today, and via the Component Model for
 JS/Python later.
 
+## Threading: one call at a time **per plugin instance**
+
+**This is a normative part of the ABI, not an implementation detail.**
+
+The host never enters a plugin instance while that same instance is already
+inside a call. For any one slot, no two of `plugin_init`, `plugin_describe`,
+`plugin_invoke`, `plugin_configure`, or that slot's hooks are ever in flight
+simultaneously: within a call, the plugin has the instance to itself.
+
+> **This does *not* promise that no two plugins run at once.** The registry can
+> drive *different* slots in parallel — `Registry::call_many_parallel` takes each
+> involved plugin out of the shared store and runs one thread per slot. Calls
+> within one slot are serialised; calls *across* slots may overlap. So a plugin
+> may assume its **own** globals are free from re-entrancy, and must assume
+> nothing about another plugin's timing.
+>
+> `WasmHost` is more conservative than the ABI requires: it holds one registry
+> lock for the whole call, so through that API all calls are serialised globally
+> (pinned by `dsh-wasm-host/tests/serialization.rs`). That is a property of
+> `WasmHost`, not a promise of the ABI — a plugin written to rely on *other*
+> plugins being idle would break under `call_many_parallel`.
+
+Two consequences for plugin authors:
+
+1. **A guest may keep mutable global state without synchronisation.** A Rust
+   `static mut`, a Go package-level variable, a C global — none need a mutex,
+   because the instance is never re-entered. `plugins/hello-rust` caches its
+   config in a `static mut CACHED` on exactly this assumption.
+2. **A guest never has to guard against calling itself.** There is no
+   "re-enter while running" hazard.
+
+> **Do not read this as a liveness guarantee.** Serialisation is about *safety*
+> for shared state, not throughput. A slow tool occupies its slot for the whole
+> call — and, through `WasmHost`, every other slot as well — so a plugin blocking
+> inside `host.http_fetch` delays the rest. (Tracked in `docs/已知问题.md`.)
+
+### What a host-side callback must not do
+
+**A `LogHook` must not call back into `WasmHost`.** Log callbacks run on the
+guest's calling thread while `WasmHost`'s registry lock is held, so a hook that
+calls e.g. `host.list_plugins()` from inside itself self-deadlocks (the mutex is
+not reentrant). Receive the record, hand it to a channel, return. Pinned by
+`dsh-wasm-host/tests/serialization.rs`.
+
+This is **not** a restriction on guests talking to each other. `host.call_service`
+is the supported path for one plugin to call another, and it works *because* the
+callee is taken out of the store for the call rather than being reached through
+the held lock — see the re-entrancy note under guest imports. A guest hook may
+call `host.call_service` freely.
+
+### Why this is written down
+
+The per-instance guarantee previously existed only as a side effect of wasmtime's
+`Store` not being `Sync`. Nothing stated it and nothing tested it, so a change
+that reused one instance across threads — a pool keyed by plugin rather than by
+slot, say — would have silently turned every plugin's globals into a data race,
+with no failing test to notice. If overlapping calls into one instance ever
+become possible, this document, the affected plugins, and
+`dsh-wasm-host/tests/serialization.rs` all have to change together.
+
 ## Guest exports (plugin → host)
 
 | Export | Signature | Meaning |
