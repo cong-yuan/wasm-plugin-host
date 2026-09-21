@@ -1,5 +1,7 @@
 //! A plugin that ONLY uses std `println!`/`eprintln!` — no host.log glue.
 
+
+use plugin_sdk as sdk;
 #[no_mangle]
 pub extern "C" fn plugin_abi_version() -> i32 { 1 }
 
@@ -15,12 +17,15 @@ pub extern "C" fn plugin_init() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn plugin_alloc(n: i32) -> i32 {
-    let mut v = Vec::<u8>::with_capacity(n.max(0) as usize);
-    let p = v.as_mut_ptr() as i32;
-    std::mem::forget(v);
-    p
+    sdk::alloc_block(n)
 }
-#[no_mangle] pub extern "C" fn plugin_free(_p: i32, _n: i32) {}
+
+#[no_mangle]
+pub extern "C" fn plugin_free(p: i32, n: i32) {
+    // SAFETY: the host only ever frees a pair it previously got from
+    // `plugin_alloc`, which is this plugin's only allocator.
+    unsafe { sdk::free_block(p, n) }
+}
 
 #[no_mangle]
 pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {

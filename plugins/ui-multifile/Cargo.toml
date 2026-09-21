@@ -10,4 +10,5 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
+plugin-sdk = { path = "../../plugin-sdk" }
 serde_json = "1"

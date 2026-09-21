@@ -171,6 +171,133 @@ pub fn error_json(code: &str, message: impl std::fmt::Display) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// The `(out, cap)` output convention
+// ---------------------------------------------------------------------------
+
+/// Copy `src` into the guest buffer `(out, cap)`, returning the ABI's
+/// `len` / `-needed` convention.
+///
+/// This is the other half of the sizing contract `read_with` implements on the
+/// host's behalf, and it is easy to get subtly wrong: returning the length when
+/// it *exceeded* `cap`, or writing before checking, either truncates silently or
+/// corrupts memory. Both plugins in this repo had their own copy.
+///
+/// Returns:
+/// * `src.len()` — written in full
+/// * `-(src.len())` — buffer too small (or `out == 0`); the host retries bigger
+///
+/// # Safety
+///
+/// `out` must point to at least `cap` writable bytes of this module's linear
+/// memory when `cap >= src.len()`.
+pub unsafe fn write_out(out: i32, cap: i32, src: &[u8]) -> i64 {
+    if out == 0 {
+        return -(src.len() as i64);
+    }
+    // SAFETY: the caller guarantees `cap` writable bytes at `out`.
+    unsafe { write_out_ptr(out as usize as *mut u8, cap.max(0) as usize, src) }
+}
+
+/// The pointer-preserving core of [`write_out`].
+///
+/// Split out because the ABI's `out` is a 32-bit **guest offset**: a native test
+/// cannot fabricate one without truncating a real pointer, so the sizing rule is
+/// exercised through this instead.
+///
+/// # Safety
+///
+/// `out` must be writable for `cap` bytes when `cap >= src.len()`.
+unsafe fn write_out_ptr(out: *mut u8, cap: usize, src: &[u8]) -> i64 {
+    if src.len() > cap {
+        return -(src.len() as i64);
+    }
+    // SAFETY: checked that `cap >= src.len()` and the caller guarantees `cap`
+    // writable bytes.
+    unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), out, src.len()) };
+    src.len() as i64
+}
+
+// ---------------------------------------------------------------------------
+// `plugin_alloc` / `plugin_free`
+// ---------------------------------------------------------------------------
+
+/// Allocate a block of exactly `size` bytes, returning its guest offset.
+///
+/// Intended as the body of the exported `plugin_alloc`. Pair it with
+/// [`free_block`].
+///
+/// ## Why this is not `Vec::with_capacity`
+///
+/// The obvious hand-rolled pair is:
+///
+/// ```ignore
+/// let mut v = Vec::<u8>::with_capacity(n);
+/// let p = v.as_mut_ptr(); std::mem::forget(v);   // alloc
+/// let _ = Vec::from_raw_parts(p, 0, n);          // free
+/// ```
+///
+/// `Vec::with_capacity(n)` only promises `capacity() >= n`. If the allocator
+/// rounds up, the vector handed to `from_raw_parts` describes a **different
+/// layout** than the one allocated, and that is undefined behaviour — the kind
+/// that appears only at particular sizes. A `Box<[u8]>` has no separate
+/// capacity: its deallocation layout is exactly `(len, align)`, so the round
+/// trip is the same allocation by construction.
+///
+/// A `size` of 0 returns a **non-null** dangling pointer (the slice's align-1
+/// address), never `0`, because the host treats `0` as "allocation failed".
+///
+/// Exported by a plugin as:
+///
+/// ```ignore
+/// #[no_mangle]
+/// pub extern "C" fn plugin_alloc(size: i32) -> i32 { plugin_sdk::alloc_block(size) }
+/// ```
+pub fn alloc_block(size: i32) -> i32 {
+    alloc_bytes(size.max(0) as usize) as usize as i32
+}
+
+/// Free a block from [`alloc_block`]. `size` must be the size it was allocated
+/// with — the ABI passes it back for exactly this reason.
+///
+/// # Safety
+///
+/// `ptr`/`size` must be an untouched pair returned by [`alloc_block`] that has
+/// not already been freed.
+pub unsafe fn free_block(ptr: i32, size: i32) {
+    // SAFETY: the caller guarantees this exact pointer/size pair came from
+    // `alloc_block`.
+    unsafe { free_bytes(ptr as usize as *mut u8, size.max(0) as usize) }
+}
+
+// The pointer-width-preserving core. The `i32` in the ABI is a **32-bit guest
+// offset**, which is lossless only on `wasm32` — the only place these run. A
+// native unit test cannot round-trip through an `i32` without truncating the
+// pointer, so the tests drive these two instead, and the `i32` wrappers above
+// stay a pure conversion.
+
+fn alloc_bytes(n: usize) -> *mut u8 {
+    // A `Box<[u8]>`, not a `Vec`: a Vec's capacity may exceed the requested
+    // length, so reconstructing it from `(ptr, len)` on free could describe a
+    // different allocation than the one made — undefined behaviour that shows up
+    // only at particular sizes. A boxed slice has no capacity field; its
+    // deallocation layout is exactly `(len, align=1)`.
+    let b: Box<[u8]> = vec![0u8; n].into_boxed_slice();
+    Box::into_raw(b) as *mut u8
+}
+
+/// # Safety
+///
+/// `p` must have come from [`alloc_bytes`] with the same `n`, and not been freed.
+unsafe fn free_bytes(p: *mut u8, n: usize) {
+    if p.is_null() {
+        return;
+    }
+    let slice = std::ptr::slice_from_raw_parts_mut(p, n);
+    // SAFETY: per the caller's contract this is the pair `alloc_bytes` created.
+    unsafe { drop(Box::from_raw(slice)) };
+}
+
+// ---------------------------------------------------------------------------
 // The real imports (wasm) and their native stubs
 // ---------------------------------------------------------------------------
 
@@ -342,5 +469,95 @@ mod tests {
         assert_eq!(v["kind"], "error");
         assert_eq!(v["code"], "BAD_ARG");
         assert!(v["message"].as_str().unwrap().contains("who"));
+    }
+
+    // ---- the (out, cap) output convention ----
+
+    #[test]
+    fn write_out_reports_needed_when_the_buffer_is_too_small() {
+        let src = b"0123456789";
+        let mut out = [0u8; 4];
+        let n = unsafe { write_out_ptr(out.as_mut_ptr(), out.len(), src) };
+        assert_eq!(n, -10, "must ask for exactly 10 bytes, not a truncated 4");
+        assert_eq!(&out, b"\0\0\0\0", "and must not write past the check");
+    }
+
+    #[test]
+    fn write_out_copies_when_it_fits_and_is_exact_on_the_boundary() {
+        let src = b"abcd";
+        let mut out = [0u8; 4];
+        // `len == cap` is a success, not a `-(needed)` — the host only grows on
+        // `n < 0`, so getting this boundary wrong would retry forever.
+        let n = unsafe { write_out_ptr(out.as_mut_ptr(), out.len(), src) };
+        assert_eq!(n, 4);
+        assert_eq!(&out, b"abcd");
+    }
+
+    #[test]
+    fn write_out_with_a_null_pointer_asks_for_room() {
+        // `out == 0` is the host probing for the size.
+        let n = unsafe { write_out(0, 1024, b"hello") };
+        assert_eq!(n, -5);
+    }
+
+    // ---- plugin_alloc / plugin_free ----
+
+    #[test]
+    fn alloc_and_free_round_trip_at_many_sizes() {
+        // Sizes chosen to straddle allocator size classes, where a
+        // `Vec::with_capacity` capacity mismatch would show up if there were one.
+        // (This drives the pointer-preserving core, because the ABI's `i32`
+        // pointer cannot survive a 64-bit native round trip.)
+        for size in [0usize, 1, 7, 8, 9, 16, 100, 255, 256, 257, 1024, 4096, 65536, 65537] {
+            let p = alloc_bytes(size);
+            assert!(!p.is_null(), "alloc_bytes({size}) returned null");
+            // SAFETY: `p`/`size` is exactly the pair alloc_bytes produced.
+            unsafe { free_bytes(p, size) };
+        }
+    }
+
+    #[test]
+    fn the_abi_pointer_is_non_null_even_for_zero_bytes() {
+        // The host's `guest_alloc` treats 0 as failure and bails, so a
+        // zero-length allocation must still yield a *dangling but usable*
+        // pointer rather than null.
+        let p = alloc_block(0);
+        assert_ne!(p, 0, "plugin_alloc(0) must not report failure");
+    }
+
+    #[test]
+    fn freeing_null_is_a_no_op() {
+        // The host calls `plugin_free` on some paths unconditionally; a plugin
+        // must tolerate a null pointer rather than reconstructing a Box from it.
+        unsafe { free_bytes(std::ptr::null_mut(), 128) };
+        unsafe { free_block(0, 128) };
+    }
+
+    #[test]
+    fn freed_memory_is_actually_reusable() {
+        // The point of a *real* free rather than the no-op that 9 of the 11
+        // plugins in this repo ship: the allocator gets the block back, so a
+        // repeated allocate/free of a large block does not exhaust the heap.
+        let big = 1 << 20;
+        for _ in 0..64 {
+            let p = alloc_bytes(big);
+            assert!(!p.is_null());
+            unsafe { free_bytes(p, big) };
+        }
+    }
+
+    #[test]
+    fn the_block_is_writable_for_its_whole_length() {
+        // Guards the layout: if the allocation were smaller than `size` (the
+        // failure mode a mismatched capacity would produce), this write would be
+        // out of bounds.
+        let size = 4096usize;
+        let p = alloc_bytes(size);
+        // SAFETY: `p` is a fresh allocation of exactly `size` bytes.
+        unsafe {
+            std::ptr::write_bytes(p, 0xAB, size);
+            assert_eq!(*p.add(size - 1), 0xAB, "the last byte must be writable");
+            free_bytes(p, size);
+        }
     }
 }

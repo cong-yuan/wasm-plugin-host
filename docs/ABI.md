@@ -74,14 +74,62 @@ become possible, this document, the affected plugins, and
 |---|---|---|
 | `memory` | `memory` | Linear memory (required) |
 | `plugin_abi_version` | `() -> i32` | Must return `1`; host rejects mismatch |
-| `plugin_alloc` | `(size: i32) -> i32` | Allocate `size` bytes, return pointer (0 = fail) |
-| `plugin_free` | `(ptr: i32, size: i32)` | Free a block previously handed out |
+| `plugin_alloc` | `(size: i32) -> i32` | Allocate `size` bytes, return a guest offset. **`0` means failure**; the host bails |
+| `plugin_free` | `(ptr: i32, size: i32)` | Free a block previously handed out. `size` is the size it was allocated with |
 | `plugin_init` | `() -> i32` | One-time init. `0` = ok, non-zero = fail |
 | `plugin_describe` | `(out: i32, cap: i32) -> i64` | Write declaration JSON into `out`; return bytes written, or `-(needed)` if `cap` too small |
 | `plugin_invoke` | `(op: i32, op_len: i32, args: i32, args_len: i32, out: i32, cap: i32) -> i64` | Run op `op` (UTF-8 JSON `args` → UTF-8 JSON result in `out`); same return convention as `describe` |
 | `plugin_shutdown` | `()` | Release state. Called once, before the instance is dropped |
 | `plugin_configure` | `(out: i32, cap: i32) -> i32` | **Optional.** Called once at load, after `plugin_init`, when the entry has a `config`. Read it with `host.get_config`. `out`/`cap` are scratch space the host provides. `0` = ok |
 | `plugin_on_config` | `() -> i32` | **Optional.** Called when the host pushes a new config to a **live** plugin. Re-read via `host.get_config`. `0` = ok |
+
+### `plugin_alloc` / `plugin_free` — use the SDK
+
+The host allocates guest memory for every call: the `out` buffer for
+`plugin_describe` / `plugin_invoke` (starting at 64 KiB, grown on demand) and the
+`op`/`args` inputs. It frees each with `plugin_free`.
+
+**Implement both with `plugin-sdk`.** Two mistakes here are easy to make and
+hard to see:
+
+```rust
+// 1. The free does nothing, so every call leaks its buffer.
+#[no_mangle] pub extern "C" fn plugin_free(_p: i32, _n: i32) {}
+
+// 2. `Vec::with_capacity(n)` only promises capacity >= n. Reconstructing it as
+//    `(ptr, len=n)` can describe a *different* allocation than the one made,
+//    which is undefined behaviour — and only at particular sizes.
+let mut v = Vec::<u8>::with_capacity(n); let p = v.as_mut_ptr(); forget(v);
+```
+
+Correct, via the SDK:
+
+```rust
+use plugin_sdk as sdk;
+
+#[no_mangle]
+pub extern "C" fn plugin_alloc(n: i32) -> i32 { sdk::alloc_block(n) }
+
+#[no_mangle]
+pub extern "C" fn plugin_free(p: i32, n: i32) {
+    // SAFETY: the host only frees a pair it got from `plugin_alloc`.
+    unsafe { sdk::free_block(p, n) }
+}
+```
+
+`sdk::alloc_block` backs the allocation with a `Box<[u8]>`, which has no separate
+capacity — its deallocation layout is exactly `(len, align=1)`, so the pair the
+host passes back is the pair that was allocated. It also returns a **non-null**
+dangling pointer for `size == 0`, because the host reads `0` as failure.
+
+> **Native tests cannot round-trip an `i32` pointer.** The ABI's pointer is a
+> 32-bit guest offset, lossless only on `wasm32`. The SDK splits the addresses
+> from the `i32` wrappers so the sizing and layout rules are unit-testable on the
+> host; do the same in a plugin that wants to test its own memory handling.
+
+Likewise `sdk::write_out(out, cap, src)` implements the `(out, cap) -> i64`
+convention — in particular that `len == cap` is a **success**, not a
+`-(needed)` retry (the host only grows on `n < 0`).
 
 ## Guest imports (host → plugin)
 

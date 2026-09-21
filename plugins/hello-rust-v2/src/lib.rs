@@ -24,18 +24,15 @@ fn host_log(level: i32, msg: &str) {
 
 /// Allocate `size` bytes and return a pointer. The host reads/writes here.
 #[no_mangle]
-pub extern "C" fn plugin_alloc(size: i32) -> i32 {
-    let mut v = Vec::<u8>::with_capacity(size.max(0) as usize);
-    let ptr = v.as_mut_ptr() as i32;
-    std::mem::forget(v); // host owns it until plugin_free
-    ptr
+pub extern "C" fn plugin_alloc(n: i32) -> i32 {
+    sdk::alloc_block(n)
 }
 
 #[no_mangle]
-pub extern "C" fn plugin_free(ptr: i32, size: i32) {
-    unsafe {
-        let _ = Vec::from_raw_parts(ptr as *mut u8, 0, size.max(0) as usize);
-    }
+pub extern "C" fn plugin_free(p: i32, n: i32) {
+    // SAFETY: the host only ever frees a pair it previously got from
+    // `plugin_alloc`, which is this plugin's only allocator.
+    unsafe { sdk::free_block(p, n) }
 }
 
 #[no_mangle]
@@ -171,16 +168,12 @@ fn invoke_echo_num(args: &str) -> String {
 }
 
 /// Copy `src` into `(out, cap)`; return len, or -needed.
+/// Copy `src` into the guest buffer; `len` / `-needed`, per the ABI.
+///
+/// Delegated to the SDK: the boundary rule (in particular that `len == cap` is a
+/// **success**, not a retry) has one implementation rather than one per plugin.
 fn write_out(out: i32, cap: i32, src: &[u8]) -> i64 {
-    if out == 0 {
-        return -(src.len() as i64);
-    }
-    let cap = cap.max(0) as usize;
-    if src.len() > cap {
-        return -(src.len() as i64);
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(src.as_ptr(), out as *mut u8, src.len());
-    }
-    src.len() as i64
+    // SAFETY: the host guarantees `cap` writable bytes at `out`, which is
+    // exactly `sdk::write_out`'s precondition.
+    unsafe { sdk::write_out(out, cap, src) }
 }

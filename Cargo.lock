@@ -572,6 +572,7 @@ dependencies = [
 name = "demo-shell-addon"
 version = "0.1.0"
 dependencies = [
+ "plugin-sdk",
  "serde_json",
 ]
 
@@ -948,6 +949,7 @@ dependencies = [
 name = "hana-shell"
 version = "0.1.0"
 dependencies = [
+ "plugin-sdk",
  "serde_json",
 ]
 
@@ -1671,6 +1673,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 name = "plain-rust"
 version = "0.1.0"
 dependencies = [
+ "plugin-sdk",
  "serde_json",
 ]
 
@@ -2662,6 +2665,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 name = "ui-curator"
 version = "0.1.0"
 dependencies = [
+ "plugin-sdk",
  "serde_json",
 ]
 
@@ -2669,6 +2673,7 @@ dependencies = [
 name = "ui-llm-panel"
 version = "0.1.0"
 dependencies = [
+ "plugin-sdk",
  "serde_json",
 ]
 
@@ -2676,6 +2681,7 @@ dependencies = [
 name = "ui-multifile"
 version = "0.1.0"
 dependencies = [
+ "plugin-sdk",
  "serde_json",
 ]
 
@@ -2683,6 +2689,7 @@ dependencies = [
 name = "ui-startup-demo"
 version = "0.1.0"
 dependencies = [
+ "plugin-sdk",
  "serde_json",
 ]
 
@@ -2690,6 +2697,7 @@ dependencies = [
 name = "ui-theme-widget"
 version = "0.1.0"
 dependencies = [
+ "plugin-sdk",
  "serde_json",
 ]
 
