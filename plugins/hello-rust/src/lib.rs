@@ -2,7 +2,12 @@
 //!
 //! Build:  cargo build --release --target wasm32-wasip1
 //! Output: target/wasm32-wasip1/release/hello_rust.wasm
+//!
+//! Config is read through [`plugin_sdk`], not by hand: the sizing convention
+//! (`-(needed)` means "retry with more room") is easy to get wrong in a way that
+//! is completely silent, so the retry lives in the SDK where it is tested.
 
+use plugin_sdk as sdk;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -12,25 +17,10 @@ use serde_json::json;
 extern "C" {
     fn log(level: i32, ptr: *const u8, len: usize);
     fn now_ms() -> i64;
-    /// Write the current config JSON into `out` (capacity `cap`).
-    /// Returns bytes written, `-(needed)` if too small, or 0 if config is null.
-    fn get_config(out: *mut u8, cap: usize) -> i64;
-    /// Monotonic config version; bump means the config changed.
-    fn config_version() -> i64;
 }
 
 fn host_log(level: i32, msg: &str) {
     unsafe { log(level, msg.as_ptr(), msg.len()) }
-}
-
-/// Pull the plugin's current config as a `serde_json::Value` (Null if unset).
-fn read_host_config() -> serde_json::Value {
-    let mut buf = vec![0u8; 64 * 1024];
-    let n = unsafe { get_config(buf.as_mut_ptr(), buf.len()) };
-    if n <= 0 {
-        return serde_json::Value::Null;
-    }
-    serde_json::from_slice(&buf[..n as usize]).unwrap_or(serde_json::Value::Null)
 }
 
 /// Cached config, kept in a global so every op sees the latest value without
@@ -136,8 +126,8 @@ fn default_who() -> String {
 }
 
 fn refresh_config() {
-    let v = read_host_config();
-    let ver = unsafe { config_version() };
+    let v = sdk::config();
+    let ver = sdk::config_version();
     unsafe {
         *std::ptr::addr_of_mut!(CACHED) = Some((ver, v));
     }
@@ -145,12 +135,12 @@ fn refresh_config() {
 
 /// Return the cached config, refreshing it if the host's version changed.
 unsafe fn current_config() -> serde_json::Value {
-    let ver = config_version();
+    let ver = sdk::config_version();
     let ptr = std::ptr::addr_of!(CACHED);
     match &*ptr {
         Some((cached_ver, v)) if *cached_ver == ver => v.clone(),
         _ => {
-            let v = read_host_config();
+            let v = sdk::config();
             *std::ptr::addr_of_mut!(CACHED) = Some((ver, v.clone()));
             v
         }
@@ -177,7 +167,7 @@ fn invite_greet(args: &str) -> serde_json::Value {
         "value": {
             "who": parsed.who,
             "template": template,
-            "config_version": unsafe { config_version() }
+            "config_version": sdk::config_version()
         }
     })
 }

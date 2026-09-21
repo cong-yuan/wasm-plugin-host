@@ -6,7 +6,9 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib"]
 
-# No dependencies: this plugin only uses `std`, which is the point — a trusted
-# plugin can read the host filesystem through ordinary `std::fs`.
+# No host-abstraction dependencies beyond the SDK: the point is that a trusted
+# plugin reads the host filesystem through ordinary `std::fs`, with nothing but
+# WASI underneath. `plugin-sdk` is only for reading the config correctly.
 [dependencies]
+plugin-sdk = { path = "../../plugin-sdk" }
 serde_json = "1"

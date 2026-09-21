@@ -2,10 +2,13 @@
 resolver = "2"
 # `host` and `dsh-wasm-host` build for the native target; plugins build for
 # wasm32 and are compiled separately (they import `host.*`, so they cannot
-# link natively).
-default-members = ["host", "dsh-wasm-host"]
+# link natively). `plugin-sdk` is native-buildable by design — that is what lets
+# its config-sizing logic be unit-tested without a wasm host — so it belongs here
+# too, or `cargo test` would silently skip it.
+default-members = ["host", "dsh-wasm-host", "plugin-sdk"]
 members = [
     "host",
+    "plugin-sdk",
     "dsh-wasm-host",
     "plugins/hello-rust",
     "plugins/hello-rust-v2",

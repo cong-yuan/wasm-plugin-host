@@ -3,20 +3,16 @@
 //! It reads the path from its config (`{"path": "/some/file"}`) via
 //! `host.get_config` and logs the contents. This only works because the host
 //! preopens `/` — see `docs/已知问题.md` for the capability decision.
+//!
+//! Config goes through [`plugin_sdk`] rather than a hand-rolled `get_config`:
+//! this file used to read into a fixed 4 KiB buffer and treat `-(needed)` as
+//! "no config", so any config over 4 KiB silently read as unconfigured.
 
-#[link(wasm_import_module = "host")]
-extern "C" {
-    fn get_config(out: *mut u8, cap: i32) -> i64;
-}
+use plugin_sdk as sdk;
 
 /// Pull the config JSON the host injected, and read `path` out of it.
 fn configured_path() -> Option<String> {
-    let mut buf = vec![0u8; 4096];
-    let n = unsafe { get_config(buf.as_mut_ptr(), buf.len() as i32) };
-    if n <= 0 {
-        return None;
-    }
-    let v: serde_json::Value = serde_json::from_slice(&buf[..n as usize]).ok()?;
+    let v = sdk::config();
     v.get("path").and_then(|p| p.as_str()).map(str::to_string)
 }
 

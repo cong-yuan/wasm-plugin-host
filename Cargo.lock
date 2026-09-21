@@ -769,6 +769,7 @@ dependencies = [
 name = "fs-reader"
 version = "0.1.0"
 dependencies = [
+ "plugin-sdk",
  "serde_json",
 ]
 
@@ -991,6 +992,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 name = "hello-rust"
 version = "0.1.0"
 dependencies = [
+ "plugin-sdk",
  "serde",
  "serde_json",
 ]
@@ -1666,6 +1668,13 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "plain-rust"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-sdk"
 version = "0.1.0"
 dependencies = [
  "serde_json",

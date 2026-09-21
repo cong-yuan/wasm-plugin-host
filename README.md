@@ -327,6 +327,20 @@ reg.logs_since(last_seq);      // tail from a sequence number
 | `plugins/hello-rust` | Rust | `cargo build -p hello-rust --target wasm32-wasip1` |
 | `plugins/hello-go` | Go | `cd plugins/hello-go && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o hello_go.wasm .` |
 
+Rust plugins read their config through **`plugin-sdk`**, not by calling
+`host.get_config` directly. The sizing convention (`-(needed)` means "retry with
+more room") is easy to get wrong in a way that fails *silently* — a too-large
+config reads as "unconfigured" — so the retry lives in one tested place:
+
+```rust
+let cfg = plugin_sdk::config();          // JSON value; Null when unset
+let v   = plugin_sdk::config_version();  // changes when the config changes
+```
+
+`plugin-sdk` is a normal workspace member and builds for both `wasm32-wasip1`
+(real imports) and native (stubs), so its logic is unit-testable with plain
+`cargo test`.
+
 ```sh
 host> load greet target/wasm32-wasip1/release/hello_rust.wasm
 host> load goplug plugins/hello-go/hello_go.wasm

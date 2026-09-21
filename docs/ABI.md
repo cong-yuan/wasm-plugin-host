@@ -485,25 +485,67 @@ reconfigured. Same for `.wasm` rebuilds.
 
 ### Reading the config from a plugin
 
-Rust:
+**Use the SDK.** The sizing convention below is easy to get wrong in a way that
+fails silently — a too-large config reads as "unconfigured", with no error. So
+`plugin-sdk` provides the correct implementation, and a plugin should not
+restate it:
+
+```toml
+[dependencies]
+plugin-sdk = { path = "../../plugin-sdk" }
+```
+
+```rust
+use plugin_sdk as sdk;
+
+// The config as JSON. `Null` when the host reports it unset.
+let cfg = sdk::config();
+
+// Or, when "unset" and "unreadable" must be told apart:
+// let cfg = sdk::try_config()?;   // Err on oversized / malformed
+
+let ver = sdk::config_version();     // changes when the config changes
+```
+
+#### Why not hand-roll it
+
+`host.get_config` signals "your buffer is too small" by returning `-(needed)`.
+The natural-looking implementation folds that into the not-configured branch:
+
+```rust
+// WRONG. A config larger than the buffer becomes indistinguishable from none.
+let n = unsafe { get_config(buf.as_mut_ptr(), buf.len()) };
+if n <= 0 { return Value::Null; }        // ← `-(needed)` lands here
+```
+
+The correct contract is: **`0` means unset; a negative `n` means "retry with
+`|n|` bytes"**. The SDK's `read_with` implements exactly that, including the two
+degenerate cases a hand-rolled loop tends to miss — a host that asks for no more
+room than it was already given (infinite loop), and an absurd request
+(unbounded allocation).
+
+<details>
+<summary>Raw imports, if you are not using the SDK</summary>
 
 ```rust
 #[link(wasm_import_module = "host")]
 unsafe extern "C" {
+    /// Bytes written, `-(needed)` if too small, or `0` if the config is null.
     fn get_config(out: *mut u8, cap: usize) -> i64;
     fn config_version() -> i64;
 }
-
-fn config() -> serde_json::Value {
-    let mut buf = vec![0u8; 64 * 1024];
-    // SAFETY: buf is valid for buf.len() bytes for the duration of the call.
-    let n = unsafe { get_config(buf.as_mut_ptr(), buf.len()) };
-    if n <= 0 { return serde_json::Value::Null; }
-    serde_json::from_slice(&buf[..n as usize]).unwrap_or(serde_json::Value::Null)
-}
 ```
 
-Go:
+| Return | Meaning |
+|---|---|
+| `n > 0` | `n` bytes of JSON were written |
+| `n == 0` | the config is JSON `null` — **genuinely unset** |
+| `n < 0` | retry with `|n|` bytes of capacity |
+
+</details>
+
+<details>
+<summary>Go</summary>
 
 ```go
 //go:wasmimport host get_config
@@ -512,6 +554,8 @@ func getConfig(out uint32, cap int32) int64
 //go:wasmimport host config_version
 func configVersion() int64
 ```
+
+</details>
 
 ## Result JSON (`plugin_invoke`)
 
