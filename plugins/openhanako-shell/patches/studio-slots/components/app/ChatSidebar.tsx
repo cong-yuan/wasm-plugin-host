@@ -70,8 +70,8 @@ export function ChatSidebarContent({
       </div>
 
       {showActivityBars && (
-        <div data-ohk-slot="openhanako.sidebar.activities" className="ohk-slot-anchor ohk-slot-sidebar-activities">
-          <button className="sidebar-activity-bar sidebar-bridge-card" onClick={() => onTogglePanel?.('bridge')}>
+        <>
+          <button className="sidebar-activity-bar sidebar-bridge-card" data-ohk-slot="openhanako.sidebar.activities" onClick={() => onTogglePanel?.('bridge')}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
               <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
@@ -99,7 +99,7 @@ export function ChatSidebarContent({
             </svg>
             <span>{t('skills.panel.title')}</span>
           </button>
-        </div>
+        </>
       )}
 
       <div className="session-list" data-ohk-slot="openhanako.sidebar.sessions">
@@ -107,11 +107,7 @@ export function ChatSidebarContent({
           <SessionList />
         </RegionalErrorBoundary>
         <SidebarNoticeSlot />
-        <div
-          data-ohk-slot="openhanako.sidebar.notice"
-          className="ohk-slot-anchor ohk-slot-sidebar-notice"
-          style={{ minHeight: 0 }}
-        />
+        <div data-ohk-slot="openhanako.sidebar.notice" aria-hidden style={{ height: 0, overflow: 'hidden', margin: 0, padding: 0, border: 0 }} />
       </div>
     </>
   );
@@ -125,8 +121,8 @@ export function ChatSidebar({
   const currentTab = useStore(s => s.currentTab);
 
   return (
-    <aside className={`sidebar${open ? '' : ' collapsed'}`} id="sidebar">
-      <div className="sidebar-inner">
+    <aside className={`sidebar${open ? '' : ' collapsed'}`} id="sidebar" data-ohk-slot-shell="sidebar">
+      <div className="sidebar-inner" data-ohk-slot-footer-host="1">
         <div className={`sidebar-chat-content${currentTab === 'chat' ? '' : ' hidden'}`}>
           <ChatSidebarContent {...contentProps} />
         </div>
@@ -136,10 +132,6 @@ export function ChatSidebar({
             <ChannelListSidebar />
           </div>
         )}
-        <div
-          data-ohk-slot="openhanako.sidebar.footer"
-          className="ohk-slot-anchor ohk-slot-sidebar-footer"
-        />
       </div>
       <div className="resize-handle resize-handle-right" id="sidebarResizeHandle"></div>
     </aside>

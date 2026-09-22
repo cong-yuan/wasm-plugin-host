@@ -2305,11 +2305,6 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
             onSteer={handleSteer}
             onStop={handleStop}
           />
-          <div
-            data-ohk-slot="openhanako.conversation.input.right"
-            className="ohk-slot-anchor ohk-slot-input-right"
-            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-          />
           {audioRecorderOpen && showAudioInput && (
             <div className={styles['audio-recording-card']} role="status" aria-live="polite">
               <div className={`${styles['audio-recording-dot']}${audioRecordingState === 'recording' ? ` ${styles['is-live']}` : ''}`} />

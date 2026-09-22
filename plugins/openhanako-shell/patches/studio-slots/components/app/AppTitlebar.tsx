@@ -78,16 +78,7 @@ export function AppTitlebar({
           <span>{centerTitle}</span>
         </div>
       )}
-      {showChannelTabs && !centerTitle && (
-        <div
-          data-ohk-slot="openhanako.titlebar.center"
-          className="ohk-slot-anchor ohk-slot-titlebar-center"
-          style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}
-        >
-          <ChannelTabBar />
-        </div>
-      )}
-      {showChannelTabs && centerTitle && <ChannelTabBar />}
+      {showChannelTabs && <ChannelTabBar />}
       <div className="tb-right-group" data-ohk-slot="openhanako.titlebar.right">
         {showWidgetButtons && <WidgetButtons />}
         {showPreviewToggle && onTogglePreview && (

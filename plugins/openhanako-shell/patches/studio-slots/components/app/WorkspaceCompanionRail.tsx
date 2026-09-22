@@ -11,10 +11,6 @@ export function WorkspaceCompanionRail() {
       <WorkspaceFileChangeBridge />
       <aside className={`jian-sidebar${jianOpen ? '' : ' collapsed'}`} id="jianSidebar">
         <div className="resize-handle resize-handle-left" id="jianResizeHandle"></div>
-        <div
-          data-ohk-slot="openhanako.rail.header"
-          className="ohk-slot-anchor ohk-slot-rail-header"
-        />
         <div className="jian-sidebar-inner" data-ohk-slot="openhanako.rail.items">
           <RegionalErrorBoundary region="right-workspace">
             <RightWorkspacePanel />

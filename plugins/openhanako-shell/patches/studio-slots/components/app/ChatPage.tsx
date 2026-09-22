@@ -7,7 +7,7 @@ import { RegionalErrorBoundary } from '../RegionalErrorBoundary';
 function WelcomeContainer() {
   const visible = useStore(s => s.welcomeVisible);
   return (
-    <div className={`welcome${visible ? '' : ' hidden'}`} id="welcome" data-ohk-slot="openhanako.conversation.hero">
+    <div className={`welcome${visible ? '' : ' hidden'}`} id="welcome">
       <WelcomeScreen />
     </div>
   );
@@ -26,7 +26,7 @@ export function ChatPage({
 
   return (
     <>
-      <div className={`chat-area${hasPanels ? ' has-panels' : ''}`} data-ohk-slot="openhanako.conversation.stream">
+      <div className={`chat-area${hasPanels ? ' has-panels' : ''}`}>
         <WelcomeContainer />
         <RegionalErrorBoundary region={`${regionPrefix}chat`} resetKeys={[currentSessionPath]}>
           <ChatArea />

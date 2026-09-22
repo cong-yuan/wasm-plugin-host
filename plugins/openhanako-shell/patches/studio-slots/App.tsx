@@ -89,12 +89,6 @@ function App() {
   return (
     <ErrorBoundary>
       <StudioSlotBridge />
-      <div
-        data-ohk-slot="openhanako.shell.overlay"
-        className="ohk-slot-anchor ohk-slot-shell-overlay"
-        style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0 }}
-        aria-hidden
-      />
       {/* Headless behavior components */}
       <SidebarLayout />
       <ChannelsPanel />

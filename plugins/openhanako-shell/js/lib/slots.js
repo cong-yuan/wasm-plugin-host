@@ -38,9 +38,11 @@ return (function () {
     } catch (_) {}
 
     const sync = () => {
+      // CRITICAL: host must never capture clicks — only contribution nodes may
+      // set pointer-events:auto on themselves. A full-region host (stream /
+      // shell.overlay) with pointer-events:auto blanks the real UI.
+      box.style.pointerEvents = 'none';
       const has = !!box.querySelector('[data-contribution]');
-      box.style.pointerEvents = has ? 'auto' : 'none';
-      // visibility still driven by geometry (display); only gate clicks here
       if (has) box.dataset.hasContribution = '1';
       else delete box.dataset.hasContribution;
     };
