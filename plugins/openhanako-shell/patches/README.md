@@ -41,3 +41,10 @@ Uses global `--fs-*` tokens only — independent of Interface → editor markdow
 | Inputs / controls | `--fs-caption` |
 
 Also copy `settings-components.module.css` → `desktop/src/react/settings/components/`.
+
+## Input area first-paint crash
+
+Desktop TipTap previously used `immediatelyRender: true`, which can throw on first paint and trip `RegionalErrorBoundary` around the input (`此区域暂时无法显示`).
+
+- `InputArea.tsx` → `desktop/src/react/components/` — `immediatelyRender: false` for all surfaces
+- `ChatPage.tsx` → `desktop/src/react/components/app/` — desktop also gets `autoRetry` like mobile
