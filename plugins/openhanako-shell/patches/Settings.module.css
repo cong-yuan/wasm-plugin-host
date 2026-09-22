@@ -403,20 +403,6 @@
     background: transparent;
 }
 
-/* Simple form tabs: keep the shell wide, constrain only the content column. */
-.settings-main [data-settings-page="me"],
-.settings-main [data-settings-page="about"],
-.settings-main [data-settings-page="sharing"],
-.settings-main [data-settings-page="security"],
-.settings-main [data-settings-page="access"],
-.settings-main [data-settings-page="experiments"] {
-    width: 100%;
-    max-width: 560px;
-}
-
-
-
-
 .settings-main > .settings-tab-title,
 .settings-main > .settings-tab-heading,
 .settings-main > [data-settings-page] {
@@ -424,6 +410,20 @@
     max-width: 100%;
     min-width: 0;
     overflow-x: hidden;
+}
+
+/* Simple tabs: shell stays wide; only the content column narrows.
+   Must come AFTER the max-width:100% rule above or it gets overridden. */
+.settings-main [data-settings-page="me"],
+.settings-main [data-settings-page="about"],
+.settings-main [data-settings-page="sharing"],
+.settings-main [data-settings-page="security"],
+.settings-main [data-settings-page="access"],
+.settings-main [data-settings-page="experiments"] {
+    width: 100%;
+    max-width: 520px;
+    margin-left: auto;
+    margin-right: auto;
 }
 
 /* Top fade moved to .settings-main-shell > .settings-main-fade (outside scrollport). */
