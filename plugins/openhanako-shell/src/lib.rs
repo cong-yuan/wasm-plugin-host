@@ -2,10 +2,9 @@
 //! slot surface so later plugins can extend it without touching this crate.
 //!
 //! The Studio window hosts an iframe pointed at the upstream UI
-//! (`npm run dev:web` or a static preview). Around that iframe, thin overlay
-//! hosts call `studio.renderSlot` for every name in `SLOTS`. Empty hosts take
-//! no clicks (pointer-events: none) so the 1:1 UX stays intact until something
-//! injects.
+//! (`npm run dev:web` or a static preview). Inside the iframe, real chrome nodes carry `data-ohk-slot` anchors and a
+//! small bridge posts their geometry. This shell mounts `studio.renderSlot`
+//! hosts and aligns them to those rects. Empty hosts take no clicks.
 //!
 //! ## Slot contract vs upstream
 //!
@@ -75,6 +74,7 @@ const SLOTS: &[(&str, &str)] = &[
 
 const ASSETS: &[(&str, &str)] = &[
     ("lib/slots.js", include_str!("../js/lib/slots.js")),
+    ("lib/bridge.js", include_str!("../js/lib/bridge.js")),
     ("entry.js", include_str!("../js/entry.js")),
 ];
 

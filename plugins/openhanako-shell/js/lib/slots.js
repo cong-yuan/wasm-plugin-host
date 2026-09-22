@@ -1,63 +1,60 @@
 // Slot inventory for openhanako-shell.
 //
-// Keep names in lockstep with `SLOTS` in `src/lib.rs`. A drifted name is a
-// contribution that silently goes nowhere.
-//
-// Prefix is `openhanako.*` (not `hana.*`) so this shell stays distinct from
-// hana-shell while mirroring the same chrome regions.
+// Keep names in lockstep with `SLOTS` in `src/lib.rs`. Placement comes from the
+// iframe geometry bridge (real UI anchors), not guessed overlay coordinates.
 return (function () {
   const SLOTS = [
-    { name: 'openhanako.titlebar.left', desc: 'Left cluster overlay (sidebar toggle side)' },
-    { name: 'openhanako.titlebar.center', desc: 'Centre title / channel tabs overlay' },
-    { name: 'openhanako.titlebar.right', desc: 'Right cluster overlay (widget / panel toggles)' },
-    { name: 'openhanako.sidebar.header', desc: 'Sidebar header row overlay' },
-    { name: 'openhanako.sidebar.activities', desc: 'Activity bars overlay' },
-    { name: 'openhanako.sidebar.sessions', desc: 'Session list overlay / below-list strip' },
-    { name: 'openhanako.sidebar.notice', desc: 'Notice strip above sidebar footer' },
-    { name: 'openhanako.sidebar.footer', desc: 'Sidebar footer overlay' },
-    { name: 'openhanako.conversation.header', desc: 'Conversation header overlay' },
-    { name: 'openhanako.conversation.hero', desc: 'Empty-state / hero overlay' },
-    { name: 'openhanako.conversation.stream', desc: 'Message stream side overlay' },
-    { name: 'openhanako.conversation.input.dock', desc: 'Around the composer (above/below)' },
-    { name: 'openhanako.conversation.input.right', desc: 'Inside composer area, after Send' },
-    { name: 'openhanako.preview.panel', desc: 'Right-hand preview panel overlay' },
-    { name: 'openhanako.rail.header', desc: 'Right rail header overlay' },
-    { name: 'openhanako.rail.items', desc: 'Right rail body overlay' },
-    { name: 'openhanako.shell.overlay', desc: 'Full-window overlay above the iframe' },
+    { name: 'openhanako.titlebar.left', desc: 'Titlebar left cluster (sidebar toggle side)' },
+    { name: 'openhanako.titlebar.center', desc: 'Titlebar centre (title / channel tabs)' },
+    { name: 'openhanako.titlebar.right', desc: 'Titlebar right cluster (widgets / toggles)' },
+    { name: 'openhanako.sidebar.header', desc: 'Sidebar header row' },
+    { name: 'openhanako.sidebar.activities', desc: 'Sidebar activity bars' },
+    { name: 'openhanako.sidebar.sessions', desc: 'Session list region' },
+    { name: 'openhanako.sidebar.notice', desc: 'Notice strip near sidebar footer' },
+    { name: 'openhanako.sidebar.footer', desc: 'Sidebar footer' },
+    { name: 'openhanako.conversation.header', desc: 'Conversation header' },
+    { name: 'openhanako.conversation.hero', desc: 'Empty-state / welcome' },
+    { name: 'openhanako.conversation.stream', desc: 'Message stream region' },
+    { name: 'openhanako.conversation.input.dock', desc: 'Composer dock' },
+    { name: 'openhanako.conversation.input.right', desc: 'Composer trailing actions' },
+    { name: 'openhanako.preview.panel', desc: 'Preview panel' },
+    { name: 'openhanako.rail.header', desc: 'Right rail header' },
+    { name: 'openhanako.rail.items', desc: 'Right rail body' },
+    { name: 'openhanako.shell.overlay', desc: 'Full-window overlay' },
   ];
 
-  /**
-   * Mount one slot into `parent` with absolute placement.
-   * Empty hosts stay pointer-events:none so they never steal iframe clicks.
-   */
-  const mount = (slotName, parent, style) => {
+  const mount = (slotName, parent) => {
     const box = document.createElement('div');
     box.dataset.hostSlot = slotName;
     box.className = 'ohk-slot';
     box.style.cssText =
-      'pointer-events:none;box-sizing:border-box;' + (style || '');
+      'position:absolute;display:none;pointer-events:none;box-sizing:border-box;' +
+      'overflow:auto;z-index:2;';
     parent.appendChild(box);
 
     let dispose = null;
     try {
       dispose = studio.renderSlot(slotName, box);
-    } catch (_) {
-      // Slot only exists once this plugin declares it.
-    }
+    } catch (_) {}
 
     const sync = () => {
       const has = !!box.querySelector('[data-contribution]');
       box.style.pointerEvents = has ? 'auto' : 'none';
-      box.style.visibility = has ? 'visible' : 'hidden';
+      // visibility still driven by geometry (display); only gate clicks here
+      if (has) box.dataset.hasContribution = '1';
+      else delete box.dataset.hasContribution;
     };
     const mo = new MutationObserver(sync);
     mo.observe(box, { childList: true, subtree: true });
     sync();
 
-    return () => {
-      mo.disconnect();
-      if (typeof dispose === 'function') dispose();
-      box.remove();
+    return {
+      el: box,
+      dispose: () => {
+        mo.disconnect();
+        if (typeof dispose === 'function') dispose();
+        box.remove();
+      },
     };
   };
 
