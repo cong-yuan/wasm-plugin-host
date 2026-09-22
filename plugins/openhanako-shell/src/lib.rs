@@ -1,8 +1,25 @@
-//! openhanako-shell — embeds the real openhanako renderer 1:1.
+//! openhanako-shell — embeds the real openhanako renderer 1:1, and opens a
+//! slot surface so later plugins can extend it without touching this crate.
 //!
 //! The Studio window hosts an iframe pointed at the upstream UI
-//! (`npm run dev:web` or a static preview). Backend stays whatever that
-//! UI talks to (upstream open server / later our own).
+//! (`npm run dev:web` or a static preview). Around that iframe, thin overlay
+//! hosts call `studio.renderSlot` for every name in `SLOTS`. Empty hosts take
+//! no clicks (pointer-events: none) so the 1:1 UX stays intact until something
+//! injects.
+//!
+//! ## Slot contract vs upstream
+//!
+//! Upstream openhanako (page / widget / card / settingsTab) is an iframe island
+//! model. Our contract is the WASM describe surface:
+//!
+//! | Concern | Mechanism |
+//! |---|---|
+//! | Chrome regions later plugins may fill | `ui.provides` (`openhanako.*`) |
+//! | Contributions from other plugins | `ui.injects` → `studio.renderSlot` |
+//! | Hide / reorder / replace those | `ui.adjusts` (e.g. `ui-curator`) |
+//!
+//! Names use the `openhanako.` prefix so they stay distinct from `hana-shell`'s
+//! `hana.*` inventory. Keep `SLOTS` here in lockstep with `js/lib/slots.js`.
 
 use plugin_sdk as sdk;
 
@@ -11,7 +28,7 @@ pub extern "C" fn plugin_abi_version() -> i32 { 1 }
 
 #[no_mangle]
 pub extern "C" fn plugin_init() -> i32 {
-    println!("openhanako-shell: embedding real openhanako UI");
+    println!("openhanako-shell: embedding real openhanako UI + {} slots", SLOTS.len());
     0
 }
 
@@ -30,18 +47,56 @@ pub extern "C" fn plugin_free(p: i32, n: i32) {
 #[no_mangle]
 pub extern "C" fn plugin_invoke(_: i32, _: i32, _: i32, _: i32, _: i32, _: i32) -> i64 { -2 }
 
-const ENTRY: &str = include_str!("../js/entry.js");
+/// Every slot the shell opens. Mirrored in `js/lib/slots.js`.
+const SLOTS: &[(&str, &str)] = &[
+    // Titlebar
+    ("openhanako.titlebar.left", "Left cluster overlay (sidebar toggle side)"),
+    ("openhanako.titlebar.center", "Centre title / channel tabs overlay"),
+    ("openhanako.titlebar.right", "Right cluster overlay (widget / panel toggles)"),
+    // Left sidebar
+    ("openhanako.sidebar.header", "Sidebar header row overlay"),
+    ("openhanako.sidebar.activities", "Activity bars overlay"),
+    ("openhanako.sidebar.sessions", "Session list overlay / below-list strip"),
+    ("openhanako.sidebar.notice", "Notice strip above sidebar footer"),
+    ("openhanako.sidebar.footer", "Sidebar footer overlay"),
+    // Centre column
+    ("openhanako.conversation.header", "Conversation header overlay"),
+    ("openhanako.conversation.hero", "Empty-state / hero overlay"),
+    ("openhanako.conversation.stream", "Message stream side overlay"),
+    ("openhanako.conversation.input.dock", "Around the composer (above/below)"),
+    ("openhanako.conversation.input.right", "Inside composer area, after Send"),
+    // Preview + rail
+    ("openhanako.preview.panel", "Right-hand preview panel overlay"),
+    ("openhanako.rail.header", "Right rail header overlay"),
+    ("openhanako.rail.items", "Right rail body overlay"),
+    // Frame
+    ("openhanako.shell.overlay", "Full-window overlay above the iframe"),
+];
+
+const ASSETS: &[(&str, &str)] = &[
+    ("lib/slots.js", include_str!("../js/lib/slots.js")),
+    ("entry.js", include_str!("../js/entry.js")),
+];
 
 #[no_mangle]
 pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
-    let mut assets = serde_json::Map::new();
-    assets.insert("entry.js".into(), ENTRY.into());
+    let assets: serde_json::Map<String, serde_json::Value> = ASSETS
+        .iter()
+        .map(|(k, v)| (k.to_string(), serde_json::Value::String(v.to_string())))
+        .collect();
+
+    let provides: Vec<serde_json::Value> = SLOTS
+        .iter()
+        .map(|(name, description)| serde_json::json!({ "name": name, "description": description }))
+        .collect();
+
     let decl = serde_json::json!({
         "name": "openhanako-shell",
         "abi": 1,
         "tools": [],
         "ui": {
             "assets": assets,
+            "provides": provides,
             "windows": [{
                 "name": "main",
                 "component": "OpenhanakoShell",
@@ -53,5 +108,6 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
         }
     })
     .to_string();
+    // SAFETY: host guarantees `cap` writable bytes at `out`.
     unsafe { sdk::write_out(out, cap, decl.as_bytes()) }
 }
