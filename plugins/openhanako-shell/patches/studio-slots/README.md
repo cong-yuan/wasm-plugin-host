@@ -15,6 +15,10 @@ anchors live in the original UI so placement tracks real layout.
 
 ## Re-apply
 
+`App.tsx` also mounts `StudioBackendBridge`. Copy `patches/studio-backend/`
+into `desktop/src/react/studio-backend/` in the same pass, or the import
+does not resolve. See `patches/studio-backend/README.md`.
+
 ```bash
 ROOT=/tmp/openhanako-full/desktop/src/react
 PATCH=plugins/openhanako-shell/patches/studio-slots
@@ -23,6 +27,9 @@ cp "$PATCH/App.tsx" "$ROOT/App.tsx"
 cp "$PATCH/components/app/"*.tsx "$ROOT/components/app/"
 cp "$PATCH/components/InputArea.tsx" "$ROOT/components/InputArea.tsx"
 cp "$PATCH/components/PreviewPanel.tsx" "$ROOT/components/PreviewPanel.tsx"
+mkdir -p "$ROOT/studio-backend"
+cp plugins/openhanako-shell/patches/studio-backend/studio-backend-bridge.ts "$ROOT/studio-backend/"
+cp plugins/openhanako-shell/patches/studio-backend/StudioBackendBridge.tsx "$ROOT/studio-backend/"
 ```
 
 Restart or rely on Vite HMR after copy.

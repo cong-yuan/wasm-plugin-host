@@ -2,10 +2,13 @@
 //
 // Slot hosts are positioned from geometry reported by anchors inside that UI
 // (`data-ohk-slot` + StudioSlotBridge), not from guessed overlay coordinates.
+// Chat HTTP/WS from that iframe is forwarded by the studio-backend host bridge
+// (`lib/host-bridge`) onto Studio's Tauri agent commands.
 studio.register('OpenhanakoShell', (el) => {
   const url = (window.__OPENHANAKO_UI_URL__) || 'http://127.0.0.1:5173/index.html';
   const S = studio.require('lib/slots');
   const B = studio.require('lib/bridge');
+  const H = studio.require('lib/host-bridge');
 
   el.style.cssText =
     'position:absolute;inset:0;margin:0;padding:0;overflow:hidden;background:#EFE8DB';
@@ -36,8 +39,10 @@ studio.register('OpenhanakoShell', (el) => {
   el.appendChild(layer);
 
   const detachBridge = B.attach(frame, layer, hosts);
+  const detachHost = H.attach(frame);
 
   return () => {
+    detachHost();
     detachBridge();
     for (const d of disposers) {
       try { d(); } catch (_) {}

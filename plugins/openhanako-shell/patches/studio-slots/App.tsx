@@ -34,6 +34,7 @@ import { AppTitlebar } from './components/app/AppTitlebar';
 import { ChatSidebar } from './components/app/ChatSidebar';
 import { AppPages } from './components/app/AppPages';
 import { StudioSlotBridge } from './studio-slots/StudioSlotBridge';
+import { StudioBackendBridge } from './studio-backend/StudioBackendBridge';
 
 declare function t(key: string, vars?: Record<string, string | number>): string;
 
@@ -89,6 +90,7 @@ function App() {
   return (
     <ErrorBoundary>
       <StudioSlotBridge />
+      <StudioBackendBridge />
       {/* Headless behavior components */}
       <SidebarLayout />
       <ChannelsPanel />

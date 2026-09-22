@@ -6,6 +6,10 @@
 //! small bridge posts their geometry. This shell mounts `studio.renderSlot`
 //! hosts and aligns them to those rects. Empty hosts take no clicks.
 //!
+//! Chat is a second bridge: the iframe cannot call Tauri, so `js/lib/host-bridge.js`
+//! (same webview as Svelte) accepts `postMessage` and invokes `list_sessions` /
+//! `send_message` / `transcript`. Rust slot names stay unchanged.
+//!
 //! ## Slot contract vs upstream
 //!
 //! Upstream openhanako (page / widget / card / settingsTab) is an iframe island
@@ -75,6 +79,10 @@ const SLOTS: &[(&str, &str)] = &[
 const ASSETS: &[(&str, &str)] = &[
     ("lib/slots.js", include_str!("../js/lib/slots.js")),
     ("lib/bridge.js", include_str!("../js/lib/bridge.js")),
+    ("lib/tauri-invoke.js", include_str!("../js/lib/tauri-invoke.js")),
+    ("lib/api.js", include_str!("../js/lib/api.js")),
+    ("lib/hana-adapter.js", include_str!("../js/lib/hana-adapter.js")),
+    ("lib/host-bridge.js", include_str!("../js/lib/host-bridge.js")),
     ("entry.js", include_str!("../js/entry.js")),
 ];
 

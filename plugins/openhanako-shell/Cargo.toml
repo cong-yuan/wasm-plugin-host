@@ -5,7 +5,8 @@ edition = "2021"
 
 # Main openhanako frontend chrome (liliMozi/openhanako CSS) as a WASM plugin.
 # Session/drag/test patterns absorbed from hana-shell.
-# Frontend page design only — backend is stubbed.
+# Chat JS calls Studio Tauri agent commands when invoke exists.
+# Slot names in src/lib.rs stay the geometry surface.
 
 [lib]
 crate-type = ["cdylib"]

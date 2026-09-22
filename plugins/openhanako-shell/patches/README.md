@@ -1,10 +1,19 @@
-# Settings UI tweaks (vs upstream openhanako)
+# Patches applied onto the live openhanako vite tree
 
-Applied on the live vite tree under `/tmp/openhanako-full` for HMR.
+Applied under `/tmp/openhanako-full` for HMR.
 
-## Scope
+| Folder | Purpose |
+|---|---|
+| `patches/` root (Settings*, InputArea, ChatPage) | Settings chrome + first-paint input fix |
+| `patches/studio-slots/` | `data-ohk-slot` anchors + geometry bridge |
+| `patches/studio-backend/` | iframe chat → Studio Tauri agents (HTTP/WS shim) |
 
-These patches only touch **settings chrome** (dialog shell, title row, left nav, right pane layout/scroll). They do **not** change editor/chat typography.
+See each folder's README for re-apply commands. Slot and backend patches
+both touch `App.tsx` (via `studio-slots/App.tsx`); copy them together.
+
+## Settings UI tweaks (this folder)
+
+These root files only touch **settings chrome** (dialog shell, title row, left nav, right pane layout/scroll). They do **not** change editor/chat typography.
 
 - Editor markdown sizes live under `--editor-markdown-*` (Interface tab → typography editor).
 - Settings chrome uses global UI tokens `--fs-title|body|ui|caption|hint` from `styles.css`.
