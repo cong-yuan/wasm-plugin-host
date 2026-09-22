@@ -20,6 +20,9 @@
     flex: 1 1 auto;
 }
 
+/* Settings chrome typography uses --fs-* only.
+   Editor markdown sizes (--editor-markdown-*) are controlled by Interface → typography
+   and must not be used for nav/labels/inputs here. */
 .settings-panel-modal {
     --settings-nav-width: 180px;
     --settings-main-x-padding: var(--space-32);
@@ -307,7 +310,7 @@
     text-align: left;
     padding: var(--space-8) var(--space-12);
     border-radius: var(--radius-input, 6px);
-    font-size: var(--fs-body);
+    font-size: var(--fs-caption); /* chrome nav — denser than body */
     color: var(--text-muted);
     background: none;
     border: none;
@@ -488,7 +491,7 @@
 
 .settings-tab-title {
     font-family: var(--font-ui);
-    font-size: 1.2rem;
+    font-size: var(--fs-title); /* was 1.2rem — stay on token ladder */
     font-weight: 700;
     color: var(--text);
     margin: 0;
@@ -651,7 +654,7 @@
     color: var(--text);
     background: var(--bg-card);
     font: inherit;
-    font-size: var(--fs-body);
+    font-size: var(--fs-caption);
 }
 
 .quick-chat-timeout-input:focus {
@@ -1538,7 +1541,7 @@
     margin: 0;
     color: rgba(31, 56, 65, 0.72);
     line-height: 1.6;
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
 }
 
 .character-card-detail-grid {
@@ -1704,7 +1707,7 @@
 }
 
 .agent-delete-input {
-    font-size: var(--fs-body);
+    font-size: var(--fs-caption);
 }
 
 .agent-delete-actions {
@@ -1959,7 +1962,7 @@
     border: 1px solid var(--overlay-medium, rgba(0,0,0,0.1));
     border-radius: 8px;
     outline: none;
-    font-size: var(--fs-body);
+    font-size: var(--fs-caption);
     font-family: inherit;
     background-color: var(--bg-card);
     color: var(--text);
@@ -2044,7 +2047,7 @@
     width: 100%;
     padding: var(--space-8) var(--space-12);
     font-family: inherit;
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     line-height: 1.5;
     color: var(--text);
     border: none;
@@ -2096,7 +2099,7 @@
     padding: var(--space-8) var(--space-12);
     border: none;
     outline: none;
-    font-size: var(--fs-body);
+    font-size: var(--fs-caption);
     font-family: inherit;
     background-color: var(--bg-card);
     color: var(--text);
@@ -2278,7 +2281,7 @@
 }
 
 .access-device-name {
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     color: var(--text);
     font-weight: 600;
 }
@@ -2314,7 +2317,7 @@
 /* Text input */
 .settings-input {
     font-family: inherit;
-    font-size: var(--fs-ui);
+    font-size: var(--fs-caption);
     line-height: 1.5;
     color: var(--text);
     background-color: var(--bg-card);
@@ -2338,7 +2341,7 @@
 
 .settings-input[type="number"] {
     font-family: var(--font-mono);
-    font-size: var(--fs-ui);
+    font-size: var(--fs-caption);
 }
 
 .settings-input.small {
@@ -2391,7 +2394,7 @@
 }
 
 .skills-add-icon {
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     font-weight: 600;
 }
 
@@ -3307,7 +3310,7 @@
  * border + radius 与 .settings-input 对齐 */
 .settings-textarea {
     font-family: inherit;
-    font-size: var(--fs-body);
+    font-size: var(--fs-caption);
     color: var(--text);
     background-color: var(--bg-card);
     border: 1px solid var(--border);
@@ -3570,7 +3573,7 @@
 }
 
 .theme-card-name {
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     font-weight: 600;
     letter-spacing: 0.03em;
     line-height: 1.3;
@@ -3752,7 +3755,7 @@
     white-space: nowrap;
     padding: 4px 8px;
     font-family: inherit;
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     color: var(--accent);
     background: transparent;
     border: none;
@@ -4733,7 +4736,7 @@ a.about-link:hover {
 .usage-empty {
     padding: var(--space-16) 0;
     color: var(--text-muted);
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     line-height: 1.5;
 }
 
@@ -4865,7 +4868,7 @@ a.about-link:hover {
 
 .usage-hero-stat span {
     color: var(--text);
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     font-weight: 600;
     line-height: 1.2;
     font-variant-numeric: tabular-nums;
@@ -4900,7 +4903,7 @@ a.about-link:hover {
 
 .usage-panel-title {
     color: var(--text);
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     font-weight: 600;
     line-height: 1.3;
 }
@@ -5022,7 +5025,7 @@ a.about-link:hover {
 .usage-group-title {
     min-width: 0;
     color: var(--text);
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -5128,7 +5131,7 @@ a.about-link:hover {
 .usage-request-source {
     min-width: 0;
     color: var(--text);
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -6216,7 +6219,7 @@ a.about-link:hover {
 
 .exp-block-title {
     font-family: var(--font-serif);
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     font-weight: 600;
     color: var(--text);
     letter-spacing: 0.04em;
@@ -6491,7 +6494,7 @@ a.about-link:hover {
 }
 
 .memory-confirm-text {
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     line-height: 1.6;
     margin-bottom: var(--space-16);
     color: var(--text);
@@ -6600,7 +6603,7 @@ a.about-link:hover {
 }
 
 .memory-viewer-title {
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     font-weight: 600;
     margin: 0;
 }
@@ -6614,7 +6617,7 @@ a.about-link:hover {
     border: none;
     background: none;
     color: var(--text-muted);
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     cursor: default;
     border-radius: var(--radius-input, 6px);
     transition: all var(--duration-fast);
@@ -6698,7 +6701,7 @@ a.about-link:hover {
 .update-history-summary {
     margin: var(--space-8) 0 var(--space-16);
     color: var(--text);
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     line-height: 1.6;
 }
 
@@ -7116,7 +7119,7 @@ a.about-link:hover {
 }
 
 .crop-title {
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     font-weight: 600;
     color: var(--text);
     letter-spacing: 0.02em;
@@ -7131,7 +7134,7 @@ a.about-link:hover {
     border: none;
     background: none;
     color: var(--text-muted);
-    font-size: var(--fs-body);
+    font-size: var(--fs-ui);
     cursor: default;
     border-radius: var(--radius-input, 6px);
     transition: all var(--duration-fast);
@@ -8032,7 +8035,7 @@ a.about-link:hover {
 }
 
 .ss-layout-title {
-  font-size: var(--fs-body);
+  font-size: var(--fs-ui);
   font-weight: 600;
   color: var(--text);
   margin-bottom: 0.25em;

@@ -25,3 +25,19 @@ Copy onto the extract:
 - `SettingsNav.tsx` → `desktop/src/react/settings/`
 - `SettingsModalShell.module.css` → `desktop/src/react/components/`
 - `SettingsModalShell.tsx` → `desktop/src/react/components/`
+
+
+## Typography mapping (settings chrome)
+
+Uses global `--fs-*` tokens only — independent of Interface → editor markdown (`--editor-markdown-*`).
+
+| Role | Token |
+|------|-------|
+| Header / current tab name | `--fs-ui` |
+| Left nav item | `--fs-caption` |
+| Right tab / section title | `--fs-title` |
+| Row label | `--fs-ui` |
+| Hint / description | `--fs-hint` |
+| Inputs / controls | `--fs-caption` |
+
+Also copy `settings-components.module.css` → `desktop/src/react/settings/components/`.
