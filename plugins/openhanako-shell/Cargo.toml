@@ -1,0 +1,15 @@
+[package]
+name = "openhanako-shell"
+version = "0.1.0"
+edition = "2021"
+
+# Main openhanako frontend chrome (liliMozi/openhanako CSS) as a WASM plugin.
+# Session/drag/test patterns absorbed from hana-shell.
+# Frontend page design only — backend is stubbed.
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+plugin-sdk = { path = "../../plugin-sdk" }
+serde_json = "1"

@@ -1,0 +1,49 @@
+/* WASM host adapter.
+   Upstream ships a full document (html/body own the viewport) and React mounts
+   into #root. Here the shell mounts into a plugin-provided element, so the root
+   node has to reclaim the viewport box. Empty plugin slots must not reserve
+   space. Nothing else: all visual values come from upstream CSS above. */
+
+.hana-replica {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+}
+
+.hana-replica .app-shell {
+    height: 100%;
+}
+
+/* Plugin slots are host extension points with no upstream counterpart. */
+.hana-replica .hana-slot:empty,
+.hana-replica .rail-header-slot:empty,
+.hana-replica .rail-items-slot:empty,
+.hana-replica .conversation-header-slot:empty,
+.hana-replica .input-dock:empty,
+.hana-replica .input-trailing-slot:empty,
+.hana-replica .shell-overlay:empty {
+    display: none;
+}
+
+.hana-replica .shell-overlay {
+    position: absolute;
+    inset: var(--titlebar-h) 0 0;
+    z-index: 100;
+    pointer-events: none;
+}
+
+/* Resize targets (openhanako-shell). Upstream already defines --sidebar-width /
+   --jian-sidebar-width / --titlebar-h; preview width is driven from the root. */
+.hana-replica {
+    --preview-panel-width: 580px;
+}
+.hana-replica .preview-panel:not(.collapsed) {
+    width: var(--preview-panel-width);
+    min-width: var(--preview-panel-width);
+}
+.hana-replica .sidebar:not(.collapsed) {
+    width: var(--sidebar-width, 240px);
+}
+.hana-replica .jian-sidebar:not(.collapsed) {
+    width: var(--jian-sidebar-width, 260px);
+}

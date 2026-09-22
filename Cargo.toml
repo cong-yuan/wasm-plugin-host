@@ -20,5 +20,6 @@ members = [
     "plugins/ui-multifile",
     "plugins/ui-startup-demo",
     "plugins/hana-shell",
+    "plugins/openhanako-shell",
     "plugins/demo-shell-addon",
 ]

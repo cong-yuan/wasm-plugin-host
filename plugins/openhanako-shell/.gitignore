@@ -1,0 +1,5 @@
+# Upstream renderer snapshot (rebuild with: npm run build:renderer in openhanako)
+/vendor/
+
+# Generated font payloads (~8 MiB base64). Rebuild via: npm run build:css
+/js/lib/fonts.js
