@@ -1,8 +1,7 @@
-//! `demo-openhanako-addon` — extends `openhanako-shell` via its public slots.
+//! `demo-openhanako-addon` — example components for `openhanako-shell` slots.
 //!
-//! Knows nothing about the iframe or overlay layout — only `openhanako.*`
-//! slot names. If the shell is rewritten, this keeps working as long as those
-//! names hold.
+//! Declares injects for the main chrome regions so Studio can show a full
+//! slot walkthrough. Knows only `openhanako.*` names — no shell internals.
 
 use plugin_sdk as sdk;
 
@@ -11,7 +10,7 @@ pub extern "C" fn plugin_abi_version() -> i32 { 1 }
 
 #[no_mangle]
 pub extern "C" fn plugin_init() -> i32 {
-    println!("demo-openhanako-addon: up (extends openhanako-shell through slots)");
+    println!("demo-openhanako-addon: up ({} slot examples)", INJECTS.len());
     0
 }
 
@@ -30,11 +29,24 @@ pub extern "C" fn plugin_free(p: i32, n: i32) {
 #[no_mangle]
 pub extern "C" fn plugin_invoke(_: i32, _: i32, _: i32, _: i32, _: i32, _: i32) -> i64 { -2 }
 
+/// slot → component. Must stay in sync with `js/entry.js`.
 const INJECTS: &[(&str, &str)] = &[
-    ("openhanako.titlebar.right", "OhkAddonHeaderButton"),
-    ("openhanako.sidebar.notice", "OhkAddonNotice"),
-    ("openhanako.conversation.input.dock", "OhkAddonComposerChip"),
-    ("openhanako.rail.items", "OhkAddonRailCard"),
+    ("openhanako.titlebar.left", "OhkTitlebarLeftBadge"),
+    ("openhanako.titlebar.center", "OhkTitlebarCenterHint"),
+    ("openhanako.titlebar.right", "OhkTitlebarRightButton"),
+    ("openhanako.sidebar.header", "OhkSidebarHeaderTag"),
+    ("openhanako.sidebar.activities", "OhkSidebarActivityPill"),
+    ("openhanako.sidebar.sessions", "OhkSidebarSessionsRow"),
+    ("openhanako.sidebar.notice", "OhkSidebarNotice"),
+    ("openhanako.sidebar.footer", "OhkSidebarFooter"),
+    ("openhanako.conversation.hero", "OhkConversationHero"),
+    ("openhanako.conversation.stream", "OhkConversationStreamMark"),
+    ("openhanako.conversation.input.dock", "OhkComposerDockChip"),
+    ("openhanako.conversation.input.right", "OhkComposerRightAction"),
+    ("openhanako.preview.panel", "OhkPreviewBanner"),
+    ("openhanako.rail.header", "OhkRailHeader"),
+    ("openhanako.rail.items", "OhkRailCard"),
+    ("openhanako.shell.overlay", "OhkShellToast"),
 ];
 
 #[no_mangle]

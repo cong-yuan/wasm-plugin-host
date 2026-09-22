@@ -21,6 +21,5 @@ members = [
     "plugins/ui-startup-demo",
     "plugins/hana-shell",
     "plugins/openhanako-shell",
-    "plugins/demo-shell-addon",
     "plugins/demo-openhanako-addon",
 ]

@@ -262,7 +262,7 @@ Split.js / `interact.js` / `react-resizable-panels` 都存在且不差,但它们
 |---|---|
 | 外壳接管启动视图 | 窗口标题为 `Hana`;studio 自身窗口保持隐藏 |
 | 17 个槽全部挂载 | `the_shell_slots_a_panel_mounts_are_the_ones_it_declares`(双向) |
-| 贡献经槽位抵达 | `demo-shell-addon` 填 4 个槽,不 import 外壳任何代码 |
+| 贡献经槽位抵达 | `demo-openhanako-addon` 填 openhanako.* 槽（原 UI 锚点）,不 import 外壳内部 |
 | 模块全部随包发出 | `the_shell_ships_every_module_its_entry_requires` |
 | 拖曳行为 | node harness 模拟真实拖曳事件(含夹取/持久化/复位/动态上限/收起栏拒拖) |
 | **真数据渲染** | node harness 带**假后端**,断言标题/用量/provider 真的出现 |
