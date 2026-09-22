@@ -414,12 +414,9 @@
 
 /* Simple tabs: shell stays wide; only the content column narrows.
    Must come AFTER the max-width:100% rule above or it gets overridden. */
+/* Only Me / About: narrow + centered content column (dialog width unchanged). */
 .settings-main [data-settings-page="me"],
-.settings-main [data-settings-page="about"],
-.settings-main [data-settings-page="sharing"],
-.settings-main [data-settings-page="security"],
-.settings-main [data-settings-page="access"],
-.settings-main [data-settings-page="experiments"] {
+.settings-main [data-settings-page="about"] {
     width: 100%;
     max-width: 520px;
     margin-left: auto;
