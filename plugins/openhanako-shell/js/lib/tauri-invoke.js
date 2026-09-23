@@ -27,6 +27,17 @@ return (function () {
     if (tauri && tauri.event && typeof tauri.event.listen === 'function') {
       return (event, handler) => tauri.event.listen(event, handler);
     }
+    // Some Tauri 2 builds expose listen only via internals + plugin IPC.
+    const internals = window.__TAURI_INTERNALS__;
+    if (internals && typeof internals.transformCallback === 'function' && typeof internals.invoke === 'function') {
+      return async (event, handler) => {
+        const cb = internals.transformCallback((ev) => {
+          try { handler(ev); } catch (_) {}
+        }, true);
+        await internals.invoke('plugin:event|listen', { event, handler: cb, target: { kind: 'Any' } });
+        return () => { try { internals.invoke('plugin:event|unlisten', { event, handlerId: cb }); } catch (_) {} };
+      };
+    }
     return null;
   };
 

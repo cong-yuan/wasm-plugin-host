@@ -67,8 +67,17 @@ return (function () {
   });
 
   const sessionIdOf = (body, query) => {
-    const fromBody = body && (body.sessionId || body.path || body.sessionPath);
-    const fromQuery = query && (query.sessionId || query.path);
+    // Prefer path/sessionPath from the clicked row — sessionId alone has been
+    // observed to point at the *current* session while path points at another,
+    // which made archive/delete dispose the wrong agent mid-reply.
+    const fromBody = body && (body.path || body.sessionPath || body.sessionId);
+    const fromQuery = query && (query.path || query.sessionId);
+    const pathId = idFrom(body && (body.path || body.sessionPath));
+    const sid = idFrom(body && body.sessionId);
+    if (pathId && sid && pathId !== sid) {
+      try { console.warn('[openhanako] dispose id mismatch; preferring path', { pathId, sid }); } catch (_) {}
+      return pathId;
+    }
     return idFrom(fromBody || fromQuery);
   };
 

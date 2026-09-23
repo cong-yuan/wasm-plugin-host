@@ -302,7 +302,23 @@ return (function () {
       unlisten = () => {};
     }
 
+    // Live chunk poll — works even when window.__TAURI__.event.listen is missing
+    // (withGlobalTauri off / plugin Function scope). Prefer this over transcript
+    // poll: transcript still only grows on completed assistant/message.
+    const pollLivePartial = async () => {
+      try {
+        const partial = await tauri.invoke('chat_partial', { agentId });
+        if (!partial || typeof partial !== 'object') return;
+        applyPartial({
+          agentId,
+          text: typeof partial.text === 'string' ? partial.text : '',
+          reasoning: typeof partial.reasoning === 'string' ? partial.reasoning : '',
+        }, onProgress, state, agentId);
+      } catch (_) { /* command missing on older Studio */ }
+    };
+
     const pollOnce = async () => {
+      await pollLivePartial();
       const rows = await readTranscript(agentId);
       // ONLY consider assistants appended after this turn started.
       // Falling back to lastAssistant(rows) re-seeds the new bubble with A1
@@ -314,15 +330,17 @@ return (function () {
       emitDiff(null, assistant, onProgress, state);
     };
 
+    if (!tauri.listen) {
+      try { console.warn('[openhanako] tauri.listen unavailable; using chat_partial poll'); } catch (_) {}
+    }
+
     const sendPromise = tauri.invoke('send_message', {
       agentId,
       text,
       msgId: msgId || ('ohk-' + Date.now()),
     });
 
-    // Coarse fallback if listen is unavailable or an emit is missed.
-    // After Studio chunk assembly lands, transcript still only grows on
-    // completed assistant/message — so listen is what makes mid-token UI work.
+    // Event push (if listen works) + chat_partial/transcript poll fallback.
     const loop = (async () => {
       while (!stopped) {
         try { await pollOnce(); } catch (_) { /* mid-turn read can race */ }
