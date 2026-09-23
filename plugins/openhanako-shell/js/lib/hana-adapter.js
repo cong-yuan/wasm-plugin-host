@@ -611,6 +611,10 @@ return (function () {
           timestamp: Date.now(),
         },
       });
+      // Seed an empty assistant bubble immediately so the UI shows the
+      // agent avatar instead of a bare "...." typing placeholder while
+      // waiting for the first token.
+      push({ type: 'text_delta', sessionId: liveId, sessionPath: livePath, delta: '' });
 
       try {
         if (type === 'interject') {

@@ -262,6 +262,11 @@ return (function () {
     const state = { text: '', reasoning: '', thinking: false };
     let stopped = false;
 
+    const applyAssistant = (assistant) => {
+      if (!assistant) return;
+      emitDiff(null, assistant, onProgress, state);
+    };
+
     const pollOnce = async () => {
       const rows = await readTranscript(agentId);
       // ONLY consider assistants appended after this turn started.
@@ -269,10 +274,25 @@ return (function () {
       // (previous turn), then prefix-slices A2 against A1 → A1+A2 glue /
       // mid-message corruption like 「要干活直接说。件（`write_file`）」.
       if (rows.length <= beforeCount) return;
-      const assistant = lastAssistant(rows.slice(beforeCount));
-      if (!assistant) return;
-      emitDiff(null, assistant, onProgress, state);
+      applyAssistant(lastAssistant(rows.slice(beforeCount)));
     };
+
+    // Prefer live studio://chat-partial events (emitted while send_message
+    // awaits idle). Transcript polling remains as a fallback when the
+    // backend only flushes the assistant row at turn end.
+    let unlistenPartial = null;
+    if (typeof tauri.listen === 'function') {
+      try {
+        unlistenPartial = await tauri.listen('studio://chat-partial', (payload) => {
+          if (!payload || payload.agentId !== agentId) return;
+          applyAssistant({
+            role: 'assistant',
+            text: typeof payload.text === 'string' ? payload.text : '',
+            reasoning: typeof payload.reasoning === 'string' ? payload.reasoning : '',
+          });
+        });
+      } catch (_) { /* older hosts */ }
+    }
 
     const sendPromise = tauri.invoke('send_message', {
       agentId,
@@ -293,6 +313,9 @@ return (function () {
       stopped = true;
       await loop.catch(() => {});
       try { await pollOnce(); } catch (_) {}
+      if (typeof unlistenPartial === 'function') {
+        try { unlistenPartial(); } catch (_) {}
+      }
       if (state.thinking && typeof onProgress === 'function') {
         onProgress({ kind: 'thinking_end' });
         state.thinking = false;

@@ -27,5 +27,18 @@ return (function () {
     return fn(cmd, args || {});
   };
 
-  return { available, invoke, missing };
+  // Subscribe to a Tauri event. Returns a Promise<unlisten>.
+  const listen = (event, handler) => {
+    const internals = window.__TAURI_INTERNALS__;
+    if (internals && typeof internals.transformCallback === 'function' && window.__TAURI__?.event?.listen) {
+      return window.__TAURI__.event.listen(event, (e) => handler(e.payload));
+    }
+    const tauri = window.__TAURI__;
+    if (tauri && tauri.event && typeof tauri.event.listen === 'function') {
+      return tauri.event.listen(event, (e) => handler(e && e.payload !== undefined ? e.payload : e));
+    }
+    return Promise.resolve(() => {});
+  };
+
+  return { available, invoke, listen, missing };
 })();
