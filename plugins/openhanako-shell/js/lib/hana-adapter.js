@@ -418,8 +418,9 @@ return (function () {
       const flat = flattenModels({ ...cfg, current: { provider, model: modelId } });
       return {
         ok: true,
-        model: { id: modelId, provider, name: modelId, isCurrent: true },
+        model: { id: modelId, provider, name: modelId, isCurrent: true, available: true },
         models: flat.models,
+        thinkingLevel: undefined,
         note: pathname.endsWith('/switch')
           ? 'studio: selection updated for new sessions (live agent route unchanged)'
           : undefined,

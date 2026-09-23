@@ -1,0 +1,10 @@
+/* openhanako-shell: fetch-models loading + available count */
+.pv-fetch-btn-inline:disabled { opacity: 0.7; cursor: progress; }
+.pv-fetch-btn-inline.spinning svg {
+    animation: hana-spin 0.8s linear infinite;
+}
+.pv-fetch-available {
+    margin-left: 2px;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+}

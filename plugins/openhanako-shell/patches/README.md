@@ -57,3 +57,10 @@ Desktop TipTap previously used `immediatelyRender: true`, which can throw on fir
 
 - `InputArea.tsx` → `desktop/src/react/components/` — `immediatelyRender: false` for all surfaces
 - `ChatPage.tsx` → `desktop/src/react/components/app/` — desktop also gets `autoRetry` like mobile
+
+## LLM model fetch / session picker (2026-09-23)
+
+- `settings/tabs/providers/ProviderModelList.tsx` — loading on 读取模型 + trailing 可用（n）
+- `settings/fetch-models-ui.css` — append into `Settings.module.css`
+- `components/input/ModelSelector.tsx` — refresh button at top of popup (does not close)
+- `ui/SelectWidget.tsx` + `ui/SelectWidget.module.css` — `renderPopupHeader` support
