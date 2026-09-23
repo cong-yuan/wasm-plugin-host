@@ -261,7 +261,9 @@ function installWebSocketShim(): void {
 
   function Patched(this: WebSocket, url: string | URL, protocols?: string | string[]) {
     const href = String(url);
-    if (mode === 'on' && isChatSocket(href)) {
+    // pending 阶段也要走桥：hello 尚未到达时若先连原生 /ws（假端口），
+    // 会失败且不会在握手后自动重建。
+    if (mode !== 'off' && isChatSocket(href)) {
       return new (StudioSocket as unknown as new (u: string) => WebSocket)(href);
     }
     if (protocols === undefined) return new Native(url);

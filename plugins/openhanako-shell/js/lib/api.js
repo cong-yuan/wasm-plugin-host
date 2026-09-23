@@ -218,11 +218,14 @@ return (function () {
       return tauri.invoke('cancel_agent', { agentId });
     },
 
-    // Argument names follow send_message. Studio's steer command is assumed
-    // to take `{ agentId, text }` — see the README contract table.
-    steer: async (agentId, text) => {
+    // Argument names follow send_message (agentId/text/msgId).
+    steer: async (agentId, text, msgId) => {
       if (!tauri.available()) return mock.steer(agentId, text);
-      return tauri.invoke('steer_agent', { agentId, text });
+      return tauri.invoke('steer_agent', {
+        agentId,
+        text,
+        msgId: msgId || ('ohk-steer-' + Date.now()),
+      });
     },
 
     dispose: async (agentId) => {
