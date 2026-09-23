@@ -1875,9 +1875,9 @@
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  margin-top: 0.45rem;
-  padding: 0 0.35rem 0.15rem;
-  min-height: 1.35rem;
+  margin-top: 0.28rem;
+  padding: 0 0.35rem 0;
+  min-height: 1.15rem;
   color: var(--text-muted, rgba(0, 0, 0, 0.48));
   font-size: var(--fs-hint, 0.75rem);
   line-height: 1.3;

@@ -527,6 +527,7 @@ html[data-platform="linux"] .tb-toggle-right {
     flex-direction: column;
     min-width: 0; /* 防止 flex 子项溢出 */
     position: relative; /* 给 drop overlay 定位 */
+    --input-area-bottom-gap: var(--space-8);
 }
 
 /* ========================================
@@ -2198,11 +2199,13 @@ html[data-platform="linux"] .tb-toggle-right {
    输入区
    ======================================== */
 .input-area {
+    /* Qoder-like: pin composer to the bottom edge with a thin gap. */
+    --input-area-bottom-gap: var(--space-8);
     position: absolute;
     bottom: 0;
     left: 0;
     right: 0;
-    padding: 0 var(--space-24) var(--space-24);
+    padding: 0 var(--space-24) calc(var(--input-area-bottom-gap) + env(safe-area-inset-bottom, 0px));
     background: transparent;
     z-index: 5;
     pointer-events: none;

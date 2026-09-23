@@ -1992,7 +1992,7 @@
     top: 0;
     left: 0;
     right: 0;
-    bottom: calc(var(--chat-scrollbar-bottom-inset) + var(--space-24));
+    bottom: calc(var(--chat-scrollbar-bottom-inset) + var(--input-area-bottom-gap, var(--space-8)));
     overflow: hidden;
 }
 
@@ -2081,7 +2081,7 @@
 
 .sessionFooter {
     /* 和 sessionPanel 的切点对齐：遮挡发生在输入卡片中部，同时在滚到底时额外留一行左右呼吸空间。 */
-    height: calc(var(--chat-scrollbar-bottom-inset) + var(--space-24) + 5rem);
+    height: calc(var(--chat-scrollbar-bottom-inset) + var(--input-area-bottom-gap, var(--space-8)) + 5rem);
     flex-shrink: 0;
 }
 
@@ -2129,7 +2129,7 @@
     /* 跟随输入卡片实时高度浮在其上方，避免多行输入时被输入框覆盖（#1297）。
        复用 InputArea 注入到 .main-content 的 --input-card-h（.sessionShell 同源消费）；
        变量未注入时回退 124px(≈单行卡片高度)+space-md=原 140px，行为不变。 */
-    bottom: calc(var(--input-card-h, 124px) + var(--space-16));
+    bottom: calc(var(--input-card-h, 124px) + var(--input-area-bottom-gap, var(--space-8)));
     left: 50%;
     transform: translateX(-50%);
     z-index: 6;
