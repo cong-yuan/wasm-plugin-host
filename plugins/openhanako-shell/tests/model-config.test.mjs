@@ -66,6 +66,7 @@ const adapter = load('js/lib/hana-adapter.js', studio);
 const models = await adapter.http('GET', '/api/models');
 check('lists deepseek models', models.models.some((m) => m.id === 'deepseek-reasoner' && m.provider === 'deepseek'));
 check('marks current model', models.models.some((m) => m.isCurrent && m.id === 'deepseek-chat'));
+check('no phantom provider-named model', !models.models.some((m) => m.id === m.provider && m.provider !== 'mock'));
 
 const switched = await adapter.http('POST', '/api/models/switch', { provider: 'mock', modelId: 'mock-1' });
 check('switch updates selection', switched.ok && llmState.current.provider === 'mock');
@@ -88,6 +89,12 @@ await adapter.http('PUT', '/api/config', {
 });
 check('put config stores provider', !!llmState.providers.openai && llmState.providers.openai.api_key === 'sk-x');
 check('put config stores model list', Array.isArray(llmState.model_lists.openai) && llmState.model_lists.openai.includes('gpt-4o-mini'));
+
+// Empty provider must not invent a model named after itself.
+llmState.providers.blank = { base_url: 'http://127.0.0.1:9', api_key: 'x' };
+llmState.model_lists.blank = [];
+const blank = await adapter.http('GET', '/api/models');
+check('blank provider has no auto model', !blank.models.some((m) => m.provider === 'blank'));
 
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));

@@ -90,10 +90,13 @@ return (function () {
   // iframe console without pretending the feature exists.
 
   const modelIdOf = (provider, entry) => {
-    if (!entry || typeof entry !== 'object') {
-      return provider === 'mock' ? api.DEFAULT_MODEL : provider;
+    if (provider === 'mock') {
+      return (entry && entry.model) || api.DEFAULT_MODEL;
     }
-    return entry.model || (provider === 'mock' ? api.DEFAULT_MODEL : provider);
+    // Never invent a model named after the provider — that was confusing empty
+    // configs with a fake selectable model.
+    if (entry && typeof entry === 'object' && entry.model) return entry.model;
+    return null;
   };
 
   const flattenModels = (cfg) => {
@@ -114,7 +117,11 @@ return (function () {
         }
       }
       const primary = modelIdOf(provider, entry);
-      if (!ids.includes(primary)) ids.unshift(primary);
+      if (primary && !ids.includes(primary)) ids.unshift(primary);
+      // Drop phantom "model named like provider" leftovers from older builds.
+      for (let i = ids.length - 1; i >= 0; i -= 1) {
+        if (ids[i] === provider && primary !== provider) ids.splice(i, 1);
+      }
       for (const id of ids) {
         const key = provider + '::' + id;
         if (seen.has(key)) continue;
@@ -304,10 +311,17 @@ return (function () {
         if (Object.keys(lists).length) patch.model_lists = lists;
       }
       const out = await api.setLlmConfig(patch);
+      let syncError = null;
+      try {
+        if (api.syncAdapters) await api.syncAdapters();
+      } catch (err) {
+        syncError = String((err && err.message) || err);
+      }
       return {
         ok: true,
         providers: providersConfigView(out),
         restartRequired: !!out.restart_required,
+        syncError,
       };
     }
 
@@ -317,14 +331,23 @@ return (function () {
     }
 
     if (pathname === '/api/providers/fetch-models' && verb === 'POST') {
-      const cfg = await api.llmConfig();
       const name = (body && (body.name || body.provider || body.id)) || '';
-      const lists = (cfg.model_lists && cfg.model_lists[name]) || [];
-      const entry = cfg.providers && cfg.providers[name];
-      const models = lists.length
-        ? lists.map((m) => (typeof m === 'string' ? { id: m, provider: name } : { ...m, provider: name }))
-        : [{ id: modelIdOf(name || api.DEFAULT_PROVIDER, entry), provider: name || api.DEFAULT_PROVIDER }];
-      return { models };
+      const baseUrl = (body && (body.base_url || body.baseUrl)) || '';
+      const apiKey = (body && (body.api_key || body.apiKey)) || '';
+      try {
+        const out = await api.fetchModels(name, baseUrl, apiKey);
+        const models = Array.isArray(out && out.models) ? out.models : [];
+        return { models, provider: name };
+      } catch (err) {
+        return { models: [], error: String((err && err.message) || err) };
+      }
+    }
+
+    if (pathname.startsWith('/api/providers/') && pathname.endsWith('/discovered-models') && verb === 'GET') {
+      const name = decodeURIComponent(pathname.slice('/api/providers/'.length, -'/discovered-models'.length));
+      const cfg = await api.llmConfig();
+      const discovered = (cfg.discovered && cfg.discovered[name]) || [];
+      return { models: Array.isArray(discovered) ? discovered : [] };
     }
 
     if (pathname === '/api/providers/test' && verb === 'POST') {
@@ -332,12 +355,14 @@ return (function () {
       const name = (body && (body.name || body.provider || body.id)) || '';
       const entry = (cfg.providers && cfg.providers[name]) || {};
       const registered = (cfg.registered || []).includes(name);
+      // Prefer live registration; otherwise require credentials so the UI can
+      // distinguish "saved but not mounted" from "incomplete".
       if (name === 'mock' || registered || entry.api_key || entry.apiKey) {
         return {
           ok: true,
           message: registered || name === 'mock'
             ? 'registered'
-            : 'saved (restart Studio to register route)',
+            : 'saved (adapters sync on save; retry if still unavailable)',
         };
       }
       return { ok: false, error: 'missing api_key' };

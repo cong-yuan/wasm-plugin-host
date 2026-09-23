@@ -354,7 +354,26 @@ return (function () {
     create: async (provider, model, id) => {
       const pref = await selection();
       const chosenProvider = provider || pref.provider || DEFAULT_PROVIDER;
-      const chosenModel = model || pref.model || (chosenProvider === DEFAULT_PROVIDER ? DEFAULT_MODEL : chosenProvider);
+      let chosenModel = model || pref.model || '';
+      if (!chosenModel) {
+        if (chosenProvider === DEFAULT_PROVIDER) chosenModel = DEFAULT_MODEL;
+        else {
+          // Prefer the first enabled model from model_lists; never invent provider-named models.
+          try {
+            const cfg = await (tauri.available() ? tauri.invoke('get_llm_config') : null);
+            const list = cfg && cfg.model_lists && cfg.model_lists[chosenProvider];
+            if (Array.isArray(list) && list.length) {
+              const first = list[0];
+              chosenModel = typeof first === 'string' ? first : (first && first.id) || '';
+            }
+          } catch (_) { /* ignore */ }
+        }
+      }
+      if (!chosenModel) {
+        throw new Error(
+          'No model selected for provider "' + chosenProvider + '". Fetch/select a model in settings first.',
+        );
+      }
       if (!tauri.available()) return mock.create(chosenProvider, chosenModel);
       return asId(await tauri.invoke('create_agent', {
         provider: chosenProvider,
@@ -454,6 +473,23 @@ return (function () {
         };
       }
       return out;
+    },
+
+
+    fetchModels: async (provider, baseUrl, apiKey) => {
+      if (!tauri.available()) {
+        return { models: [], provider: provider || '', error: 'tauri unavailable' };
+      }
+      return tauri.invoke('fetch_llm_models', {
+        provider: provider || null,
+        base_url: baseUrl || null,
+        api_key: apiKey || null,
+      });
+    },
+
+    syncAdapters: async () => {
+      if (!tauri.available()) return [];
+      return tauri.invoke('sync_llm_adapters');
     },
 
     selection: async () => selection(),
