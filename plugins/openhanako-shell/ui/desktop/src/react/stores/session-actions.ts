@@ -1094,6 +1094,12 @@ async function postPendingSessionCreate(body: PendingSessionCreateBody): Promise
 
 function stageDetachedSessionForActivation(data: any, ref: Readonly<SessionRef>, state: Record<string, any>): void {
   const existing = sessionByIdentityOrPath(state, ref.sessionId, ref.sessionPath);
+  // Prefer create response / pending draft projectId so project-view mounts the
+  // row under the project immediately (avoids appear-outside-then-slide-in).
+  const projectId = (typeof data.projectId === 'string' && data.projectId.trim())
+    || existing?.projectId
+    || (typeof state.pendingProjectId === 'string' && state.pendingProjectId.trim())
+    || null;
   const projection = {
     ...(existing || {}),
     path: ref.sessionPath,
@@ -1103,6 +1109,7 @@ function stageDetachedSessionForActivation(data: any, ref: Readonly<SessionRef>,
     cwd: data.cwd || existing?.cwd || null,
     workspaceMountId: data.workspaceMountId || existing?.workspaceMountId || null,
     workspaceLabel: data.workspaceLabel || existing?.workspaceLabel || null,
+    projectId,
     title: existing?.title ?? null,
     firstMessage: existing?.firstMessage ?? '',
     modified: existing?.modified || new Date().toISOString(),
@@ -1511,10 +1518,11 @@ export async function pinSession(path: string, pinned: boolean): Promise<boolean
     }
 
     const pinnedAt = typeof data.pinnedAt === 'string' ? data.pinnedAt : null;
+    const pinOrder = Number.isFinite(data.pinOrder) ? Number(data.pinOrder) : null;
     const responseSessionId = normalizeSessionId(data.sessionId) || localSessionId;
     const sessions = useStore.getState().sessions.map(s =>
       (responseSessionId && normalizeSessionId(s.sessionId) === responseSessionId) || s.path === path
-        ? { ...s, pinnedAt }
+        ? { ...s, pinnedAt, pinOrder: pinned ? pinOrder : null }
         : s,
     );
     useStore.setState({ sessions });

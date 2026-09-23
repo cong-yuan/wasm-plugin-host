@@ -71,6 +71,30 @@ check('rename stub returns ok', stubRename && stubRename.ok === true);
 const stubProfile = await adapter.http('GET', '/api/user-profile');
 check('user-profile stub', stubProfile && stubProfile.name === 'User');
 
+// Pin / unpin persists locally and is reflected in GET /api/sessions
+{
+  const target = listed[0].sessionId;
+  const pinned = await adapter.http('POST', '/api/sessions/pin', {
+    path: listed[0].path,
+    sessionId: target,
+    pinned: true,
+  });
+  check('pin returns pinnedAt', pinned && pinned.ok === true && typeof pinned.pinnedAt === 'string');
+  check('pin returns pinOrder', pinned && Number.isFinite(pinned.pinOrder));
+  const afterPin = await adapter.http('GET', '/api/sessions');
+  const pinnedRow = afterPin.find((s) => s.sessionId === target);
+  check('pinned session appears in list', pinnedRow && pinnedRow.pinnedAt === pinned.pinnedAt);
+  const unpinned = await adapter.http('POST', '/api/sessions/pin', {
+    path: listed[0].path,
+    sessionId: target,
+    pinned: false,
+  });
+  check('unpin clears pinnedAt', unpinned && unpinned.ok === true && unpinned.pinnedAt === null);
+  const afterUnpin = await adapter.http('GET', '/api/sessions');
+  const unpinnedRow = afterUnpin.find((s) => s.sessionId === target);
+  check('unpinned session has no pinnedAt', unpinnedRow && unpinnedRow.pinnedAt == null);
+}
+
 // ---- mock incremental streaming ----
 {
   const created = await adapter.http('POST', '/api/sessions/new-detached', {});

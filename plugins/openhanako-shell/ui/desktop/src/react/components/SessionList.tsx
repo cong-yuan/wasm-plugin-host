@@ -320,13 +320,26 @@ function SessionListInner() {
       .catch(err => console.warn('[sessions] fetch project catalog failed:', err));
   }, [viewMode]);
 
+  // Focus once when the dialog opens — do NOT depend on dialog.value or every
+  // keystroke re-runs focus()+select() and destroys CJK IME / typing.
+  const projectNameDialogOpenKey = projectNameDialog
+    ? (projectNameDialog.kind === 'create-project'
+      ? 'create-project'
+      : projectNameDialog.kind === 'rename-project'
+        ? `rename-project:${projectNameDialog.projectId}`
+        : `rename-folder:${projectNameDialog.folderId}`)
+    : null;
+
   useEffect(() => {
-    if (!projectNameDialog) return;
+    if (!projectNameDialogOpenKey) return;
     window.setTimeout(() => {
-      projectNameInputRef.current?.focus();
-      projectNameInputRef.current?.select();
+      const input = projectNameInputRef.current;
+      if (!input) return;
+      input.focus();
+      // Only select prefilled rename text; create starts empty.
+      if (projectNameDialogOpenKey !== 'create-project') input.select();
     }, 0);
-  }, [projectNameDialog]);
+  }, [projectNameDialogOpenKey]);
 
   const handleCloseBrowserSession = useCallback(async (sessionPath: string) => {
     closingBrowserSessionsRef.current.add(sessionPath);
@@ -921,7 +934,9 @@ function ProjectNameDialog({
             }
             // Enter during IME confirm must not submit the create/rename form.
             if (event.key === 'Enter' && imeGuard.shouldBlockEnterSubmit(event)) {
-              if (imeGuard.shouldSwallowBlockedEnter(event)) event.preventDefault();
+              event.preventDefault();
+              // Consume ghost-Enter suppress flag when applicable.
+              imeGuard.shouldSwallowBlockedEnter(event);
             }
           }}
         />

@@ -1153,6 +1153,9 @@ function mockPermissionDefault(mode = 'ask') {
         }),
       );
       expect(mockState.pendingProjectId).toBeNull();
+      const staged = (mockState.sessions as Array<{ path: string; projectId?: string | null }>)
+        .find((s) => s.path === '/session/new.jsonl');
+      expect(staged?.projectId).toBe('project-hana');
     });
 
     it('surfaces the server error when pending session creation fails', async () => {
@@ -2256,7 +2259,7 @@ function mockPermissionDefault(mode = 'ask') {
         { path: '/a', sessionId: 'sess_a', pinnedAt: null },
         { path: '/b', sessionId: 'sess_b', pinnedAt: null },
       ];
-      mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true, pinnedAt, sessionId: 'sess_a' }));
+      mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true, pinnedAt, pinOrder: -1024, sessionId: 'sess_a' }));
 
       const ok = await pinSession('/a', true);
 
@@ -2266,8 +2269,8 @@ function mockPermissionDefault(mode = 'ask') {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: '/a', sessionId: 'sess_a', pinned: true }),
       });
-      expect((mockState.sessions as Array<{ path: string; sessionId: string; pinnedAt: string | null }>)).toEqual([
-        { path: '/a', sessionId: 'sess_a', pinnedAt },
+      expect((mockState.sessions as Array<{ path: string; sessionId: string; pinnedAt: string | null; pinOrder: number | null }>)).toEqual([
+        { path: '/a', sessionId: 'sess_a', pinnedAt, pinOrder: -1024 },
         { path: '/b', sessionId: 'sess_b', pinnedAt: null },
       ]);
     });

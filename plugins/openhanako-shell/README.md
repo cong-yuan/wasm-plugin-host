@@ -73,7 +73,7 @@ iframe 也用 `{ "source": "openhanako-studio-bridge", "type": "hello" }` 探测
 
 另外几条只为了让 `initApp` 在没有 Hana API 时也能走到 `loadSessions`：`GET /api/server/identity`、`GET /api/models`、`POST /api/ws-ticket`、`GET /api/agents/:id/config`、`GET /api/preferences/session-permission-default`。它们不是 agent 协议。
 
-会话周边会 404 的表面（archive/pin/rename、user-profile、desk/cron、preferences/models 等）由 shim 返回空/`{ ok: true }` 软桩，避免 harness 控制台噪音；不实现真实行为。
+会话周边会 404 的表面（archive/rename、user-profile、desk/cron、preferences/models 等）由 shim 返回空/`{ ok: true }` 软桩，避免 harness 控制台噪音；不实现真实行为。`/api/sessions/pin` 与 `/api/sessions/pin-order` 以及 `/api/session-projects*` 在本地 `localStorage` 持久化（Studio 无上游等价 API）。
 
 ## 前端来源
 

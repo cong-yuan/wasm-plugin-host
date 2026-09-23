@@ -52,6 +52,8 @@ return (function () {
   // ── Session project catalog (local; Studio has no Hana /api/session-projects) ──
   const CATALOG_KEY = 'openhanako.sessionProjectCatalog.v1';
   const ASSIGN_KEY = 'openhanako.sessionProjectAssignments.v1';
+  const PIN_KEY = 'openhanako.sessionPins.v1';
+  const PIN_ORDER_STEP = 1024;
   const UNCATEGORIZED_PROJECT_ID = 'cwd:';
 
   const trimName = (value) => {
@@ -61,23 +63,33 @@ return (function () {
 
   const nextId = (prefix) => prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
 
+  // Prefer localStorage when it works; keep an in-memory mirror so pin /
+  // project catalog still function in Node harnesses or private mode where
+  // Storage exists but setItem/getItem no-ops or throws.
+  const memoryStore = new Map();
   const readJson = (key, fallback) => {
     try {
-      if (typeof localStorage === 'undefined') return fallback;
-      const raw = localStorage.getItem(key);
-      if (!raw) return fallback;
-      const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === 'object' ? parsed : fallback;
-    } catch (_) {
-      return fallback;
-    }
+      if (typeof localStorage !== 'undefined') {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            memoryStore.set(key, parsed);
+            return parsed;
+          }
+        }
+      }
+    } catch (_) { /* fall through to memory */ }
+    if (memoryStore.has(key)) return memoryStore.get(key);
+    return fallback;
   };
 
   const writeJson = (key, value) => {
+    memoryStore.set(key, value);
     try {
       if (typeof localStorage === 'undefined') return;
       localStorage.setItem(key, JSON.stringify(value));
-    } catch (_) { /* quota / private mode */ }
+    } catch (_) { /* quota / private mode / broken Storage */ }
   };
 
 
@@ -172,6 +184,38 @@ return (function () {
     return out;
   };
   const saveAssignments = (map) => writeJson(ASSIGN_KEY, map || {});
+
+  const loadPins = () => {
+    const raw = readJson(PIN_KEY, {});
+    const out = {};
+    Object.keys(raw || {}).forEach((path) => {
+      const row = raw[path];
+      if (typeof path !== 'string' || !path || !row || typeof row !== 'object') return;
+      const pinnedAt = typeof row.pinnedAt === 'string' && row.pinnedAt ? row.pinnedAt : null;
+      if (!pinnedAt) return;
+      const pinOrder = Number.isFinite(row.pinOrder) ? row.pinOrder : null;
+      out[path] = { pinnedAt, pinOrder };
+    });
+    return out;
+  };
+  const savePins = (map) => writeJson(PIN_KEY, map || {});
+  const topPinOrder = (pins) => {
+    let min = Infinity;
+    Object.keys(pins || {}).forEach((path) => {
+      const order = pins[path] && pins[path].pinOrder;
+      if (Number.isFinite(order) && order < min) min = order;
+    });
+    return (Number.isFinite(min) ? min : 0) - PIN_ORDER_STEP;
+  };
+  const clearPinForSession = (sessionId) => {
+    if (!sessionId) return;
+    const path = pathFor(sessionId);
+    const pins = loadPins();
+    if (!pins[path] && !pins[String(sessionId)]) return;
+    delete pins[path];
+    delete pins[String(sessionId)];
+    savePins(pins);
+  };
 
   const nextOrder = (items) => items.reduce((max, item) => Math.max(max, Number(item.order) || 0), -1) + 1;
 
@@ -595,24 +639,29 @@ return (function () {
   };
 
 
-  const projection = (row) => ({
-    path: pathFor(row.id),
-    sessionId: row.id,
-    title: row.title || null,
-    firstMessage: row.title || '',
-    modified: new Date(row.updated_at || Date.now()).toISOString(),
-    created: new Date(row.updated_at || Date.now()).toISOString(),
-    messageCount: row.messages || 0,
-    cwd: null,
-    agentId: ASSISTANT_ID,
-    agentName: ASSISTANT_NAME,
-    modelId: api.DEFAULT_MODEL,
-    modelProvider: api.DEFAULT_PROVIDER,
-    pinnedAt: null,
-    live: row.live !== false,
-    busy: !!row.busy,
-    projectId: loadAssignments()[pathFor(row.id)] || null,
-  });
+  const projection = (row) => {
+    const path = pathFor(row.id);
+    const pin = loadPins()[path] || null;
+    return {
+      path,
+      sessionId: row.id,
+      title: row.title || null,
+      firstMessage: row.title || '',
+      modified: new Date(row.updated_at || Date.now()).toISOString(),
+      created: new Date(row.updated_at || Date.now()).toISOString(),
+      messageCount: row.messages || 0,
+      cwd: null,
+      agentId: ASSISTANT_ID,
+      agentName: ASSISTANT_NAME,
+      modelId: api.DEFAULT_MODEL,
+      modelProvider: api.DEFAULT_PROVIDER,
+      pinnedAt: pin ? pin.pinnedAt : null,
+      pinOrder: pin && Number.isFinite(pin.pinOrder) ? pin.pinOrder : null,
+      live: row.live !== false,
+      busy: !!row.busy,
+      projectId: loadAssignments()[path] || null,
+    };
+  };
 
   const sessionIdOf = (body, query) => {
     // Prefer path/sessionPath from the clicked row — sessionId alone has been
@@ -680,8 +729,6 @@ return (function () {
     if (pathname === '/api/sessions/cleanup' && verb === 'POST') return { ok: true };
     if (pathname === '/api/sessions/continue-deleted-agent' && verb === 'POST') return { ok: false };
     if (pathname === '/api/sessions/fresh-compact' && verb === 'POST') return { ok: true };
-    if (pathname === '/api/sessions/pin' && verb === 'POST') return { ok: true };
-    if (pathname === '/api/sessions/pin-order' && verb === 'POST') return { ok: true };
     if (pathname === '/api/sessions/rename' && verb === 'POST') return { ok: true };
     if (pathname === '/api/sessions/restore' && verb === 'POST') return { ok: true };
     if (pathname === '/api/sessions/todos/complete' && verb === 'POST') return { ok: true };
@@ -727,6 +774,13 @@ return (function () {
     try {
       await api.dispose(sessionId);
       disposedIds.add(sessionId);
+      clearPinForSession(sessionId);
+      const assignments = loadAssignments();
+      const path = pathFor(sessionId);
+      if (assignments[path]) {
+        delete assignments[path];
+        saveAssignments(assignments);
+      }
       return { ok: true, sessionId, removed: true };
     } catch (err) {
       return {
@@ -981,6 +1035,46 @@ return (function () {
         currentModelName: assigned.modelId,
         currentModelProvider: assigned.provider,
       };
+    }
+
+    if (pathname === '/api/sessions/pin' && verb === 'POST') {
+      const sessionId = sessionIdOf(body, query);
+      if (!sessionId) return { error: 'missing session' };
+      const path = pathFor(sessionId);
+      const pinned = !(body && body.pinned === false);
+      const pins = loadPins();
+      let pinnedAt = null;
+      let pinOrder = null;
+      if (pinned) {
+        pinnedAt = new Date().toISOString();
+        pinOrder = topPinOrder(pins);
+        pins[path] = { pinnedAt, pinOrder };
+      } else {
+        delete pins[path];
+      }
+      savePins(pins);
+      return { ok: true, sessionId, path, pinnedAt, pinOrder };
+    }
+
+    if (pathname === '/api/sessions/pin-order' && verb === 'POST') {
+      const sessionIds = Array.isArray(body && body.sessionIds)
+        ? body.sessionIds.filter((id) => typeof id === 'string' && id.trim())
+        : [];
+      if (sessionIds.length === 0) return { error: 'sessionIds required' };
+      const pins = loadPins();
+      const orders = [];
+      sessionIds.forEach((sessionId, index) => {
+        const path = pathFor(sessionId);
+        const existing = pins[path];
+        const pinnedAt = existing && existing.pinnedAt
+          ? existing.pinnedAt
+          : new Date().toISOString();
+        const pinOrder = (index + 1) * PIN_ORDER_STEP;
+        pins[path] = { pinnedAt, pinOrder };
+        orders.push({ sessionId, pinOrder });
+      });
+      savePins(pins);
+      return { ok: true, orders };
     }
 
     if (pathname === '/api/sessions/archive' && verb === 'POST') {
