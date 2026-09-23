@@ -232,24 +232,24 @@ return (function () {
 
   // Diff assistant growth against the previous snapshot and emit progress.
   // Studio itself has no token channel; this is best-effort over transcript.
-  const emitDiff = async (prev, next, onProgress, state) => {
+  const emitDiff = (prev, next, onProgress, state) => {
     if (typeof onProgress !== 'function') return;
     const reasoning = (next && next.reasoning) || '';
     const text = (next && next.text) || '';
     if (reasoning.length > state.reasoning.length) {
       if (!state.thinking) {
-        await onProgress({ kind: 'thinking_start' });
+        onProgress({ kind: 'thinking_start' });
         state.thinking = true;
       }
-      await onProgress({ kind: 'thinking_delta', delta: reasoning.slice(state.reasoning.length) });
+      onProgress({ kind: 'thinking_delta', delta: reasoning.slice(state.reasoning.length) });
       state.reasoning = reasoning;
     }
     if (text.length > state.text.length) {
       if (state.thinking) {
-        await onProgress({ kind: 'thinking_end' });
+        onProgress({ kind: 'thinking_end' });
         state.thinking = false;
       }
-      await onProgress({ kind: 'text_delta', delta: text.slice(state.text.length) });
+      onProgress({ kind: 'text_delta', delta: text.slice(state.text.length) });
       state.text = text;
     }
   };
@@ -262,9 +262,9 @@ return (function () {
     const state = { text: '', reasoning: '', thinking: false };
     let stopped = false;
 
-    const applyAssistant = async (assistant) => {
+    const applyAssistant = (assistant) => {
       if (!assistant) return;
-      await emitDiff(null, assistant, onProgress, state);
+      emitDiff(null, assistant, onProgress, state);
     };
 
     const pollOnce = async () => {
@@ -274,7 +274,7 @@ return (function () {
       // (previous turn), then prefix-slices A2 against A1 → A1+A2 glue /
       // mid-message corruption like 「要干活直接说。件（`write_file`）」.
       if (rows.length <= beforeCount) return;
-      await applyAssistant(lastAssistant(rows.slice(beforeCount)));
+      applyAssistant(lastAssistant(rows.slice(beforeCount)));
     };
 
     // Prefer live studio://chat-partial events (emitted while send_message
@@ -285,7 +285,7 @@ return (function () {
       try {
         unlistenPartial = await tauri.listen('studio://chat-partial', (payload) => {
           if (!payload || payload.agentId !== agentId) return;
-          void applyAssistant({
+          applyAssistant({
             role: 'assistant',
             text: typeof payload.text === 'string' ? payload.text : '',
             reasoning: typeof payload.reasoning === 'string' ? payload.reasoning : '',

@@ -1,5 +1,6 @@
-import { memo } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { LinkOpenContext } from '../../utils/link-open';
+import { renderMarkdown } from '../../utils/markdown';
 import { MarkdownContent } from './MarkdownContent';
 import styles from './Chat.module.css';
 
@@ -16,9 +17,20 @@ function cx(...parts: Array<string | false | null | undefined>): string | undefi
   return value || undefined;
 }
 
-/** While streaming, fade the newest graphemes so growth reads as a typewriter. */
+/** Graphemes per frame while catching up to the latest streamed source. */
+const CHARS_PER_TICK = 3;
+/** ~60fps typewriter cadence. */
+const TICK_MS = 16;
+/** Fade the newest graphemes at the stream tip. */
 const STREAM_TAIL_FADE = 10;
 
+/**
+ * Typewriter-aware markdown renderer.
+ *
+ * Upstream may deliver large transcript jumps; while `active` we reveal
+ * `source` gradually and re-render markdown from the visible prefix so the
+ * bubble feels like a real stream instead of a one-shot dump.
+ */
 export const StreamingMarkdownContent = memo(function StreamingMarkdownContent({
   html,
   source,
@@ -26,13 +38,52 @@ export const StreamingMarkdownContent = memo(function StreamingMarkdownContent({
   className,
   linkContext,
 }: Props) {
-  const shouldAnimateStream = !!source && active;
+  const fullSource = source ?? '';
+  const [visibleSource, setVisibleSource] = useState(active ? '' : fullSource);
+  const visibleRef = useRef(visibleSource);
+  visibleRef.current = visibleSource;
+
+  useEffect(() => {
+    if (!active) {
+      setVisibleSource(fullSource);
+      return;
+    }
+
+    // If the upstream rewound / replaced the text, restart the reveal.
+    if (!fullSource.startsWith(visibleRef.current)) {
+      setVisibleSource('');
+    }
+
+    if (visibleRef.current.length >= fullSource.length) {
+      setVisibleSource(fullSource);
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setVisibleSource((prev) => {
+        if (!fullSource.startsWith(prev)) return fullSource.slice(0, CHARS_PER_TICK);
+        if (prev.length >= fullSource.length) return fullSource;
+        return fullSource.slice(0, Math.min(fullSource.length, prev.length + CHARS_PER_TICK));
+      });
+    }, TICK_MS);
+
+    return () => window.clearInterval(timer);
+  }, [fullSource, active]);
+
+  const displayHtml = useMemo(() => {
+    if (!active) return html;
+    if (!fullSource) return html;
+    if (visibleSource.length >= fullSource.length) return html;
+    return renderMarkdown(visibleSource);
+  }, [active, html, fullSource, visibleSource]);
+
+  const catchingUp = active && !!fullSource && visibleSource.length < fullSource.length;
 
   return (
     <MarkdownContent
-      html={html}
-      className={cx(className, shouldAnimateStream && styles.streamMarkdownBlockEnter)}
-      tailFadeCount={active ? STREAM_TAIL_FADE : 0}
+      html={displayHtml}
+      className={cx(className, active && styles.streamMarkdownBlockEnter)}
+      tailFadeCount={active || catchingUp ? STREAM_TAIL_FADE : 0}
       linkContext={linkContext}
     />
   );

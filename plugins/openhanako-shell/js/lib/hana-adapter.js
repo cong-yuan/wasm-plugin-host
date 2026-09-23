@@ -553,29 +553,6 @@ return (function () {
   };
 
 
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  // Reveal assistant text in small slices so the openhanako UI gets a
-  // typewriter stream even when Studio/transcript only jumps in large chunks.
-  const TYPEWRITER_CHARS = 4;
-  const TYPEWRITER_MS = 14;
-  const pushTextDeltaTypewriter = async (push, sessionId, sessionPath, delta) => {
-    const text = typeof delta === 'string' ? delta : '';
-    if (!text) {
-      push({ type: 'text_delta', sessionId, sessionPath, delta: '' });
-      return;
-    }
-    for (let i = 0; i < text.length; i += TYPEWRITER_CHARS) {
-      push({
-        type: 'text_delta',
-        sessionId,
-        sessionPath,
-        delta: text.slice(i, i + TYPEWRITER_CHARS),
-      });
-      if (i + TYPEWRITER_CHARS < text.length) await sleep(TYPEWRITER_MS);
-    }
-  };
-
   const ws = async (message, emit) => {
     const msg = message || {};
     const type = msg.type;
@@ -646,7 +623,7 @@ return (function () {
           // Steer is fire-and-forget at a step boundary; surface a short ack.
           push({ type: 'text_delta', sessionId: liveId, sessionPath: livePath, delta: '' });
         } else {
-          await api.sendWithProgress(liveId, text, msgId, async (progress) => {
+          await api.sendWithProgress(liveId, text, msgId, (progress) => {
             const kind = progress && progress.kind;
             if (kind === 'thinking_start') {
               push({ type: 'thinking_start', sessionId: liveId, sessionPath: livePath });
@@ -660,12 +637,12 @@ return (function () {
             } else if (kind === 'thinking_end') {
               push({ type: 'thinking_end', sessionId: liveId, sessionPath: livePath });
             } else if (kind === 'text_delta') {
-              await pushTextDeltaTypewriter(
-                push,
-                liveId,
-                livePath,
-                progress.delta || '',
-              );
+              push({
+                type: 'text_delta',
+                sessionId: liveId,
+                sessionPath: livePath,
+                delta: progress.delta || '',
+              });
             }
           });
         }
