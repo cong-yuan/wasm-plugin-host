@@ -12,6 +12,7 @@ import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { formatSessionDate } from '../utils/format';
+import { createImeCompositionGuard } from '../utils/ime-composition';
 import { switchSession, archiveSession, renameSession, pinSession, createNewSession, reorderPinnedSessions } from '../stores/session-actions';
 import { locateSearchHit } from '../stores/chat-find-actions';
 import { setBrowserStateForPath } from '../stores/browser-slice';
@@ -880,6 +881,8 @@ function ProjectNameDialog({
   onClose: () => void;
 }) {
   const { t } = useI18n();
+  const imeGuardRef = useRef(createImeCompositionGuard());
+  const imeGuard = imeGuardRef.current;
   const titleKey = dialog.kind === 'create-project'
     ? 'sidebar.projects.newProject'
     : dialog.kind === 'rename-folder'
@@ -909,8 +912,17 @@ function ProjectNameDialog({
           value={dialog.value}
           placeholder={t(placeholderKey)}
           onChange={(event) => onChange(event.target.value)}
+          onCompositionStart={() => { imeGuard.onCompositionStart(); }}
+          onCompositionEnd={() => { imeGuard.onCompositionEnd(); }}
           onKeyDown={(event) => {
-            if (event.key === 'Escape') onClose();
+            if (event.key === 'Escape') {
+              onClose();
+              return;
+            }
+            // Enter during IME confirm must not submit the create/rename form.
+            if (event.key === 'Enter' && imeGuard.shouldBlockEnterSubmit(event)) {
+              if (imeGuard.shouldSwallowBlockedEnter(event)) event.preventDefault();
+            }
           }}
         />
         <div className={styles.projectNameDialogActions}>

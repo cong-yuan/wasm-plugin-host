@@ -13,6 +13,7 @@ import {
   type FloatingRect,
 } from './position';
 import styles from './FloatingInput.module.css';
+import { createImeCompositionGuard } from '../../utils/ime-composition';
 
 const CLOSE_DURATION_MS = 150;
 const FALLBACK_HEIGHT = 56;
@@ -64,7 +65,8 @@ export function FloatingInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const closeTimerRef = useRef<number | null>(null);
   const openFrameRef = useRef<number | null>(null);
-  const isComposingRef = useRef(false);
+  const imeGuardRef = useRef(createImeCompositionGuard());
+  const imeGuard = imeGuardRef.current;
   const [rendered, setRendered] = useState(open && !!anchorRect);
   const [phase, setPhase] = useState<'opening' | 'open' | 'closing'>(open ? 'open' : 'closing');
   const [viewport, setViewport] = useState<ViewportSize>(() => getViewportSize());
@@ -159,7 +161,11 @@ export function FloatingInput({
       onClose?.();
       return;
     }
-    if (event.key !== 'Enter' || event.shiftKey || isComposingRef.current || event.nativeEvent.isComposing) return;
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    if (imeGuard.shouldBlockEnterSubmit(event)) {
+      if (imeGuard.shouldSwallowBlockedEnter(event)) event.preventDefault();
+      return;
+    }
     event.preventDefault();
     submit();
   }, [onClose, submit]);
@@ -198,8 +204,8 @@ export function FloatingInput({
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={handleKeyDown}
-          onCompositionStart={() => { isComposingRef.current = true; }}
-          onCompositionEnd={() => { isComposingRef.current = false; }}
+          onCompositionStart={() => { imeGuard.onCompositionStart(); }}
+          onCompositionEnd={() => { imeGuard.onCompositionEnd(); }}
         />
         <button
           type="submit"

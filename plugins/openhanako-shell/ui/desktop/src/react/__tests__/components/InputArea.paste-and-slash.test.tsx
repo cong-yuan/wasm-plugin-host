@@ -609,6 +609,82 @@ describe('InputArea paste and slash menu behavior', () => {
     expect(mocks.splitListItem).not.toHaveBeenCalled();
   });
 
+  it('does not send on Enter while IME is composing', () => {
+    mocks.editorText = 'nihao';
+    render(React.createElement(InputArea));
+
+    const editorRoot = screen.getByTestId('editor').parentElement;
+    expect(editorRoot).toBeTruthy();
+    fireEvent.compositionStart(editorRoot!);
+
+    const preventDefault = vi.fn();
+    const handled = tiptapKeyDownHandler()?.(null, {
+      key: 'Enter',
+      shiftKey: false,
+      isComposing: true,
+      keyCode: 229,
+      defaultPrevented: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(false);
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(mocks.wsSend).not.toHaveBeenCalled();
+  });
+
+  it('does not send on the ghost Enter after compositionend (Chromium IME race)', () => {
+    mocks.editorText = '你好';
+    render(React.createElement(InputArea));
+
+    const editorRoot = screen.getByTestId('editor').parentElement;
+    expect(editorRoot).toBeTruthy();
+    fireEvent.compositionStart(editorRoot!);
+    fireEvent.compositionEnd(editorRoot!);
+
+    const preventDefault = vi.fn();
+    const handled = tiptapKeyDownHandler()?.(null, {
+      key: 'Enter',
+      shiftKey: false,
+      isComposing: false,
+      keyCode: 13,
+      defaultPrevented: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(true);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(mocks.wsSend).not.toHaveBeenCalled();
+  });
+
+  it('still sends on Enter after IME composition has fully settled', async () => {
+    mocks.editorText = '你好';
+    render(React.createElement(InputArea));
+
+    const editorRoot = screen.getByTestId('editor').parentElement!;
+    fireEvent.compositionStart(editorRoot);
+    fireEvent.compositionEnd(editorRoot);
+    // Flush the guard's setTimeout(0) that clears the post-compositionend suppress flag.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const preventDefault = vi.fn();
+    const handled = tiptapKeyDownHandler()?.(null, {
+      key: 'Enter',
+      shiftKey: false,
+      isComposing: false,
+      keyCode: 13,
+      defaultPrevented: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(true);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(mocks.wsSend).toHaveBeenCalled();
+    });
+  });
+
   it('handles welcome Enter inside TipTap before the editor inserts a newline', async () => {
     seedInputState({
       currentSessionPath: null,

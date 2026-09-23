@@ -24,6 +24,7 @@ import {
   normalizeQuickChatPreferences,
 } from '../../../../shared/quick-chat-preferences.ts';
 import { shouldResetQuickChatSessionAfterIdle } from './quick-chat-lifecycle';
+import { createImeCompositionGuard } from '../utils/ime-composition';
 import {
   pickQuickChatRuntimeAgent,
   resolveQuickChatPermissionMode,
@@ -179,7 +180,8 @@ export function QuickChatApp() {
   const reuseTimeoutMinutesRef = useRef(DEFAULT_QUICK_CHAT_REUSE_TIMEOUT_MINUTES);
   const isStreamingRef = useRef(false);
   const sendingRef = useRef(false);
-  const isComposingRef = useRef(false);
+  const imeGuardRef = useRef(createImeCompositionGuard());
+  const imeGuard = imeGuardRef.current;
 
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) || agents[0] || null,
@@ -775,13 +777,16 @@ export function QuickChatApp() {
             onChange={(event) => setDraft(event.target.value)}
             onPaste={handlePaste}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey && !isComposingRef.current && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                void send();
+              if (event.key !== 'Enter' || event.shiftKey) return;
+              if (imeGuard.shouldBlockEnterSubmit(event)) {
+                if (imeGuard.shouldSwallowBlockedEnter(event)) event.preventDefault();
+                return;
               }
+              event.preventDefault();
+              void send();
             }}
-            onCompositionStart={() => { isComposingRef.current = true; }}
-            onCompositionEnd={() => { isComposingRef.current = false; }}
+            onCompositionStart={() => { imeGuard.onCompositionStart(); }}
+            onCompositionEnd={() => { imeGuard.onCompositionEnd(); }}
             placeholder={t('input.placeholder')}
             spellCheck={false}
             rows={expanded ? 2 : 3}

@@ -64,6 +64,7 @@ import {
 import { openProviderModelSettings } from '../utils/model-settings-navigation';
 import { shouldShowThinkingControl } from '../utils/model-thinking';
 import { shouldAllowInputFocus } from '../utils/input-focus-policy';
+import { createImeCompositionGuard } from '../utils/ime-composition';
 import { calculateInputCardBottomInset, parseCssPixels } from '../utils/input-card-layout';
 import { buildWaveformFromBlob, buildWaveformFromPcmChunks } from '../utils/audio-waveform';
 import { prepareChatImageUpload } from '../utils/chat-image-upload-compression';
@@ -260,6 +261,8 @@ interface InputKeyEvent {
   shiftKey: boolean;
   defaultPrevented?: boolean;
   isComposing?: boolean;
+  keyCode?: number;
+  which?: number;
   preventDefault: () => void;
 }
 
@@ -516,7 +519,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const [visibleSessionConfirmation, setVisibleSessionConfirmation] = useState<SessionConfirmationBlock | null>(null);
   const [sessionConfirmationExiting, setSessionConfirmationExiting] = useState(false);
 
-  const isComposing = useRef(false);
+  const imeGuardRef = useRef(createImeCompositionGuard());
+  const imeGuard = imeGuardRef.current;
   const pasteHandlerRef = useRef<(event: ClipboardEvent) => boolean>(() => false);
   const keyDownHandlerRef = useRef<(event: KeyboardEvent) => boolean>(() => false);
   const beforeInputHandlerRef = useRef<(event: InputEvent) => boolean>(() => false);
@@ -2111,6 +2115,16 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   }, [isStreaming]);
 
   // ── Key handler ──
+  const handleImeBlockedEnter = (e: InputKeyEvent): boolean => {
+    // Live composition: do not preventDefault so the IME can confirm.
+    // Post-compositionend ghost Enter: swallow so TipTap does not insert a newline.
+    if (imeGuard.shouldSwallowBlockedEnter(e)) {
+      e.preventDefault();
+      return true;
+    }
+    return false;
+  };
+
   const handleEditorKeyDown = useCallback((e: InputKeyEvent): boolean => {
     if (inputLocked) {
       e.preventDefault();
@@ -2137,6 +2151,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         return true;
       }
       if ((e.key === 'Tab' || e.key === 'Enter') && mentionItems.length > 0) {
+        if (e.key === 'Enter' && imeGuard.shouldBlockEnterSubmit(e)) {
+          return handleImeBlockedEnter(e);
+        }
         e.preventDefault();
         const item = mentionItems[fileSelected];
         if (item) handleMentionSelect(item);
@@ -2152,6 +2169,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashSelected(i => (i + 1) % filteredCommands.length); return true; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSlashSelected(i => (i - 1 + filteredCommands.length) % filteredCommands.length); return true; }
       if (e.key === 'Tab' || e.key === 'Enter') {
+        if (e.key === 'Enter' && imeGuard.shouldBlockEnterSubmit(e)) {
+          return handleImeBlockedEnter(e);
+        }
         e.preventDefault();
         const cmd = filteredCommands[slashSelected] || filteredCommands[0];
         if (cmd) handleSlashSelect(cmd);
@@ -2159,12 +2179,15 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       }
       if (e.key === 'Escape') { e.preventDefault(); dismissSlashMenu(); return true; }
     }
-    if (e.key === 'Enter' && e.shiftKey && !isComposing.current && !e.isComposing && editor?.isActive('listItem')) {
+    if (e.key === 'Enter' && e.shiftKey && !imeGuard.shouldBlockEnterSubmit(e) && editor?.isActive('listItem')) {
       e.preventDefault();
       editor.commands.splitListItem('listItem');
       return true;
     }
-    if (e.key === 'Enter' && !e.shiftKey && !isComposing.current && !e.isComposing) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      if (imeGuard.shouldBlockEnterSubmit(e)) {
+        return handleImeBlockedEnter(e);
+      }
       e.preventDefault();
       if (isStreaming && hasContent) handleSteer(); else handleSend();
       return true;
@@ -2200,6 +2223,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       shiftKey: false,
       defaultPrevented: event.defaultPrevented,
       isComposing: event.isComposing,
+      keyCode: (event as InputEvent & { keyCode?: number }).keyCode,
       preventDefault: () => event.preventDefault(),
     });
   };
@@ -2299,8 +2323,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
             onKeyDown={(event) => {
               if (!event.defaultPrevented) handleEditorKeyDown(event);
             }}
-            onCompositionStart={() => { isComposing.current = true; }}
-            onCompositionEnd={() => { isComposing.current = false; }}
+            onCompositionStart={() => { imeGuard.onCompositionStart(); }}
+            onCompositionEnd={() => { imeGuard.onCompositionEnd(); }}
           >
             <EditorContent editor={editor} />
           </div>
