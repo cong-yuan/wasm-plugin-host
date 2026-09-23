@@ -6,8 +6,8 @@
 // not treat every session as a different assistant.
 //
 // For prompts, progress is pushed through an optional `emit` callback as soon
-// as transcript growth is observed — Studio has no token Tauri channel, so the
-// parent polls `transcript` while `send_message` is in flight.
+// as Studio emits `studio://chat-partial` (live assistant/chunk assembly) or
+// transcript growth is observed as a fallback.
 return (function () {
   const api = studio.require('lib/api');
 
@@ -88,118 +88,13 @@ return (function () {
   // Soft stubs for openhanako surfaces that are not part of the Studio agent
   // vertical slice. Returning empty/ok stops noisy 404s in the harness and
   // iframe console without pretending the feature exists.
-
-  const modelIdOf = (provider, entry) => {
-    if (provider === 'mock') {
-      return (entry && entry.model) || api.DEFAULT_MODEL;
-    }
-    // Never invent a model named after the provider — that was confusing empty
-    // configs with a fake selectable model.
-    if (entry && typeof entry === 'object' && entry.model) return entry.model;
-    return null;
-  };
-
-  const flattenModels = (cfg) => {
-    const providers = (cfg && cfg.providers) || {};
-    const lists = (cfg && cfg.model_lists) || {};
-    const current = (cfg && cfg.current) || {};
-    const curProvider = current.provider || api.DEFAULT_PROVIDER;
-    const curModel = current.model || api.DEFAULT_MODEL;
-    const models = [];
-    const seen = new Set();
-    for (const [provider, entry] of Object.entries(providers)) {
-      const ids = [];
-      const listed = lists[provider];
-      if (Array.isArray(listed) && listed.length) {
-        for (const item of listed) {
-          if (typeof item === 'string') ids.push(item);
-          else if (item && typeof item === 'object' && item.id) ids.push(String(item.id));
-        }
-      }
-      const primary = modelIdOf(provider, entry);
-      if (primary && !ids.includes(primary)) ids.unshift(primary);
-      // Drop phantom "model named like provider" leftovers from older builds.
-      for (let i = ids.length - 1; i >= 0; i -= 1) {
-        if (ids[i] === provider && primary !== provider) ids.splice(i, 1);
-      }
-      for (const id of ids) {
-        const key = provider + '::' + id;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        models.push({
-          id,
-          name: id,
-          provider,
-          isCurrent: id === curModel && provider === curProvider,
-        });
-      }
-    }
-    if (!models.length) {
-      models.push({
-        id: api.DEFAULT_MODEL,
-        name: api.DEFAULT_MODEL,
-        provider: api.DEFAULT_PROVIDER,
-        isCurrent: true,
-      });
-    }
-    const active = models.find((m) => m.isCurrent) || models[0];
-    return { models, active, current: active ? active.id : api.DEFAULT_MODEL };
-  };
-
-  const providersConfigView = (cfg) => {
-    const providers = (cfg && cfg.providers) || {};
-    const lists = (cfg && cfg.model_lists) || {};
-    const out = {};
-    for (const [id, entry] of Object.entries(providers)) {
-      const e = entry && typeof entry === 'object' ? entry : {};
-      const models = Array.isArray(lists[id]) && lists[id].length
-        ? lists[id]
-        : [modelIdOf(id, e)];
-      out[id] = {
-        baseUrl: e.base_url || e.baseUrl || '',
-        api: e.api || 'openai-completions',
-        apiKey: e.api_key ? '********' : '',
-        models,
-        enabled: true,
-      };
-    }
-    return out;
-  };
-
-  const providersSummaryView = (cfg) => {
-    const providers = (cfg && cfg.providers) || {};
-    const lists = (cfg && cfg.model_lists) || {};
-    const registered = new Set((cfg && cfg.registered) || []);
-    const out = {};
-    for (const [id, entry] of Object.entries(providers)) {
-      const e = entry && typeof entry === 'object' ? entry : {};
-      const models = Array.isArray(lists[id]) && lists[id].length
-        ? lists[id]
-        : [modelIdOf(id, e)];
-      const hasKey = !!(e.api_key || e.apiKey);
-      out[id] = {
-        type: 'api-key',
-        auth_type: id === 'mock' ? 'none' : 'api-key',
-        display_name: id,
-        base_url: e.base_url || e.baseUrl || '',
-        api: e.api || 'openai-completions',
-        api_key: hasKey ? '********' : '',
-        models,
-        custom_models: [],
-        has_credentials: id === 'mock' ? true : hasKey,
-        supports_oauth: false,
-        is_coding_plan: false,
-        is_configured: id === 'mock' ? true : (hasKey || registered.has(id)),
-        can_delete: id !== 'mock',
-        config_status: id === 'mock' || hasKey || registered.has(id) ? 'ok' : 'needs_setup',
-        config_error: null,
-        missing_fields: [],
-      };
-    }
-    return out;
-  };
-
   const stubHttp = (pathname, verb) => {
+    if (pathname === '/api/preferences/models' && verb === 'GET') {
+      return {
+        models: [{ id: api.DEFAULT_MODEL, name: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER }],
+        current: api.DEFAULT_MODEL,
+      };
+    }
     if (pathname === '/api/session-thinking-level' && (verb === 'GET' || verb === 'POST')) {
       return { level: 'off' };
     }
@@ -214,6 +109,9 @@ return (function () {
     }
     if (pathname === '/api/agents/switch' && verb === 'POST') {
       return { ok: true, agentId: ASSISTANT_ID };
+    }
+    if (pathname === '/api/providers/fetch-models' && verb === 'POST') {
+      return { models: [{ id: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER }] };
     }
     if (pathname === '/api/models/auxiliary-vision' && verb === 'GET') {
       return { available: false };
@@ -236,7 +134,15 @@ return (function () {
     return null;
   };
 
+  // Ids we successfully disposed this process — refuse silent resume so a
+  // deleted/archived session cannot sticky-reattach via ensureLive.
+  const disposedIds = new Set();
+
   const ensureLive = async (sessionId) => {
+    if (!sessionId) throw new Error('missing session');
+    if (disposedIds.has(sessionId)) {
+      throw new Error('session was archived/deleted');
+    }
     const rows = await api.sessions();
     const row = rows.find((s) => s.id === sessionId);
     // Missing from the list: may still be on disk (stale UI id) — try resume
@@ -244,26 +150,30 @@ return (function () {
     if (!row) {
       try {
         const resumed = await api.resume(sessionId);
-        return resumed || sessionId;
-      } catch (_) {
-        return sessionId;
+        if (!resumed) throw new Error('session not found');
+        return resumed;
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        throw new Error(msg || 'session not found');
       }
     }
     if (row.live === false) {
       const resumed = await api.resume(sessionId);
-      return resumed || sessionId;
+      if (!resumed) throw new Error('session resume failed');
+      return resumed;
     }
     return sessionId;
   };
 
   const sessionIdFromBody = (body, query) => sessionIdOf(body, query);
 
-  /** Archive/delete in openhanako UI must actually dispose the Studio agent. */
+  /** Archive/delete must dispose the driver AND purge the JSONL (Studio side). */
   const disposeSession = async (sessionId) => {
     if (!sessionId) return { ok: false, error: 'missing session' };
     try {
       await api.dispose(sessionId);
-      return { ok: true, sessionId };
+      disposedIds.add(sessionId);
+      return { ok: true, sessionId, removed: true };
     } catch (err) {
       return {
         ok: false,
@@ -295,102 +205,12 @@ return (function () {
     }
 
     if (pathname === '/api/config' && verb === 'GET') {
-      const cfg = await api.llmConfig();
       return {
         locale: 'zh-CN',
         editor: null,
         studioBridge: api.mode(),
-        providers: providersConfigView(cfg),
-        llm: {
-          current: cfg.current,
-          default: cfg.default,
-          registered: cfg.registered,
-          restartRequired: !!cfg.restart_required,
-        },
+        providers: { mock: { models: [{ id: api.DEFAULT_MODEL, name: api.DEFAULT_MODEL }] } },
       };
-    }
-
-    if (pathname === '/api/config' && verb === 'PUT') {
-      const patch = {};
-      if (body && body.providers && typeof body.providers === 'object') {
-        const providers = {};
-        const lists = {};
-        for (const [id, entry] of Object.entries(body.providers)) {
-          if (entry == null) {
-            providers[id] = null;
-            continue;
-          }
-          if (typeof entry !== 'object') continue;
-          const normalized = { ...entry };
-          if (normalized.baseUrl && !normalized.base_url) normalized.base_url = normalized.baseUrl;
-          if (normalized.apiKey && !normalized.api_key) normalized.api_key = normalized.apiKey;
-          delete normalized.baseUrl;
-          delete normalized.apiKey;
-          if (Array.isArray(normalized.models)) {
-            lists[id] = normalized.models;
-            delete normalized.models;
-          }
-          providers[id] = normalized;
-        }
-        patch.providers = providers;
-        if (Object.keys(lists).length) patch.model_lists = lists;
-      }
-      const out = await api.setLlmConfig(patch);
-      let syncError = null;
-      try {
-        if (api.syncAdapters) await api.syncAdapters();
-      } catch (err) {
-        syncError = String((err && err.message) || err);
-      }
-      return {
-        ok: true,
-        providers: providersConfigView(out),
-        restartRequired: !!out.restart_required,
-        syncError,
-      };
-    }
-
-    if (pathname === '/api/providers/summary' && verb === 'GET') {
-      const cfg = await api.llmConfig();
-      return { providers: providersSummaryView(cfg) };
-    }
-
-    if (pathname === '/api/providers/fetch-models' && verb === 'POST') {
-      const name = (body && (body.name || body.provider || body.id)) || '';
-      const baseUrl = (body && (body.base_url || body.baseUrl)) || '';
-      const apiKey = (body && (body.api_key || body.apiKey)) || '';
-      try {
-        const out = await api.fetchModels(name, baseUrl, apiKey);
-        const models = Array.isArray(out && out.models) ? out.models : [];
-        return { models, provider: name };
-      } catch (err) {
-        return { models: [], error: String((err && err.message) || err) };
-      }
-    }
-
-    if (pathname.startsWith('/api/providers/') && pathname.endsWith('/discovered-models') && verb === 'GET') {
-      const name = decodeURIComponent(pathname.slice('/api/providers/'.length, -'/discovered-models'.length));
-      const cfg = await api.llmConfig();
-      const discovered = (cfg.discovered && cfg.discovered[name]) || [];
-      return { models: Array.isArray(discovered) ? discovered : [] };
-    }
-
-    if (pathname === '/api/providers/test' && verb === 'POST') {
-      const cfg = await api.llmConfig();
-      const name = (body && (body.name || body.provider || body.id)) || '';
-      const entry = (cfg.providers && cfg.providers[name]) || {};
-      const registered = (cfg.registered || []).includes(name);
-      // Prefer live registration; otherwise require credentials so the UI can
-      // distinguish "saved but not mounted" from "incomplete".
-      if (name === 'mock' || registered || entry.api_key || entry.apiKey) {
-        return {
-          ok: true,
-          message: registered || name === 'mock'
-            ? 'registered'
-            : 'saved (adapters sync on save; retry if still unavailable)',
-        };
-      }
-      return { ok: false, error: 'missing api_key' };
     }
 
     if (pathname === '/api/server/identity' && verb === 'GET') {
@@ -410,45 +230,15 @@ return (function () {
     }
 
     if (pathname === '/api/models' && verb === 'GET') {
-      const cfg = await api.llmConfig();
-      const flat = flattenModels(cfg);
       return {
-        models: flat.models,
-        current: flat.current,
-        activeModel: { id: flat.active.id, provider: flat.active.provider },
-      };
-    }
-
-    if (pathname === '/api/preferences/models' && (verb === 'GET' || verb === 'PUT')) {
-      const cfg = verb === 'PUT'
-        ? await api.setLlmConfig(
-          body && body.current
-            ? { current: body.current, default: (body.current && body.current.provider) || body.default }
-            : (body || {}),
-        )
-        : await api.llmConfig();
-      const flat = flattenModels(cfg);
-      return {
-        models: flat.models,
-        current: flat.current,
-        activeModel: { id: flat.active.id, provider: flat.active.provider },
-      };
-    }
-
-    if ((pathname === '/api/models/set' || pathname === '/api/models/switch') && verb === 'POST') {
-      const provider = (body && (body.provider || body.providerId)) || api.DEFAULT_PROVIDER;
-      const modelId = (body && (body.modelId || body.model || body.id)) || api.DEFAULT_MODEL;
-      const out = await api.setSelection(provider, modelId);
-      const cfg = out && out.providers ? out : await api.llmConfig();
-      const flat = flattenModels({ ...cfg, current: { provider, model: modelId } });
-      return {
-        ok: true,
-        model: { id: modelId, provider, name: modelId, isCurrent: true, available: true },
-        models: flat.models,
-        thinkingLevel: undefined,
-        note: pathname.endsWith('/switch')
-          ? 'studio: selection updated for new sessions (live agent route unchanged)'
-          : undefined,
+        models: [{
+          id: api.DEFAULT_MODEL,
+          name: api.DEFAULT_MODEL,
+          provider: api.DEFAULT_PROVIDER,
+          isCurrent: true,
+        }],
+        current: api.DEFAULT_MODEL,
+        activeModel: { id: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER },
       };
     }
 
@@ -482,8 +272,7 @@ return (function () {
     }
 
     if ((pathname === '/api/sessions/new' || pathname === '/api/sessions/new-detached') && verb === 'POST') {
-      const pref = await api.selection();
-      const id = await api.create(pref.provider, pref.model);
+      const id = await api.create(api.DEFAULT_PROVIDER, api.DEFAULT_MODEL);
       return {
         ok: true,
         path: pathFor(id),
@@ -510,9 +299,9 @@ return (function () {
         workspaceFolders: [],
         cwd: null,
         permissionMode: 'ask',
-        currentModelId: (await api.selection()).model,
-        currentModelName: (await api.selection()).model,
-        currentModelProvider: (await api.selection()).provider,
+        currentModelId: api.DEFAULT_MODEL,
+        currentModelName: api.DEFAULT_MODEL,
+        currentModelProvider: api.DEFAULT_PROVIDER,
       };
     }
 
@@ -551,7 +340,6 @@ return (function () {
 
     return { error: 'studio bridge: unhandled ' + verb + ' ' + pathname };
   };
-
 
   const ws = async (message, emit) => {
     const msg = message || {};
@@ -612,10 +400,6 @@ return (function () {
           timestamp: Date.now(),
         },
       });
-      // Seed an empty assistant bubble immediately so the UI shows the
-      // agent avatar instead of a bare "...." typing placeholder while
-      // waiting for the first token.
-      push({ type: 'text_delta', sessionId: liveId, sessionPath: livePath, delta: '' });
 
       try {
         if (type === 'interject') {
@@ -623,6 +407,26 @@ return (function () {
           // Steer is fire-and-forget at a step boundary; surface a short ack.
           push({ type: 'text_delta', sessionId: liveId, sessionPath: livePath, delta: '' });
         } else {
+          // Refuse a second prompt while Studio still marks the agent busy.
+          try {
+            const rows = await api.sessions();
+            const row = rows.find((s) => s.id === liveId);
+            if (row && row.busy) {
+              push({
+                type: 'error',
+                sessionId: liveId,
+                sessionPath: livePath,
+                message: 'session is busy; wait for the current turn to finish',
+                code: 'session_busy',
+              });
+              push({ type: 'status', sessionId: liveId, sessionPath: livePath, isStreaming: false });
+              return { events: collected, streamed: typeof emit === 'function' };
+            }
+          } catch (_) { /* listing can race; still try send */ }
+
+          // Seed an empty assistant bubble immediately so the avatar + waiting
+          // dots show before the first real token arrives from Studio.
+          push({ type: 'text_delta', sessionId: liveId, sessionPath: livePath, delta: '' });
           await api.sendWithProgress(liveId, text, msgId, (progress) => {
             const kind = progress && progress.kind;
             if (kind === 'thinking_start') {

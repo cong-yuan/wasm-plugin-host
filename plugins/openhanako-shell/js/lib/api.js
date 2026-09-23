@@ -9,9 +9,10 @@
 // Default provider/model match Studio's offline demo (`mock` / `mock-1`).
 // Callers may pass another pair; nothing here reads the user's settings.
 //
-// Studio's `send_message` awaits the whole turn (`when_idle`) and does not
-// emit Tauri token events. Incremental chat therefore polls `transcript`
-// while the invoke is in flight and reports text/reasoning growth.
+// Studio's `send_message` awaits the whole turn (`when_idle`). While it runs,
+// Studio emits `studio://chat-partial` from live `assistant/chunk` assembly.
+// `sendWithProgress` listens for those events (and polls transcript as a
+// coarse fallback) so the UI updates on each push without waiting for idle.
 return (function () {
   const tauri = studio.require('lib/tauri-invoke');
 
@@ -58,26 +59,6 @@ return (function () {
   };
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  let cachedSelection = null;
-
-  const selection = async () => {
-    if (cachedSelection) return cachedSelection;
-    try {
-      if (tauri.available()) {
-        const cfg = await tauri.invoke('get_llm_config');
-        const cur = (cfg && cfg.current) || {};
-        cachedSelection = {
-          provider: cur.provider || DEFAULT_PROVIDER,
-          model: cur.model || DEFAULT_MODEL,
-        };
-        return cachedSelection;
-      }
-    } catch (_) { /* ignore */ }
-    cachedSelection = { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL };
-    return cachedSelection;
-  };
-
 
   const mock = {
     status: () => ({
@@ -231,27 +212,76 @@ return (function () {
   };
 
   // Diff assistant growth against the previous snapshot and emit progress.
-  // Studio itself has no token channel; this is best-effort over transcript.
   const emitDiff = (prev, next, onProgress, state) => {
     if (typeof onProgress !== 'function') return;
     const reasoning = (next && next.reasoning) || '';
     const text = (next && next.text) || '';
-    if (reasoning.length > state.reasoning.length) {
+    if (reasoning.length > state.reasoning.length && reasoning.startsWith(state.reasoning)) {
       if (!state.thinking) {
         onProgress({ kind: 'thinking_start' });
         state.thinking = true;
       }
       onProgress({ kind: 'thinking_delta', delta: reasoning.slice(state.reasoning.length) });
       state.reasoning = reasoning;
+    } else if (reasoning && reasoning !== state.reasoning && !reasoning.startsWith(state.reasoning)) {
+      if (!state.thinking) {
+        onProgress({ kind: 'thinking_start' });
+        state.thinking = true;
+      }
+      onProgress({ kind: 'thinking_delta', delta: reasoning });
+      state.reasoning = state.reasoning + reasoning;
     }
-    if (text.length > state.text.length) {
+    if (text.length > state.text.length && text.startsWith(state.text)) {
       if (state.thinking) {
         onProgress({ kind: 'thinking_end' });
         state.thinking = false;
       }
       onProgress({ kind: 'text_delta', delta: text.slice(state.text.length) });
       state.text = text;
+    } else if (text && text !== state.text && !text.startsWith(state.text)) {
+      // New assistant segment (e.g. next step after tools): append.
+      if (state.thinking) {
+        onProgress({ kind: 'thinking_end' });
+        state.thinking = false;
+      }
+      onProgress({ kind: 'text_delta', delta: text });
+      state.text = state.text + text;
     }
+  };
+
+  // Apply a studio://chat-partial payload. Prefer explicit *Delta fields from
+  // Studio (already computed against its last emit) when present.
+  const applyPartial = (partial, onProgress, state, agentId) => {
+    if (!partial || partial.agentId !== agentId) return;
+    if (typeof onProgress !== 'function') return;
+    const textDelta = typeof partial.textDelta === 'string' ? partial.textDelta : null;
+    const reasoningDelta = typeof partial.reasoningDelta === 'string' ? partial.reasoningDelta : null;
+    if (reasoningDelta) {
+      if (!state.thinking) {
+        onProgress({ kind: 'thinking_start' });
+        state.thinking = true;
+      }
+      onProgress({ kind: 'thinking_delta', delta: reasoningDelta });
+      state.reasoning = (typeof partial.reasoning === 'string')
+        ? partial.reasoning
+        : (state.reasoning + reasoningDelta);
+    }
+    if (textDelta) {
+      if (state.thinking) {
+        onProgress({ kind: 'thinking_end' });
+        state.thinking = false;
+      }
+      onProgress({ kind: 'text_delta', delta: textDelta });
+      state.text = (typeof partial.text === 'string' && partial.text.startsWith(state.text))
+        ? partial.text
+        : (state.text + textDelta);
+      return;
+    }
+    // No deltas — sync from absolute fields (older Studio builds).
+    emitDiff(null, {
+      text: typeof partial.text === 'string' ? partial.text : '',
+      reasoning: typeof partial.reasoning === 'string' ? partial.reasoning : '',
+    }, onProgress, state);
   };
 
   const sendWithProgress = async (agentId, text, msgId, onProgress) => {
@@ -262,10 +292,15 @@ return (function () {
     const state = { text: '', reasoning: '', thinking: false };
     let stopped = false;
 
-    const applyAssistant = (assistant) => {
-      if (!assistant) return;
-      emitDiff(null, assistant, onProgress, state);
-    };
+    // Primary path: Studio push (assistant/chunk → studio://chat-partial).
+    let unlisten = () => {};
+    try {
+      unlisten = await tauri.listen('studio://chat-partial', (partial) => {
+        applyPartial(partial, onProgress, state, agentId);
+      });
+    } catch (_) {
+      unlisten = () => {};
+    }
 
     const pollOnce = async () => {
       const rows = await readTranscript(agentId);
@@ -274,25 +309,10 @@ return (function () {
       // (previous turn), then prefix-slices A2 against A1 → A1+A2 glue /
       // mid-message corruption like 「要干活直接说。件（`write_file`）」.
       if (rows.length <= beforeCount) return;
-      applyAssistant(lastAssistant(rows.slice(beforeCount)));
+      const assistant = lastAssistant(rows.slice(beforeCount));
+      if (!assistant) return;
+      emitDiff(null, assistant, onProgress, state);
     };
-
-    // Prefer live studio://chat-partial events (emitted while send_message
-    // awaits idle). Transcript polling remains as a fallback when the
-    // backend only flushes the assistant row at turn end.
-    let unlistenPartial = null;
-    if (typeof tauri.listen === 'function') {
-      try {
-        unlistenPartial = await tauri.listen('studio://chat-partial', (payload) => {
-          if (!payload || payload.agentId !== agentId) return;
-          applyAssistant({
-            role: 'assistant',
-            text: typeof payload.text === 'string' ? payload.text : '',
-            reasoning: typeof payload.reasoning === 'string' ? payload.reasoning : '',
-          });
-        });
-      } catch (_) { /* older hosts */ }
-    }
 
     const sendPromise = tauri.invoke('send_message', {
       agentId,
@@ -300,6 +320,9 @@ return (function () {
       msgId: msgId || ('ohk-' + Date.now()),
     });
 
+    // Coarse fallback if listen is unavailable or an emit is missed.
+    // After Studio chunk assembly lands, transcript still only grows on
+    // completed assistant/message — so listen is what makes mid-token UI work.
     const loop = (async () => {
       while (!stopped) {
         try { await pollOnce(); } catch (_) { /* mid-turn read can race */ }
@@ -311,11 +334,9 @@ return (function () {
       await sendPromise;
     } finally {
       stopped = true;
+      try { unlisten(); } catch (_) {}
       await loop.catch(() => {});
       try { await pollOnce(); } catch (_) {}
-      if (typeof unlistenPartial === 'function') {
-        try { unlistenPartial(); } catch (_) {}
-      }
       if (state.thinking && typeof onProgress === 'function') {
         onProgress({ kind: 'thinking_end' });
         state.thinking = false;
@@ -375,28 +396,8 @@ return (function () {
 
     // `create_agent` takes `id` (optional) and returns the id string.
     create: async (provider, model, id) => {
-      const pref = await selection();
-      const chosenProvider = provider || pref.provider || DEFAULT_PROVIDER;
-      let chosenModel = model || pref.model || '';
-      if (!chosenModel) {
-        if (chosenProvider === DEFAULT_PROVIDER) chosenModel = DEFAULT_MODEL;
-        else {
-          // Prefer the first enabled model from model_lists; never invent provider-named models.
-          try {
-            const cfg = await (tauri.available() ? tauri.invoke('get_llm_config') : null);
-            const list = cfg && cfg.model_lists && cfg.model_lists[chosenProvider];
-            if (Array.isArray(list) && list.length) {
-              const first = list[0];
-              chosenModel = typeof first === 'string' ? first : (first && first.id) || '';
-            }
-          } catch (_) { /* ignore */ }
-        }
-      }
-      if (!chosenModel) {
-        throw new Error(
-          'No model selected for provider "' + chosenProvider + '". Fetch/select a model in settings first.',
-        );
-      }
+      const chosenProvider = provider || DEFAULT_PROVIDER;
+      const chosenModel = model || (chosenProvider === DEFAULT_PROVIDER ? DEFAULT_MODEL : chosenProvider);
       if (!tauri.available()) return mock.create(chosenProvider, chosenModel);
       return asId(await tauri.invoke('create_agent', {
         provider: chosenProvider,
@@ -439,106 +440,9 @@ return (function () {
       return tauri.invoke('dispose_agent', { agentId });
     },
 
-    llmConfig: async () => {
-      if (!tauri.available()) {
-        return {
-          providers: { mock: { model: DEFAULT_MODEL } },
-          model_lists: { mock: [DEFAULT_MODEL] },
-          current: { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL },
-          default: DEFAULT_PROVIDER,
-          registered: [DEFAULT_PROVIDER],
-        };
-      }
-      try {
-        return await tauri.invoke('get_llm_config');
-      } catch (_) {
-        const s = await tauri.invoke('studio_status').catch(() => null);
-        const registered = (s && s.providers) || [DEFAULT_PROVIDER];
-        return {
-          providers: Object.fromEntries(
-            registered.map((p) => [p, { model: p === 'mock' ? DEFAULT_MODEL : p }]),
-          ),
-          model_lists: {},
-          current: { provider: registered[0] || DEFAULT_PROVIDER, model: DEFAULT_MODEL },
-          default: registered[0] || DEFAULT_PROVIDER,
-          registered,
-        };
-      }
-    },
-
-    setLlmConfig: async (patch) => {
-      if (!tauri.available()) {
-        if (patch && patch.current) {
-          cachedSelection = {
-            provider: patch.current.provider || DEFAULT_PROVIDER,
-            model: patch.current.model || DEFAULT_MODEL,
-          };
-        }
-        return {
-          providers: { mock: { model: DEFAULT_MODEL } },
-          model_lists: { mock: [DEFAULT_MODEL] },
-          current: cachedSelection || { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL },
-          default: (cachedSelection && cachedSelection.provider) || DEFAULT_PROVIDER,
-          registered: [DEFAULT_PROVIDER],
-          restart_required: false,
-        };
-      }
-      const out = await tauri.invoke('set_llm_config', { patch });
-      if (patch && patch.current) {
-        cachedSelection = {
-          provider: patch.current.provider || DEFAULT_PROVIDER,
-          model: patch.current.model || DEFAULT_MODEL,
-        };
-      } else if (out && out.current) {
-        cachedSelection = {
-          provider: out.current.provider || DEFAULT_PROVIDER,
-          model: out.current.model || DEFAULT_MODEL,
-        };
-      }
-      return out;
-    },
-
-
-    fetchModels: async (provider, baseUrl, apiKey) => {
-      if (!tauri.available()) {
-        return { models: [], provider: provider || '', error: 'tauri unavailable' };
-      }
-      return tauri.invoke('fetch_llm_models', {
-        provider: provider || null,
-        base_url: baseUrl || null,
-        api_key: apiKey || null,
-      });
-    },
-
-    syncAdapters: async () => {
-      if (!tauri.available()) return [];
-      return tauri.invoke('sync_llm_adapters');
-    },
-
-    selection: async () => selection(),
-
-    setSelection: async (provider, model) => {
-      return (tauri.available()
-        ? tauri.invoke('set_llm_config', { patch: { current: { provider, model }, default: provider } })
-        : Promise.resolve(null)
-      ).then(async (out) => {
-        cachedSelection = { provider, model };
-        if (!out) {
-          return {
-            current: cachedSelection,
-            default: provider,
-            restart_required: false,
-          };
-        }
-        return out;
-      });
-    },
-
     pickProvider: async () => {
       if (!tauri.available()) return mock.pickProvider();
       try {
-        const pref = await selection();
-        if (pref.provider) return pref.provider;
         const s = await tauri.invoke('studio_status');
         const list = (s && s.providers) || [];
         if (list.length) return list.find((p) => p !== 'mock') || list[0];

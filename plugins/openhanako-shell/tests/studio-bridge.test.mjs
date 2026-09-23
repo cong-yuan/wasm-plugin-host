@@ -326,9 +326,41 @@ check('host bridge correlates requestId',
   calls.length = 0;
   const archived = await adapter.http('POST', '/api/sessions/archive', { sessionId: 'agent-1' });
   check('archive disposes agent',
-    archived && archived.ok === true
+    archived && archived.ok === true && archived.removed === true
     && calls.some((c) => c.cmd === 'dispose_agent' && c.args.agentId === 'agent-1'));
 }
+
+// Busy session must refuse a second prompt (send lock).
+{
+  calls.length = 0;
+  global.window.__TAURI_INTERNALS__.invoke = (cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === 'list_sessions') {
+      return Promise.resolve([
+        { id: 'busy-1', title: 'Busy', busy: true, live: true, messages: 1, turns: 1, status: 'running', usage: null },
+      ]);
+    }
+    if (cmd === 'send_message') return Promise.reject(new Error('should not send'));
+    if (cmd === 'transcript') return Promise.resolve([]);
+    return Promise.resolve(undefined);
+  };
+  // Clear module cache so api/adapter see new invoke? They close over tauri.invoke
+  // which reads window each call — good.
+  const pushed = [];
+  const turn = await adapter.ws({
+    type: 'prompt',
+    text: 'second',
+    sessionId: 'busy-1',
+    sessionPath: 'studio://busy-1',
+    clientMessageId: 'c-busy',
+  }, (ev) => pushed.push(ev));
+  check('busy prompt refuses with session_busy',
+    pushed.some((e) => e.type === 'error' && e.code === 'session_busy'));
+  check('busy prompt does not call send_message',
+    !calls.some((c) => c.cmd === 'send_message'));
+  check('busy prompt still reports streamed envelope', turn.streamed === true);
+}
+
 
 detach();
 check('detach removes the message listener', messageHandlers.length === 0);

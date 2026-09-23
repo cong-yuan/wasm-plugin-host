@@ -7,7 +7,7 @@
 return (function () {
   const missing = 'Tauri invoke is not available in this window (missing window.__TAURI__.core.invoke and window.__TAURI_INTERNALS__.invoke)';
 
-  const resolve = () => {
+  const resolveInvoke = () => {
     const internals = window.__TAURI_INTERNALS__;
     if (internals && typeof internals.invoke === 'function') {
       return (cmd, args) => internals.invoke(cmd, args || {});
@@ -19,25 +19,37 @@ return (function () {
     return null;
   };
 
-  const available = () => !!resolve();
+  // Tauri 2: `window.__TAURI__.event.listen` (and some builds expose
+  // `__TAURI_INTERNALS__.transformCallback` + plugin listen). Prefer the
+  // public event API used by Studio's own `onChatPartial`.
+  const resolveListen = () => {
+    const tauri = window.__TAURI__;
+    if (tauri && tauri.event && typeof tauri.event.listen === 'function') {
+      return (event, handler) => tauri.event.listen(event, handler);
+    }
+    return null;
+  };
+
+  const available = () => !!resolveInvoke();
 
   const invoke = (cmd, args) => {
-    const fn = resolve();
+    const fn = resolveInvoke();
     if (!fn) return Promise.reject(new Error(missing));
     return fn(cmd, args || {});
   };
 
-  // Subscribe to a Tauri event. Returns a Promise<unlisten>.
-  const listen = (event, handler) => {
-    const internals = window.__TAURI_INTERNALS__;
-    if (internals && typeof internals.transformCallback === 'function' && window.__TAURI__?.event?.listen) {
-      return window.__TAURI__.event.listen(event, (e) => handler(e.payload));
+  /** @returns {Promise<() => void>} unlisten */
+  const listen = async (event, handler) => {
+    const fn = resolveListen();
+    if (!fn) {
+      return () => {};
     }
-    const tauri = window.__TAURI__;
-    if (tauri && tauri.event && typeof tauri.event.listen === 'function') {
-      return tauri.event.listen(event, (e) => handler(e && e.payload !== undefined ? e.payload : e));
-    }
-    return Promise.resolve(() => {});
+    const unlisten = await fn(event, (ev) => {
+      try {
+        handler(ev && Object.prototype.hasOwnProperty.call(ev, 'payload') ? ev.payload : ev);
+      } catch (_) { /* UI handler errors must not break the turn */ }
+    });
+    return typeof unlisten === 'function' ? unlisten : () => {};
   };
 
   return { available, invoke, listen, missing };

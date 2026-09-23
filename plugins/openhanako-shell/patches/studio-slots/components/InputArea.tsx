@@ -2054,9 +2054,32 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       try {
         ws.send(JSON.stringify(wsMsg));
         upsertOptimisticSessionFirstMessage(sessionPathForSend, text, new Date().toISOString());
+
+        // Optimistically mark the session streaming *immediately*.
+        // `sending` clears in finally as soon as ws.send returns, but the
+        // bridge status event arrives only after parent RPC starts — without
+        // this gap the user can fire another prompt mid-turn.
+        if (type === 'prompt' && sessionPathForSend) {
+          const st = useStore.getState();
+          const list = Array.isArray(st.streamingSessions) ? st.streamingSessions : [];
+          if (!list.includes(sessionPathForSend)) {
+            useStore.setState({ streamingSessions: [...list, sessionPathForSend] });
+          }
+        }
+
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         useStore.getState().markOptimisticUserMessageFailed(sessionPathForSend, clientMessageId, message);
+
+        // Roll back optimistic streaming lock on send failure.
+        if (type === 'prompt' && sessionPathForSend) {
+          const st = useStore.getState();
+          const list = Array.isArray(st.streamingSessions) ? st.streamingSessions : [];
+          if (list.includes(sessionPathForSend)) {
+            useStore.setState({ streamingSessions: list.filter((p) => p !== sessionPathForSend) });
+          }
+        }
+
         throw err;
       }
     } finally {
