@@ -168,9 +168,9 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/models') return true;
   if (pathname === '/api/models/set') return true;
   if (pathname === '/api/models/switch') return true;
-  if (pathname.startsWith('/api/providers/') && pathname.endsWith('/discovered-models')) return true;
   if (pathname === '/api/providers/summary') return true;
   if (pathname === '/api/providers/test') return true;
+  if (pathname.startsWith('/api/providers/')) return true;
   if (pathname === '/api/models/auxiliary-vision') return true;
   if (pathname === '/api/server/identity') return true;
   if (pathname === '/api/ws-ticket') return true;
@@ -197,6 +197,7 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/sessions/rename') return true;
   if (pathname === '/api/sessions/restore') return true;
   if (pathname === '/api/sessions/todos/complete') return true;
+  if (pathname === '/api/session-projects' || pathname.startsWith('/api/session-projects/')) return true;
   if (pathname.startsWith('/api/bridge')) return true;
   if (/^\/api\/agents\/[^/]+\/config$/.test(pathname)) return true;
   return false;

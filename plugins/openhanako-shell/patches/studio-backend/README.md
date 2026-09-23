@@ -35,6 +35,7 @@ Only after `{ source: 'openhanako-shell', type: 'studio-backend-hello' }`.
 | `POST /api/sessions/new` and `/new-detached` | create |
 | `POST /api/sessions/switch` | resume when `live === false` |
 | `GET /api/sessions/messages?path=&sessionId=` | transcript |
+| `/api/session-projects*` | local project catalog |
 | `WebSocket /ws` `{ type: 'prompt' \| 'interject' \| 'abort' }` | `op: 'ws'` |
 
 Bootstrap-only (so `initApp` reaches the session list without a Hana API):

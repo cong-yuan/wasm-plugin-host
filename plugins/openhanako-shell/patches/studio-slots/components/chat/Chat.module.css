@@ -11,6 +11,9 @@
     flex-direction: column;
     --slide-y: 8px;
     animation: hana-fade-up var(--duration-slow) var(--ease-out);
+    /* Skip layout/paint for off-screen history rows — long chats scroll smoother. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 180px;
 }
 
 .messageGroup:first-child .avatarRow {
@@ -2022,6 +2025,13 @@
 .sessionPanel.is-scrolling::-webkit-scrollbar-thumb {
     background: rgba(128, 128, 128, 0.25);
 }
+
+/* While the user is dragging history, freeze entrance animations so long
+ * sessions don't re-paint every row's fade-up on scroll. */
+.sessionPanel.is-scrolling .messageGroup {
+    animation: none;
+}
+
 
 .sessionMessages {
     max-width: var(--chat-column-width);

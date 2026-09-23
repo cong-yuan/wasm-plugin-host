@@ -48,6 +48,553 @@ return (function () {
     return params;
   };
 
+
+  // ── Session project catalog (local; Studio has no Hana /api/session-projects) ──
+  const CATALOG_KEY = 'openhanako.sessionProjectCatalog.v1';
+  const ASSIGN_KEY = 'openhanako.sessionProjectAssignments.v1';
+  const UNCATEGORIZED_PROJECT_ID = 'cwd:';
+
+  const trimName = (value) => {
+    if (typeof value !== 'string') return '';
+    return value.trim().replace(/\s+/g, ' ').slice(0, 80);
+  };
+
+  const nextId = (prefix) => prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+
+  const readJson = (key, fallback) => {
+    try {
+      if (typeof localStorage === 'undefined') return fallback;
+      const raw = localStorage.getItem(key);
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : fallback;
+    } catch (_) {
+      return fallback;
+    }
+  };
+
+  const writeJson = (key, value) => {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (_) { /* quota / private mode */ }
+  };
+
+
+  // ── Per-session model assignment (local; Studio agents bind model at create) ──
+  const SESSION_MODEL_KEY = 'openhanako.sessionModels.v1';
+  const PENDING_MODEL_KEY = 'openhanako.pendingModel.v1';
+
+  const loadSessionModels = () => {
+    const raw = readJson(SESSION_MODEL_KEY, {});
+    return raw && typeof raw === 'object' ? raw : {};
+  };
+  const saveSessionModels = (map) => writeJson(SESSION_MODEL_KEY, map || {});
+  const rememberSessionModel = (sessionPath, modelId, provider) => {
+    if (!sessionPath || !modelId || !provider) return;
+    const map = loadSessionModels();
+    map[String(sessionPath)] = { modelId: String(modelId), provider: String(provider) };
+    saveSessionModels(map);
+  };
+  const modelForPath = (sessionPathOrId) => {
+    const path = sessionPathOrId && String(sessionPathOrId).startsWith(PATH_PREFIX)
+      ? String(sessionPathOrId)
+      : pathFor(sessionPathOrId || '');
+    const map = loadSessionModels();
+    const hit = map[path] || map[String(sessionPathOrId || '')];
+    if (hit && hit.modelId && hit.provider) {
+      return { modelId: String(hit.modelId), provider: String(hit.provider) };
+    }
+    const pending = readJson(PENDING_MODEL_KEY, null);
+    if (pending && pending.modelId && pending.provider) {
+      return { modelId: String(pending.modelId), provider: String(pending.provider) };
+    }
+    return { modelId: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER };
+  };
+  const setPendingModel = (modelId, provider) => {
+    writeJson(PENDING_MODEL_KEY, { modelId: String(modelId), provider: String(provider) });
+  };
+  const serializeModel = (modelId, provider, name) => ({
+    id: String(modelId),
+    name: String(name || modelId),
+    provider: String(provider),
+  });
+
+  const normalizeCatalog = (raw) => {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const folders = [];
+    const folderIds = new Set();
+    (Array.isArray(src.folders) ? src.folders : []).forEach((item, index) => {
+      if (!item || typeof item.id !== 'string' || typeof item.name !== 'string') return;
+      const id = item.id.trim();
+      const name = trimName(item.name);
+      if (!id || !name || folderIds.has(id)) return;
+      folderIds.add(id);
+      folders.push({
+        id,
+        name,
+        order: Number.isFinite(item.order) ? item.order : index,
+      });
+    });
+    const projects = [];
+    const projectIds = new Set();
+    (Array.isArray(src.projects) ? src.projects : []).forEach((item, index) => {
+      if (!item || typeof item.id !== 'string' || typeof item.name !== 'string') return;
+      const id = item.id.trim();
+      const name = trimName(item.name);
+      if (!id || !name || projectIds.has(id)) return;
+      projectIds.add(id);
+      const folderId = typeof item.folderId === 'string' && item.folderId.trim() && folderIds.has(item.folderId.trim())
+        ? item.folderId.trim()
+        : null;
+      projects.push({
+        id,
+        name,
+        folderId,
+        order: Number.isFinite(item.order) ? item.order : index,
+      });
+    });
+    folders.sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+    projects.sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+    return { folders, projects };
+  };
+
+  const loadCatalog = () => normalizeCatalog(readJson(CATALOG_KEY, { folders: [], projects: [] }));
+  const saveCatalog = (catalog) => writeJson(CATALOG_KEY, normalizeCatalog(catalog));
+
+  const loadAssignments = () => {
+    const raw = readJson(ASSIGN_KEY, {});
+    const out = {};
+    Object.keys(raw || {}).forEach((path) => {
+      const id = raw[path];
+      if (typeof path === 'string' && path && typeof id === 'string' && id) out[path] = id;
+    });
+    return out;
+  };
+  const saveAssignments = (map) => writeJson(ASSIGN_KEY, map || {});
+
+  const nextOrder = (items) => items.reduce((max, item) => Math.max(max, Number(item.order) || 0), -1) + 1;
+
+  const handleSessionProjects = (pathname, verb, body) => {
+    if (pathname !== '/api/session-projects' && !pathname.startsWith('/api/session-projects/')) {
+      return null;
+    }
+
+    if (pathname === '/api/session-projects' && verb === 'GET') {
+      return { catalog: loadCatalog() };
+    }
+
+    if (pathname === '/api/session-projects/projects' && verb === 'POST') {
+      const catalog = loadCatalog();
+      const name = trimName(body && body.name);
+      if (!name) return { error: 'project name is required' };
+      let folderId = body && typeof body.folderId === 'string' && body.folderId.trim() ? body.folderId.trim() : null;
+      if (folderId && !catalog.folders.some((f) => f.id === folderId)) {
+        return { error: 'folder not found' };
+      }
+      const project = {
+        id: nextId('project'),
+        name,
+        folderId,
+        order: nextOrder(catalog.projects.filter((p) => p.folderId === folderId)),
+      };
+      catalog.projects.push(project);
+      saveCatalog(catalog);
+      return { ok: true, project };
+    }
+
+    if (pathname === '/api/session-projects/folders' && verb === 'POST') {
+      const catalog = loadCatalog();
+      const name = trimName(body && body.name);
+      if (!name) return { error: 'folder name is required' };
+      const folder = {
+        id: nextId('folder'),
+        name,
+        order: nextOrder(catalog.folders),
+      };
+      catalog.folders.push(folder);
+      saveCatalog(catalog);
+      return { ok: true, folder };
+    }
+
+    const projectMatch = pathname.match(/^\/api\/session-projects\/projects\/([^/]+)$/);
+    if (projectMatch && verb === 'PATCH') {
+      const catalog = loadCatalog();
+      const projectId = decodeURIComponent(projectMatch[1]);
+      const index = catalog.projects.findIndex((p) => p.id === projectId);
+      if (index < 0) return { error: 'project not found' };
+      const current = catalog.projects[index];
+      const next = { ...current };
+      if (body && Object.prototype.hasOwnProperty.call(body, 'name')) {
+        const name = trimName(body.name);
+        if (!name) return { error: 'project name is required' };
+        next.name = name;
+      }
+      if (body && Object.prototype.hasOwnProperty.call(body, 'folderId')) {
+        const folderId = typeof body.folderId === 'string' && body.folderId.trim() ? body.folderId.trim() : null;
+        if (folderId && !catalog.folders.some((f) => f.id === folderId)) {
+          return { error: 'folder not found' };
+        }
+        if (folderId !== current.folderId) {
+          next.folderId = folderId;
+          next.order = nextOrder(catalog.projects.filter((p) => p.id !== current.id && p.folderId === folderId));
+        }
+      }
+      catalog.projects[index] = next;
+      saveCatalog(catalog);
+      return { ok: true, project: next };
+    }
+
+    if (projectMatch && verb === 'DELETE') {
+      const catalog = loadCatalog();
+      const projectId = decodeURIComponent(projectMatch[1]);
+      catalog.projects = catalog.projects.filter((p) => p.id !== projectId);
+      saveCatalog(catalog);
+      const assignments = loadAssignments();
+      const sessionPaths = [];
+      Object.keys(assignments).forEach((path) => {
+        if (assignments[path] === projectId) {
+          sessionPaths.push(path);
+          delete assignments[path];
+        }
+      });
+      saveAssignments(assignments);
+      return {
+        ok: true,
+        catalog,
+        assignment: { sessionPaths, projectId: UNCATEGORIZED_PROJECT_ID },
+      };
+    }
+
+    const folderMatch = pathname.match(/^\/api\/session-projects\/folders\/([^/]+)$/);
+    if (folderMatch && verb === 'PATCH') {
+      const catalog = loadCatalog();
+      const folderId = decodeURIComponent(folderMatch[1]);
+      const index = catalog.folders.findIndex((f) => f.id === folderId);
+      if (index < 0) return { error: 'folder not found' };
+      const next = { ...catalog.folders[index] };
+      if (body && Object.prototype.hasOwnProperty.call(body, 'name')) {
+        const name = trimName(body.name);
+        if (!name) return { error: 'folder name is required' };
+        next.name = name;
+      }
+      catalog.folders[index] = next;
+      saveCatalog(catalog);
+      return { ok: true, folder: next };
+    }
+
+    if (folderMatch && verb === 'DELETE') {
+      const catalog = loadCatalog();
+      const folderId = decodeURIComponent(folderMatch[1]);
+      if (!catalog.folders.some((f) => f.id === folderId)) return { error: 'folder not found' };
+      const moving = catalog.projects.filter((p) => p.folderId === folderId);
+      let order = nextOrder(catalog.projects.filter((p) => p.folderId === null));
+      const moved = new Map(moving.map((p) => [p.id, { ...p, folderId: null, order: order++ }]));
+      catalog.folders = catalog.folders.filter((f) => f.id !== folderId);
+      catalog.projects = catalog.projects.map((p) => moved.get(p.id) || p);
+      saveCatalog(catalog);
+      return { ok: true, catalog };
+    }
+
+    if (pathname === '/api/session-projects/projects/reorder' && verb === 'POST') {
+      const catalog = loadCatalog();
+      const folderId = body && typeof body.folderId === 'string' && body.folderId.trim() ? body.folderId.trim() : null;
+      const ids = Array.isArray(body && body.projectIds) ? body.projectIds.filter((id) => typeof id === 'string') : [];
+      const order = new Map(ids.map((id, index) => [id, index]));
+      catalog.projects = catalog.projects.map((project) => {
+        if (project.folderId !== folderId) return project;
+        if (!order.has(project.id)) return project;
+        return { ...project, order: order.get(project.id) };
+      });
+      saveCatalog(catalog);
+      return { ok: true, catalog: loadCatalog() };
+    }
+
+    if (pathname === '/api/session-projects/folders/reorder' && verb === 'POST') {
+      const catalog = loadCatalog();
+      const ids = Array.isArray(body && body.folderIds) ? body.folderIds.filter((id) => typeof id === 'string') : [];
+      const order = new Map(ids.map((id, index) => [id, index]));
+      catalog.folders = catalog.folders.map((folder) => (
+        order.has(folder.id) ? { ...folder, order: order.get(folder.id) } : folder
+      ));
+      saveCatalog(catalog);
+      return { ok: true, catalog: loadCatalog() };
+    }
+
+    if (pathname === '/api/session-projects/session-assignment' && verb === 'POST') {
+      const sessionPath = body && typeof body.sessionPath === 'string' ? body.sessionPath : '';
+      if (!sessionPath) return { error: 'sessionPath is required' };
+      const projectId = body && typeof body.projectId === 'string' && body.projectId.trim()
+        ? body.projectId.trim()
+        : null;
+      const assignments = loadAssignments();
+      if (!projectId || projectId === UNCATEGORIZED_PROJECT_ID) delete assignments[sessionPath];
+      else assignments[sessionPath] = projectId;
+      saveAssignments(assignments);
+      return { ok: true, assignment: { sessionPath, projectId } };
+    }
+
+    return { error: 'studio bridge: unhandled ' + verb + ' ' + pathname };
+  };
+
+
+
+  // ── Hana settings ↔ Studio extra.llm ────────────────────────────────
+  // Hana UI talks to /api/config + /api/providers/*. Studio persists LLM
+  // under extra.llm. Overlay keeps Hana-only fields (api, headers) locally.
+  const PROVIDER_OVERLAY_KEY = 'openhanako.providerOverlay.v1';
+
+  const maskSecret = (value) => {
+    if (typeof value !== 'string' || !value) return '';
+    if (value.length <= 8) return '****';
+    return value.slice(0, 3) + '****' + value.slice(-2);
+  };
+
+  const readOverlay = () => {
+    try {
+      if (typeof localStorage === 'undefined') return {};
+      const raw = JSON.parse(localStorage.getItem(PROVIDER_OVERLAY_KEY) || '{}');
+      return raw && typeof raw === 'object' ? raw : {};
+    } catch (_) { return {}; }
+  };
+
+  const writeOverlay = (overlay) => {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.setItem(PROVIDER_OVERLAY_KEY, JSON.stringify(overlay || {}));
+    } catch (_) {}
+  };
+
+  const modelIdOf = (entry) => {
+    if (typeof entry === 'string') return entry;
+    if (entry && typeof entry === 'object' && typeof entry.id === 'string') return entry.id;
+    return '';
+  };
+
+  const studioProvidersToHana = (llm) => {
+    const root = llm && typeof llm === 'object' ? llm : {};
+    const providersIn = root.providers && typeof root.providers === 'object' ? root.providers : {};
+    const lists = root.model_lists && typeof root.model_lists === 'object' ? root.model_lists : {};
+    const overlay = readOverlay();
+    const out = {};
+    Object.keys(providersIn).forEach((name) => {
+      const entry = providersIn[name] && typeof providersIn[name] === 'object' ? providersIn[name] : {};
+      const over = overlay[name] && typeof overlay[name] === 'object' ? overlay[name] : {};
+      const list = Array.isArray(lists[name]) ? lists[name] : [];
+      const models = list.length
+        ? list.map((id) => (typeof id === 'string' ? id : modelIdOf(id))).filter(Boolean)
+        : (entry.model ? [entry.model] : []);
+      out[name] = {
+        base_url: typeof entry.base_url === 'string' ? entry.base_url : (over.base_url || ''),
+        api: typeof over.api === 'string' && over.api ? over.api : 'openai-completions',
+        api_key: maskSecret(typeof entry.api_key === 'string' ? entry.api_key : ''),
+        headers: over.headers && typeof over.headers === 'object' ? over.headers : {},
+        models,
+        model_count: models.length,
+      };
+    });
+    return out;
+  };
+
+  const buildProvidersSummary = (llm) => {
+    const root = llm && typeof llm === 'object' ? llm : {};
+    const providersIn = root.providers && typeof root.providers === 'object' ? root.providers : {};
+    const lists = root.model_lists && typeof root.model_lists === 'object' ? root.model_lists : {};
+    const overlay = readOverlay();
+    const summary = {};
+    Object.keys(providersIn).forEach((name) => {
+      const entry = providersIn[name] && typeof providersIn[name] === 'object' ? providersIn[name] : {};
+      const over = overlay[name] && typeof overlay[name] === 'object' ? overlay[name] : {};
+      const list = Array.isArray(lists[name]) ? lists[name] : [];
+      const models = list.length
+        ? list.map((id) => (typeof id === 'string' ? id : modelIdOf(id))).filter(Boolean)
+        : (entry.model ? [entry.model] : []);
+      const hasKey = !!(typeof entry.api_key === 'string' && entry.api_key.trim());
+      const hasUrl = !!(typeof entry.base_url === 'string' && entry.base_url.trim());
+      summary[name] = {
+        display_name: name,
+        has_credentials: hasKey || hasUrl,
+        is_configured: hasUrl,
+        supports_oauth: false,
+        is_coding_plan: false,
+        models,
+        base_url: typeof entry.base_url === 'string' ? entry.base_url : '',
+        api: typeof over.api === 'string' && over.api ? over.api : 'openai-completions',
+      };
+    });
+    return summary;
+  };
+
+  const applyProvidersPatchToStudio = async (providersPatch) => {
+    if (!providersPatch || typeof providersPatch !== 'object') {
+      return api.getLlmConfig();
+    }
+    const overlay = readOverlay();
+    const studioPatch = { providers: {}, model_lists: {} };
+    let touchedLists = false;
+
+    Object.keys(providersPatch).forEach((name) => {
+      const patch = providersPatch[name];
+      if (patch === null) {
+        studioPatch.providers[name] = null;
+        studioPatch.model_lists[name] = null;
+        touchedLists = true;
+        delete overlay[name];
+        return;
+      }
+      if (!patch || typeof patch !== 'object') return;
+      const entry = {};
+      if (typeof patch.base_url === 'string') entry.base_url = patch.base_url.trim();
+      if (typeof patch.api_key === 'string') entry.api_key = patch.api_key;
+      if (typeof patch.model === 'string' && patch.model.trim()) entry.model = patch.model.trim();
+      if (Array.isArray(patch.models)) {
+        const ids = patch.models.map(modelIdOf).filter(Boolean);
+        studioPatch.model_lists[name] = ids;
+        touchedLists = true;
+        if (!entry.model && ids[0]) entry.model = ids[0];
+      }
+      if (Object.keys(entry).length) studioPatch.providers[name] = entry;
+
+      const over = overlay[name] && typeof overlay[name] === 'object' ? { ...overlay[name] } : {};
+      if (typeof patch.api === 'string') over.api = patch.api;
+      if (patch.headers && typeof patch.headers === 'object') over.headers = patch.headers;
+      if (typeof patch.base_url === 'string') over.base_url = patch.base_url.trim();
+      if (Object.keys(over).length) overlay[name] = over;
+    });
+
+    writeOverlay(overlay);
+    if (!touchedLists) delete studioPatch.model_lists;
+    const out = await api.setLlmConfig(studioPatch);
+    try { await api.syncLlmAdapters(); } catch (_) { /* adapters may need restart */ }
+    return out;
+  };
+
+  const handleProviderHttp = async (pathname, verb, body) => {
+    // Returns null when this request is not a settings/provider route.
+    if (pathname === '/api/config' && verb === 'GET') {
+      const llm = await api.getLlmConfig();
+      return {
+        locale: 'zh-CN',
+        editor: null,
+        studioBridge: api.mode(),
+        providers: studioProvidersToHana(llm),
+        llm,
+      };
+    }
+
+    if (pathname === '/api/config' && (verb === 'PUT' || verb === 'PATCH' || verb === 'POST')) {
+      const patch = body && typeof body === 'object' ? body : {};
+      if (patch.providers && typeof patch.providers === 'object') {
+        await applyProvidersPatchToStudio(patch.providers);
+      }
+      const llm = await api.getLlmConfig();
+      return {
+        ok: true,
+        locale: 'zh-CN',
+        studioBridge: api.mode(),
+        providers: studioProvidersToHana(llm),
+      };
+    }
+
+    if (pathname === '/api/providers/summary' && verb === 'GET') {
+      const llm = await api.getLlmConfig();
+      return { providers: buildProvidersSummary(llm) };
+    }
+
+    if (pathname === '/api/providers/fetch-models' && verb === 'POST') {
+      const name = body && typeof body.name === 'string' ? body.name : (body && body.provider) || '';
+      const baseUrl = body && (body.base_url || body.baseUrl) || '';
+      const apiKey = body && (body.api_key || body.apiKey) || '';
+      try {
+        const result = await api.fetchLlmModels({
+          provider: name || null,
+          baseUrl: baseUrl || null,
+          apiKey: apiKey || null,
+        });
+        const models = Array.isArray(result && result.models)
+          ? result.models
+          : (Array.isArray(result) ? result : []);
+        // Normalize to { id } objects when Studio returns strings.
+        const normalized = models.map((m) => (
+          typeof m === 'string' ? { id: m } : (m && typeof m === 'object' ? m : null)
+        )).filter(Boolean);
+        return { models: normalized, ok: true };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err && err.message ? err.message : String(err),
+          models: [],
+        };
+      }
+    }
+
+    if (pathname === '/api/providers/test' && verb === 'POST') {
+      const name = body && typeof body.name === 'string' ? body.name : '';
+      const baseUrl = body && (body.base_url || body.baseUrl) || '';
+      const apiKey = body && (body.api_key || body.apiKey) || '';
+      try {
+        const result = await api.fetchLlmModels({
+          provider: name || null,
+          baseUrl: baseUrl || null,
+          apiKey: apiKey || null,
+        });
+        const models = Array.isArray(result && result.models) ? result.models : [];
+        return { ok: true, models };
+      } catch (err) {
+        return { ok: false, error: err && err.message ? err.message : String(err) };
+      }
+    }
+
+    const apiKeyMatch = pathname.match(/^\/api\/providers\/([^/]+)\/api-key$/);
+    if (apiKeyMatch && verb === 'GET') {
+      const name = decodeURIComponent(apiKeyMatch[1]);
+      const llm = await api.getLlmConfig();
+      const entry = llm && llm.providers && llm.providers[name];
+      const key = entry && typeof entry.api_key === 'string' ? entry.api_key : '';
+      return { api_key: key, masked: maskSecret(key) };
+    }
+
+    const discoveredMatch = pathname.match(/^\/api\/providers\/([^/]+)\/discovered-models$/);
+    if (discoveredMatch && verb === 'GET') {
+      const name = decodeURIComponent(discoveredMatch[1]);
+      const llm = await api.getLlmConfig();
+      const lists = llm && llm.model_lists && llm.model_lists[name];
+      const discovered = llm && llm.discovered && llm.discovered[name];
+      const models = Array.isArray(discovered) ? discovered
+        : (Array.isArray(lists) ? lists.map((id) => ({ id })) : []);
+      return { models };
+    }
+
+    const modelMatch = pathname.match(/^\/api\/providers\/([^/]+)\/models\/([^/]+)$/);
+    if (modelMatch && (verb === 'PATCH' || verb === 'PUT' || verb === 'DELETE')) {
+      // Soft-ack model metadata edits; Studio stores flat id lists today.
+      return { ok: true };
+    }
+
+    if (pathname === '/api/preferences/models' && verb === 'GET') {
+      const llm = await api.getLlmConfig();
+      const current = llm && llm.current && typeof llm.current === 'object' ? llm.current : {};
+      return {
+        models: {
+          utility: current.provider && current.model
+            ? { provider: current.provider, model: current.model }
+            : null,
+          utility_large: null,
+          vision: null,
+          vision_enabled: false,
+        },
+        search: { provider: 'auto', api_key: '', api_keys: {} },
+      };
+    }
+
+    if (pathname === '/api/preferences/models' && (verb === 'PUT' || verb === 'POST' || verb === 'PATCH')) {
+      return { ok: true };
+    }
+
+    return null;
+  };
+
+
   const projection = (row) => ({
     path: pathFor(row.id),
     sessionId: row.id,
@@ -64,6 +611,7 @@ return (function () {
     pinnedAt: null,
     live: row.live !== false,
     busy: !!row.busy,
+    projectId: loadAssignments()[pathFor(row.id)] || null,
   });
 
   const sessionIdOf = (body, query) => {
@@ -118,9 +666,6 @@ return (function () {
     }
     if (pathname === '/api/agents/switch' && verb === 'POST') {
       return { ok: true, agentId: ASSISTANT_ID };
-    }
-    if (pathname === '/api/providers/fetch-models' && verb === 'POST') {
-      return { models: [{ id: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER }] };
     }
     if (pathname === '/api/models/auxiliary-vision' && verb === 'GET') {
       return { available: false };
@@ -213,13 +758,9 @@ return (function () {
       };
     }
 
-    if (pathname === '/api/config' && verb === 'GET') {
-      return {
-        locale: 'zh-CN',
-        editor: null,
-        studioBridge: api.mode(),
-        providers: { mock: { models: [{ id: api.DEFAULT_MODEL, name: api.DEFAULT_MODEL }] } },
-      };
+    {
+      const providerResult = await handleProviderHttp(pathname, verb, body);
+      if (providerResult !== null) return providerResult;
     }
 
     if (pathname === '/api/server/identity' && verb === 'GET') {
@@ -239,17 +780,126 @@ return (function () {
     }
 
     if (pathname === '/api/models' && verb === 'GET') {
+      try {
+        const llm = await api.getLlmConfig();
+        const current = llm && llm.current && typeof llm.current === 'object' ? llm.current : {};
+        const provider = typeof current.provider === 'string' && current.provider
+          ? current.provider
+          : (typeof llm.default === 'string' ? llm.default : api.DEFAULT_PROVIDER);
+        const model = typeof current.model === 'string' && current.model
+          ? current.model
+          : api.DEFAULT_MODEL;
+        const lists = llm && llm.model_lists && typeof llm.model_lists === 'object' ? llm.model_lists : {};
+        const models = [];
+        Object.keys(lists).forEach((prov) => {
+          const arr = Array.isArray(lists[prov]) ? lists[prov] : [];
+          arr.forEach((id) => {
+            const mid = typeof id === 'string' ? id : (id && id.id);
+            if (!mid) return;
+            models.push({
+              id: mid,
+              name: mid,
+              provider: prov,
+              isCurrent: prov === provider && mid === model,
+            });
+          });
+        });
+        if (!models.length) {
+          models.push({ id: model, name: model, provider, isCurrent: true });
+        }
+        return {
+          models,
+          current: model,
+          activeModel: { id: model, provider },
+        };
+      } catch (_) {
+        return {
+          models: [{
+            id: api.DEFAULT_MODEL,
+            name: api.DEFAULT_MODEL,
+            provider: api.DEFAULT_PROVIDER,
+            isCurrent: true,
+          }],
+          current: api.DEFAULT_MODEL,
+          activeModel: { id: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER },
+        };
+      }
+    }
+
+    if (pathname === '/api/models/set' && verb === 'POST') {
+      const modelId = body && (body.modelId || body.model);
+      const provider = body && body.provider;
+      if (!modelId) throw new Error('missing modelId');
+      if (!provider) throw new Error('missing provider');
+      setPendingModel(modelId, provider);
+      // Mirror into Studio llm.current so the next api.create() picks it up.
+      try {
+        await api.setLlmConfig({ current: { provider: String(provider), model: String(modelId) } });
+      } catch (_) { /* still keep pending locally */ }
+      let displayName = String(modelId);
+      try {
+        const listed = await api.listModels();
+        const hit = (listed || []).find((m) => m.id === modelId && m.provider === provider);
+        if (hit && hit.name) displayName = hit.name;
+      } catch (_) {}
       return {
-        models: [{
-          id: api.DEFAULT_MODEL,
-          name: api.DEFAULT_MODEL,
-          provider: api.DEFAULT_PROVIDER,
-          isCurrent: true,
-        }],
-        current: api.DEFAULT_MODEL,
-        activeModel: { id: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER },
+        ok: true,
+        model: serializeModel(modelId, provider, displayName),
+        thinkingLevel: 'medium',
       };
     }
+
+    if (pathname === '/api/models/switch' && verb === 'POST') {
+      const sessionPath = body && (body.sessionPath || body.path);
+      const modelId = body && (body.modelId || body.model);
+      const provider = body && body.provider;
+      if (!sessionPath) throw new Error('missing sessionPath');
+      if (!modelId) throw new Error('missing modelId');
+      if (!provider) throw new Error('missing provider');
+
+      const sessionId = idFrom(sessionPath);
+      if (!sessionId) throw new Error('missing session');
+
+      let liveId = sessionId;
+      try {
+        liveId = await ensureLive(sessionId);
+      } catch (_) {
+        liveId = sessionId;
+      }
+
+      try {
+        await api.rebind(liveId, provider, modelId);
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        if (/stream|busy|in progress/i.test(message)) {
+          throw new Error('cannot switch model while streaming');
+        }
+        throw new Error(message || 'MODEL_SWITCH_FAILED');
+      }
+
+      rememberSessionModel(sessionPath, modelId, provider);
+      rememberSessionModel(pathFor(liveId), modelId, provider);
+      setPendingModel(modelId, provider);
+      try {
+        await api.setLlmConfig({ current: { provider: String(provider), model: String(modelId) } });
+      } catch (_) {}
+
+      let displayName = String(modelId);
+      try {
+        const listed = await api.listModels();
+        const hit = (listed || []).find((m) => m.id === modelId && m.provider === provider);
+        if (hit && hit.name) displayName = hit.name;
+      } catch (_) {}
+
+      return {
+        ok: true,
+        model: serializeModel(modelId, provider, displayName),
+        adaptations: [],
+        thinkingLevel: 'medium',
+      };
+    }
+
+
 
     if (pathname === '/api/ws-ticket' && verb === 'POST') {
       return { ticket: 'studio-bridge', expiresAt: Date.now() + 600000 };
@@ -281,15 +931,30 @@ return (function () {
     }
 
     if ((pathname === '/api/sessions/new' || pathname === '/api/sessions/new-detached') && verb === 'POST') {
-      const id = await api.create(api.DEFAULT_PROVIDER, api.DEFAULT_MODEL);
+      const pending = modelForPath(null);
+      const id = await api.create(pending.provider, pending.modelId);
+      const path = pathFor(id);
+      rememberSessionModel(path, pending.modelId, pending.provider);
+      const projectId = body && typeof body.projectId === 'string' && body.projectId.trim()
+        ? body.projectId.trim()
+        : null;
+      if (projectId && projectId !== UNCATEGORIZED_PROJECT_ID) {
+        const assignments = loadAssignments();
+        assignments[path] = projectId;
+        saveAssignments(assignments);
+      }
       return {
         ok: true,
-        path: pathFor(id),
+        path,
         sessionId: id,
         agentId: ASSISTANT_ID,
         agentName: ASSISTANT_NAME,
+        currentModelId: pending.modelId,
+        currentModelName: pending.modelId,
+        currentModelProvider: pending.provider,
         cwd: null,
         workspaceFolders: [],
+        projectId: projectId || null,
       };
     }
 
@@ -297,6 +962,10 @@ return (function () {
       const sessionId = sessionIdOf(body, query);
       if (!sessionId) return { error: 'missing session' };
       const liveId = await ensureLive(sessionId);
+      const assigned = modelForPath(pathFor(liveId));
+      try {
+        await api.rebind(liveId, assigned.provider, assigned.modelId);
+      } catch (_) { /* keep resumed agent; UI still shows stored/default model */ }
       return {
         ok: true,
         path: pathFor(liveId),
@@ -308,9 +977,9 @@ return (function () {
         workspaceFolders: [],
         cwd: null,
         permissionMode: 'ask',
-        currentModelId: api.DEFAULT_MODEL,
-        currentModelName: api.DEFAULT_MODEL,
-        currentModelProvider: api.DEFAULT_PROVIDER,
+        currentModelId: assigned.modelId,
+        currentModelName: assigned.modelId,
+        currentModelProvider: assigned.provider,
       };
     }
 
@@ -343,6 +1012,9 @@ return (function () {
         revision: 'studio-' + liveId,
       };
     }
+
+    const projectResult = handleSessionProjects(pathname, verb, body);
+    if (projectResult !== null) return projectResult;
 
     const stub = stubHttp(pathname, verb);
     if (stub !== null) return stub;
