@@ -436,13 +436,15 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
             enableProcessFold
           />
           {isSessionStreaming && !hasTrailingAssistant && (
-            <div className={styles.avatarRow} data-waiting-reply="">
-              <AgentAvatar
-                info={waitingAgent}
-                className={`${styles.avatar} ${styles.hanaAvatar}`}
-                alt={waitingAgent.displayName}
-              />
-              <span className={styles.avatarName}>{waitingAgent.displayName}</span>
+            <div className={styles.waitingReply} data-waiting-reply="">
+              <div className={styles.avatarRow}>
+                <AgentAvatar
+                  info={waitingAgent}
+                  className={`${styles.avatar} ${styles.hanaAvatar}`}
+                  alt={waitingAgent.displayName}
+                />
+                <span className={styles.avatarName}>{waitingAgent.displayName}</span>
+              </div>
               <div className={styles.typingIndicator} />
             </div>
           )}
