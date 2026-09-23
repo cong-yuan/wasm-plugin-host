@@ -225,8 +225,6 @@ return (function () {
       return { ok: true, studioBridge: api.mode() };
     }
     if (pathname === '/api/sessions/archived' && verb === 'GET') return [];
-    if (pathname === '/api/sessions/archive' && verb === 'POST') return { ok: true };
-    if (pathname === '/api/sessions/archived/delete' && verb === 'POST') return { ok: true };
     if (pathname === '/api/sessions/cleanup' && verb === 'POST') return { ok: true };
     if (pathname === '/api/sessions/continue-deleted-agent' && verb === 'POST') return { ok: false };
     if (pathname === '/api/sessions/fresh-compact' && verb === 'POST') return { ok: true };
@@ -241,11 +239,38 @@ return (function () {
   const ensureLive = async (sessionId) => {
     const rows = await api.sessions();
     const row = rows.find((s) => s.id === sessionId);
-    if (row && row.live === false) {
+    // Missing from the list: may still be on disk (stale UI id) — try resume
+    // so switch/send do not silently keep a dead sticky sessionId.
+    if (!row) {
+      try {
+        const resumed = await api.resume(sessionId);
+        return resumed || sessionId;
+      } catch (_) {
+        return sessionId;
+      }
+    }
+    if (row.live === false) {
       const resumed = await api.resume(sessionId);
       return resumed || sessionId;
     }
     return sessionId;
+  };
+
+  const sessionIdFromBody = (body, query) => sessionIdOf(body, query);
+
+  /** Archive/delete in openhanako UI must actually dispose the Studio agent. */
+  const disposeSession = async (sessionId) => {
+    if (!sessionId) return { ok: false, error: 'missing session' };
+    try {
+      await api.dispose(sessionId);
+      return { ok: true, sessionId };
+    } catch (err) {
+      return {
+        ok: false,
+        sessionId,
+        error: err && err.message ? err.message : String(err),
+      };
+    }
   };
 
   const http = async (method, path, body) => {
@@ -489,6 +514,18 @@ return (function () {
         currentModelName: (await api.selection()).model,
         currentModelProvider: (await api.selection()).provider,
       };
+    }
+
+    if (pathname === '/api/sessions/archive' && verb === 'POST') {
+      return disposeSession(sessionIdFromBody(body, query));
+    }
+
+    if (pathname === '/api/sessions/archived/delete' && verb === 'POST') {
+      return disposeSession(sessionIdFromBody(body, query));
+    }
+
+    if ((pathname === '/api/sessions/delete' || pathname === '/api/sessions/remove') && verb === 'POST') {
+      return disposeSession(sessionIdFromBody(body, query));
     }
 
     if (pathname === '/api/sessions/messages' && verb === 'GET') {

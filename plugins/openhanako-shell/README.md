@@ -38,7 +38,7 @@ iframe 也用 `{ "source": "openhanako-studio-bridge", "type": "hello" }` 探测
 
 `AgentRow.id` 就是 openhanako 的 `sessionId`。路径固定成 `studio://<id>`，因为上游用 `sessionPath` 做转录键。助手 id 恒为 `studio`（名字 Hanako），避免每个会话被当成另一个助手。
 
-`create_agent` 默认 `provider: "mock"`、`model: "mock-1"`（与 Studio 离线演示一致），写在 `js/lib/api.js` 顶部的 `DEFAULT_PROVIDER` / `DEFAULT_MODEL`。Studio 的 `send_message` 本身会 `await when_idle`（没有 Tauri token 事件）；桥在 invoke 进行中轮询 `transcript`，把助手文本/reasoning 的增长实时推成 `text_delta` / `thinking_*`（父→iframe 的 `{ type: "event" }`），结束后再 `turn_end`。
+`create_agent` 默认 `provider: "mock"`、`model: "mock-1"`（与 Studio 离线演示一致），写在 `js/lib/api.js` 顶部的 `DEFAULT_PROVIDER` / `DEFAULT_MODEL`。Studio 的 `send_message` 本身会 `await when_idle`（没有 Tauri token 事件）；桥在 invoke 进行中轮询 `transcript`（已修 A1+A2：不再 fallback 到上一轮 assistant），把助手文本/reasoning 的增长实时推成 `text_delta` / `thinking_*`（父→iframe 的 `{ type: "event" }`），结束后再 `turn_end`。
 
 当前窗口没有 Tauri invoke 时，`lib/api.js` 退回内存 fixture，`mode()` 为 `"mock"`，健康检查里的 `studioBridge` 同样是 `"mock"`。invoke 一旦存在，命令失败会抛错，不会再假装有会话。
 

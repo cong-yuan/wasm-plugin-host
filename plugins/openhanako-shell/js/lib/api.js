@@ -264,12 +264,12 @@ return (function () {
 
     const pollOnce = async () => {
       const rows = await readTranscript(agentId);
-      // Prefer a new trailing assistant message; otherwise grow the previous last one.
-      let assistant = null;
-      if (rows.length > beforeCount) {
-        assistant = lastAssistant(rows.slice(beforeCount));
-      }
-      if (!assistant) assistant = lastAssistant(rows);
+      // ONLY consider assistants appended after this turn started.
+      // Falling back to lastAssistant(rows) re-seeds the new bubble with A1
+      // (previous turn), then prefix-slices A2 against A1 → A1+A2 glue /
+      // mid-message corruption like 「要干活直接说。件（`write_file`）」.
+      if (rows.length <= beforeCount) return;
+      const assistant = lastAssistant(rows.slice(beforeCount));
       if (!assistant) return;
       emitDiff(null, assistant, onProgress, state);
     };

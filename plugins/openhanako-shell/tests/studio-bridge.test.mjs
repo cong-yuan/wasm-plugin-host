@@ -134,18 +134,20 @@ global.window.__TAURI_INTERNALS__ = {
       sendStarted = Date.now();
       // Grow transcript while the invoke is outstanding so poll can stream.
       liveTranscript = [
+        ...liveTranscript,
         { role: 'user', text: args.text, reasoning: '', tool_calls: [], tool_results: [] },
         { role: 'assistant', text: '', reasoning: '', tool_calls: [], tool_results: [] },
       ];
+      const asstIdx = liveTranscript.length - 1;
       return new Promise((resolve) => {
         sendResolve = resolve;
         const pieces = ['Hel', 'lo ', 'from ', 'Studio'];
         let i = 0;
         const step = () => {
           if (i < pieces.length) {
-            liveTranscript[1].text += pieces[i];
-            if (i === 0) liveTranscript[1].reasoning = 'r1';
-            if (i === 1) liveTranscript[1].reasoning = 'r1r2';
+            liveTranscript[asstIdx].text += pieces[i];
+            if (i === 0) liveTranscript[asstIdx].reasoning = 'r1';
+            if (i === 1) liveTranscript[asstIdx].reasoning = 'r1r2';
             i += 1;
             setTimeout(step, 50);
           } else {
@@ -220,6 +222,9 @@ check('transcript becomes history content',
   const firstDeltaAt = timestamps[pushed.findIndex((e) => e.type === 'text_delta' && e.delta)];
   check('at least one text_delta arrived during in-flight send (best-effort)',
     sendStarted != null && firstDeltaAt != null && firstDeltaAt >= sendStarted);
+  const joined = deltas.map((e) => e.delta).join('');
+  check('second-turn deltas are ONLY A2 (no A1 concat)',
+    joined === 'Hello from Studio' && !joined.includes('pong'));
 }
 
 // steer must pass msgId
@@ -313,6 +318,16 @@ check('host bridge correlates requestId',
   check('host bridge final WS ack is empty when streamed',
     final && final.ok && final.result && final.result.streamed === true
     && Array.isArray(final.result.events) && final.result.events.length === 0);
+}
+
+
+// archive must dispose the Studio agent (not a no-op stub)
+{
+  calls.length = 0;
+  const archived = await adapter.http('POST', '/api/sessions/archive', { sessionId: 'agent-1' });
+  check('archive disposes agent',
+    archived && archived.ok === true
+    && calls.some((c) => c.cmd === 'dispose_agent' && c.args.agentId === 'agent-1'));
 }
 
 detach();
