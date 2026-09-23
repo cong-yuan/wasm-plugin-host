@@ -59,6 +59,26 @@ return (function () {
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+  let cachedSelection = null;
+
+  const selection = async () => {
+    if (cachedSelection) return cachedSelection;
+    try {
+      if (tauri.available()) {
+        const cfg = await tauri.invoke('get_llm_config');
+        const cur = (cfg && cfg.current) || {};
+        cachedSelection = {
+          provider: cur.provider || DEFAULT_PROVIDER,
+          model: cur.model || DEFAULT_MODEL,
+        };
+        return cachedSelection;
+      }
+    } catch (_) { /* ignore */ }
+    cachedSelection = { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL };
+    return cachedSelection;
+  };
+
+
   const mock = {
     status: () => ({
       providers: [DEFAULT_PROVIDER],
@@ -332,8 +352,9 @@ return (function () {
 
     // `create_agent` takes `id` (optional) and returns the id string.
     create: async (provider, model, id) => {
-      const chosenProvider = provider || DEFAULT_PROVIDER;
-      const chosenModel = model || (chosenProvider === DEFAULT_PROVIDER ? DEFAULT_MODEL : chosenProvider);
+      const pref = await selection();
+      const chosenProvider = provider || pref.provider || DEFAULT_PROVIDER;
+      const chosenModel = model || pref.model || (chosenProvider === DEFAULT_PROVIDER ? DEFAULT_MODEL : chosenProvider);
       if (!tauri.available()) return mock.create(chosenProvider, chosenModel);
       return asId(await tauri.invoke('create_agent', {
         provider: chosenProvider,
@@ -376,9 +397,89 @@ return (function () {
       return tauri.invoke('dispose_agent', { agentId });
     },
 
+    llmConfig: async () => {
+      if (!tauri.available()) {
+        return {
+          providers: { mock: { model: DEFAULT_MODEL } },
+          model_lists: { mock: [DEFAULT_MODEL] },
+          current: { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL },
+          default: DEFAULT_PROVIDER,
+          registered: [DEFAULT_PROVIDER],
+        };
+      }
+      try {
+        return await tauri.invoke('get_llm_config');
+      } catch (_) {
+        const s = await tauri.invoke('studio_status').catch(() => null);
+        const registered = (s && s.providers) || [DEFAULT_PROVIDER];
+        return {
+          providers: Object.fromEntries(
+            registered.map((p) => [p, { model: p === 'mock' ? DEFAULT_MODEL : p }]),
+          ),
+          model_lists: {},
+          current: { provider: registered[0] || DEFAULT_PROVIDER, model: DEFAULT_MODEL },
+          default: registered[0] || DEFAULT_PROVIDER,
+          registered,
+        };
+      }
+    },
+
+    setLlmConfig: async (patch) => {
+      if (!tauri.available()) {
+        if (patch && patch.current) {
+          cachedSelection = {
+            provider: patch.current.provider || DEFAULT_PROVIDER,
+            model: patch.current.model || DEFAULT_MODEL,
+          };
+        }
+        return {
+          providers: { mock: { model: DEFAULT_MODEL } },
+          model_lists: { mock: [DEFAULT_MODEL] },
+          current: cachedSelection || { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL },
+          default: (cachedSelection && cachedSelection.provider) || DEFAULT_PROVIDER,
+          registered: [DEFAULT_PROVIDER],
+          restart_required: false,
+        };
+      }
+      const out = await tauri.invoke('set_llm_config', { patch });
+      if (patch && patch.current) {
+        cachedSelection = {
+          provider: patch.current.provider || DEFAULT_PROVIDER,
+          model: patch.current.model || DEFAULT_MODEL,
+        };
+      } else if (out && out.current) {
+        cachedSelection = {
+          provider: out.current.provider || DEFAULT_PROVIDER,
+          model: out.current.model || DEFAULT_MODEL,
+        };
+      }
+      return out;
+    },
+
+    selection: async () => selection(),
+
+    setSelection: async (provider, model) => {
+      return (tauri.available()
+        ? tauri.invoke('set_llm_config', { patch: { current: { provider, model }, default: provider } })
+        : Promise.resolve(null)
+      ).then(async (out) => {
+        cachedSelection = { provider, model };
+        if (!out) {
+          return {
+            current: cachedSelection,
+            default: provider,
+            restart_required: false,
+          };
+        }
+        return out;
+      });
+    },
+
     pickProvider: async () => {
       if (!tauri.available()) return mock.pickProvider();
       try {
+        const pref = await selection();
+        if (pref.provider) return pref.provider;
         const s = await tauri.invoke('studio_status');
         const list = (s && s.providers) || [];
         if (list.length) return list.find((p) => p !== 'mock') || list[0];
