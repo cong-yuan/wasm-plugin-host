@@ -5,7 +5,8 @@
   "scripts": {
     "build:css": "node scripts/build-css.mjs",
     "test": "node tests/smoke.test.mjs && node tests/studio-bridge.test.mjs && node tests/model-config.test.mjs && node tests/css-guards.test.mjs && node tests/resize-unit.test.mjs",
-    "test:cascade": "node tests/css-cascade.test.mjs"
+    "test:cascade": "node tests/css-cascade.test.mjs",
+    "dev:ui": "bash scripts/dev-ui.sh"
   },
   "devDependencies": {
     "jsdom": "^30.1.0"

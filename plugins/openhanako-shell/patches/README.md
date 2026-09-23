@@ -1,6 +1,6 @@
-# Patches applied onto the live openhanako vite tree
+# Patches（快照）
 
-Applied under `/tmp/openhanako-full` for HMR.
+前端源码已迁到 `plugins/openhanako-shell/ui/`。**以 `ui/` 为准**；本目录保留 Studio 相关改动的对照快照，不再假设外部 `/tmp/openhanako-full` 或单独的 openhanako 克隆。
 
 | Folder | Purpose |
 |---|---|
@@ -8,8 +8,7 @@ Applied under `/tmp/openhanako-full` for HMR.
 | `patches/studio-slots/` | `data-ohk-slot` anchors + geometry bridge |
 | `patches/studio-backend/` | iframe chat → Studio Tauri agents (HTTP/WS shim) |
 
-See each folder's README for re-apply commands. Slot and backend patches
-both touch `App.tsx` (via `studio-slots/App.tsx`); copy them together.
+日常开发：直接改 `ui/`。只有需要把快照重新压进 `ui/` 时才跑各子目录 README 里的 `cp`（目标为 `ui/desktop/src/react`）。
 
 ## Settings UI tweaks (this folder)
 
@@ -25,16 +24,15 @@ These root files only touch **settings chrome** (dialog shell, title row, left n
 - Left nav: search pinned; list below scrolls; **no visible left scrollbar**
 - Right main: extra top padding so fade does not cover first rows; stable thin scrollbar (no dual-scroll flash)
 
-## Re-apply
+## Sync into `ui/` (optional)
 
-Copy onto the extract:
+Copy onto the owned tree:
 
-- `Settings.module.css` → `desktop/src/react/settings/`
-- `SettingsContent.tsx` → `desktop/src/react/settings/`
-- `SettingsNav.tsx` → `desktop/src/react/settings/`
-- `SettingsModalShell.module.css` → `desktop/src/react/components/`
-- `SettingsModalShell.tsx` → `desktop/src/react/components/`
-
+- `Settings.module.css` → `ui/desktop/src/react/settings/`
+- `SettingsContent.tsx` → `ui/desktop/src/react/settings/`
+- `SettingsNav.tsx` → `ui/desktop/src/react/settings/`
+- `SettingsModalShell.module.css` → `ui/desktop/src/react/components/`
+- `SettingsModalShell.tsx` → `ui/desktop/src/react/components/`
 
 ## Typography mapping (settings chrome)
 
@@ -49,14 +47,14 @@ Uses global `--fs-*` tokens only — independent of Interface → editor markdow
 | Hint / description | `--fs-hint` |
 | Inputs / controls | `--fs-caption` |
 
-Also copy `settings-components.module.css` → `desktop/src/react/settings/components/`.
+Also copy `settings-components.module.css` → `ui/desktop/src/react/settings/components/`.
 
 ## Input area first-paint crash
 
 Desktop TipTap previously used `immediatelyRender: true`, which can throw on first paint and trip `RegionalErrorBoundary` around the input (`此区域暂时无法显示`).
 
-- `InputArea.tsx` → `desktop/src/react/components/` — `immediatelyRender: false` for all surfaces
-- `ChatPage.tsx` → `desktop/src/react/components/app/` — desktop also gets `autoRetry` like mobile
+- `InputArea.tsx` → `ui/desktop/src/react/components/` — `immediatelyRender: false` for all surfaces
+- `ChatPage.tsx` → `ui/desktop/src/react/components/app/` — desktop also gets `autoRetry` like mobile
 
 ## LLM model fetch / session picker (2026-09-23)
 

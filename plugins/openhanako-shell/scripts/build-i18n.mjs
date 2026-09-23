@@ -3,9 +3,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
-const UP = process.env.OPENHANAKO_SRC || '/tmp/openhanako-full/desktop/src';
+const _here = dirname(new URL(import.meta.url).pathname);
+const UP = process.env.OPENHANAKO_SRC || resolve(_here, '../ui/desktop/src');
 const LOCALE = process.env.HANA_LOCALE || 'zh-TW';
-const here = dirname(new URL(import.meta.url).pathname);
 const dict = JSON.parse(readFileSync(join(UP, 'locales', `${LOCALE}.json`), 'utf8'));
 
 const KEYS = [
@@ -49,5 +49,5 @@ return (function () {
   return { t, raw: D };
 })();
 `;
-writeFileSync(resolve(here, '../js/lib/i18n.js'), out);
+writeFileSync(resolve(_here, '../js/lib/i18n.js'), out);
 console.log(`lib/i18n.js: ${Object.keys(table).length} keys from ${LOCALE}`);

@@ -75,21 +75,20 @@ iframe 也用 `{ "source": "openhanako-studio-bridge", "type": "hello" }` 探测
 
 会话周边会 404 的表面（archive/pin/rename、user-profile、desk/cron、preferences/models 等）由 shim 返回空/`{ ok: true }` 软桩，避免 harness 控制台噪音；不实现真实行为。
 
+## 前端来源
+
+Hana 前端已经迁进本插件的 `ui/`，不再依赖外部 `openhanako` / `openhanako-ui` 克隆。
+`patches/` 只是 Studio 相关改动的快照，方便对照；**日常改前端直接改 `ui/`**。
+
+基于 [liliMozi/openhanako](https://github.com/liliMozi/openhanako)（Apache-2.0）快照，此后在本仓库内演进。
+
 ## 跑起来
 
 ```bash
-# 1) 上游 UI。槽位补丁和后端补丁一起拷。
-ROOT=/tmp/openhanako-full/desktop/src/react
-cp -R plugins/openhanako-shell/patches/studio-slots/studio-slots "$ROOT/"
-cp plugins/openhanako-shell/patches/studio-slots/App.tsx "$ROOT/App.tsx"
-cp plugins/openhanako-shell/patches/studio-slots/components/app/*.tsx "$ROOT/components/app/"
-cp plugins/openhanako-shell/patches/studio-slots/components/InputArea.tsx "$ROOT/components/InputArea.tsx"
-cp plugins/openhanako-shell/patches/studio-slots/components/PreviewPanel.tsx "$ROOT/components/PreviewPanel.tsx"
-mkdir -p "$ROOT/studio-backend"
-cp plugins/openhanako-shell/patches/studio-backend/studio-backend-bridge.ts "$ROOT/studio-backend/"
-cp plugins/openhanako-shell/patches/studio-backend/StudioBackendBridge.tsx "$ROOT/studio-backend/"
-
-cd /tmp/openhanako-full && npm run dev:web   # 或项目惯用脚本，默认 http://127.0.0.1:5173
+# 1) 本仓库内前端（Vite，默认 http://127.0.0.1:5173）
+cd plugins/openhanako-shell/ui
+npm install   # 首次
+npm run dev:web
 
 # 2) wasm
 cargo build -p openhanako-shell -p demo-openhanako-addon --release --target wasm32-wasip1
@@ -99,9 +98,12 @@ cargo build -p openhanako-shell -p demo-openhanako-addon --release --target wasm
 #    发送一条消息会等 send_message，再在对话里出现助手回复。
 ```
 
-重新打补丁时重复上面的 `cp`。细节分文件写在 `patches/studio-slots/README.md` 和 `patches/studio-backend/README.md`。
+若要把 `patches/` 再同步进 `ui/`（一般不需要，改动已在 `ui/`）：
 
-设置相关补丁仍在 `patches/` 根下（Settings* / InputArea 首屏等），与槽位桥、后端桥独立。
+```bash
+ROOT=plugins/openhanako-shell/ui/desktop/src/react
+# 见 patches/*/README.md
+```
 
 ## 槽位
 

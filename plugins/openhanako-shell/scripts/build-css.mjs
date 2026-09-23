@@ -6,8 +6,9 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 
-const UP = process.env.OPENHANAKO_SRC || '/tmp/openhanako-full/desktop/src';
-const OUT = resolve(dirname(new URL(import.meta.url).pathname), '../js/style.css');
+const _here = dirname(new URL(import.meta.url).pathname);
+const UP = process.env.OPENHANAKO_SRC || resolve(_here, '../ui/desktop/src');
+const OUT = resolve(_here, '../js/style.css');
 const ROOT = '.hana-replica';
 
 const read = (p) => readFileSync(join(UP, p), 'utf8');

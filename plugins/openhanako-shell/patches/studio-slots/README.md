@@ -1,7 +1,7 @@
 # studio-slots — mount WASM slots in the real openhanako UI
 
 These files replace the corresponding paths under
-`desktop/src/react/` in the live extract (`/tmp/openhanako-full`).
+`desktop/src/react/` in the live extract (`ui/`).
 
 ## Idea
 
@@ -20,7 +20,7 @@ into `desktop/src/react/studio-backend/` in the same pass, or the import
 does not resolve. See `patches/studio-backend/README.md`.
 
 ```bash
-ROOT=/tmp/openhanako-full/desktop/src/react
+ROOT=plugins/openhanako-shell/ui/desktop/src/react
 PATCH=plugins/openhanako-shell/patches/studio-slots
 cp -R "$PATCH/studio-slots" "$ROOT/"
 cp "$PATCH/App.tsx" "$ROOT/App.tsx"

@@ -1,7 +1,7 @@
 # studio-backend — iframe chat → Studio Tauri agents
 
 These files are copied into the live openhanako extract
-(`/tmp/openhanako-full`). They do not replace the upstream client. When the
+(`ui/`). They do not replace the upstream client. When the
 page is iframed by `openhanako-shell`, they handshake with the parent and
 forward the chat slice. A standalone `dev:web` window (no parent hello) keeps
 talking to the Hana server.
@@ -13,7 +13,7 @@ Copy this folder **before** (or together with) that App.tsx, or the import
 fails.
 
 ```bash
-ROOT=/tmp/openhanako-full/desktop/src/react
+ROOT=plugins/openhanako-shell/ui/desktop/src/react
 PATCH=plugins/openhanako-shell/patches/studio-backend
 mkdir -p "$ROOT/studio-backend"
 cp "$PATCH/studio-backend-bridge.ts" "$ROOT/studio-backend/studio-backend-bridge.ts"
