@@ -289,9 +289,14 @@ class StreamBufferManager {
       if (buf.textAcc) {
         const displayText = buf.textAcc.replace(/<tool_code>[\s\S]*?<\/tool_code>\s*/g, '');
         const html = renderMarkdown(displayText);
-        const idx = blocks.findIndex(b => b.type === 'text');
-        if (idx >= 0) {
-          blocks[idx] = { type: 'text', html, source: displayText };
+        // Only grow the text block the stream is currently inside — i.e. the
+        // LAST block. A text block that a tool group already followed is a
+        // sealed earlier segment; overwriting it (the old `findIndex` did)
+        // merged post-tool prose back into the pre-tool paragraph and pushed
+        // the tool group to the end, which read as duplicated / reordered text.
+        const last = blocks.length - 1;
+        if (last >= 0 && blocks[last].type === 'text') {
+          blocks[last] = { type: 'text', html, source: displayText };
         } else {
           blocks.push({ type: 'text', html, source: displayText });
         }
@@ -394,6 +399,9 @@ class StreamBufferManager {
         this.ensureMessage(buf);
         // 工具事件频率低，直接写 store
         this.flush(buf); // 先 flush 文本
+        // Seal the current text segment. The next text_delta begins a NEW block
+        // after the tool group instead of accumulating into the pre-tool one.
+        buf.textAcc = '';
         this.updateTargetMessage(buf, (m) => {
           const blocks = [...(m.blocks || [])];
           // 找最后一个 tool_group 或创建新的

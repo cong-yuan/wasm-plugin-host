@@ -678,6 +678,80 @@ return (function () {
     return idFrom(fromBody || fromQuery);
   };
 
+  // Studio stores tool arguments as the model's raw JSON string; the renderer
+  // wants an object. Bad JSON degrades to `undefined` rather than throwing.
+  const parseToolArgs = (raw) => {
+    if (raw == null) return undefined;
+    if (typeof raw === 'object') return raw;
+    try {
+      const parsed = JSON.parse(String(raw));
+      return parsed && typeof parsed === 'object' ? parsed : undefined;
+    } catch (_) {
+      return undefined;
+    }
+  };
+
+  // Echo the fields the client attached to an optimistic user message back on
+  // `session_user_message`. Only non-null values are included, so a missing
+  // field never overwrites the optimistic one (the client confirms with a
+  // shallow spread, where an explicit `undefined` would clobber).
+  const displayFields = (displayMessage) => {
+    if (!displayMessage || typeof displayMessage !== 'object') return {};
+    const out = {};
+    const copyAs = [
+      ['quotedText', 'quotedText'],
+      ['attachments', 'attachments'],
+      ['skills', 'skills'],
+      ['sessionRefs', 'sessionRefs'],
+      ['agentMentions', 'agentMentions'],
+    ];
+    for (const [from, to] of copyAs) {
+      const value = displayMessage[from];
+      if (value == null) continue;
+      if (Array.isArray(value) && value.length === 0) continue;
+      out[to] = value;
+    }
+    return out;
+  };
+
+  // Todo tools carry the authoritative list in their CALL ARGUMENTS. `activeForm`
+  // is required by the frontend's todo gate, so fall back to `content` when the
+  // model (or dsh's minimal schema) omits it.
+  const TODO_TOOL_NAMES = new Set(['todo', 'todo_write']);
+  const todoDetailsFromArgs = (name, args) => {
+    if (!TODO_TOOL_NAMES.has(name)) return undefined;
+    const list = args && Array.isArray(args.todos) ? args.todos : null;
+    if (!list) return undefined;
+    const todos = list.map((entry) => {
+      const content = entry && typeof entry.content === 'string' ? entry.content : '';
+      const activeForm = entry && typeof entry.activeForm === 'string' && entry.activeForm
+        ? entry.activeForm
+        : content;
+      const status = entry && (entry.status === 'in_progress' || entry.status === 'completed')
+        ? entry.status
+        : 'pending';
+      return { content, activeForm, status };
+    }).filter((t) => t.content);
+    return { todos };
+  };
+
+  // Latest todo snapshot from the transcript. dsh's `todo_write` puts the list
+  // in the CALL ARGUMENTS and emits a `todo/write` session event that Studio's
+  // `derive_messages` never surfaces, so scanning tool calls is the only way to
+  // rebuild the checklist after a reload / session switch.
+  const todosFromTranscript = (rows) => {
+    let latest = null;
+    for (const m of (rows || [])) {
+      if (!m || m.role !== 'assistant' || !Array.isArray(m.tool_calls)) continue;
+      for (const tc of m.tool_calls) {
+        if (!tc || !TODO_TOOL_NAMES.has(tc.name)) continue;
+        const details = todoDetailsFromArgs(tc.name, parseToolArgs(tc.arguments));
+        if (details) latest = details.todos;
+      }
+    }
+    return latest || [];
+  };
+
   const historyMessage = (m, index) => {
     const role = m.role === 'user' ? 'user' : 'assistant';
     const text = m.text || '';
@@ -688,6 +762,32 @@ return (function () {
       timestamp: Date.now(),
     };
     if (role === 'assistant' && m.reasoning) row.thinking = m.reasoning;
+    // Tools must survive history hydration or they vanish on reload / switch:
+    // the process UI and todo list are rebuilt from these, not from the live
+    // event buffer. `arguments` is a raw JSON string in Studio; parse it back to
+    // the object the renderer expects, and merge the matching tool_result so
+    // done/success/error/details are populated.
+    if (role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) {
+      const results = new Map();
+      for (const tr of (m.tool_results || [])) {
+        if (tr && tr.tool_call_id) results.set(String(tr.tool_call_id), tr);
+      }
+      row.toolCalls = m.tool_calls
+        .filter((tc) => tc && tc.name)
+        .map((tc) => {
+          const id = tc.id != null ? String(tc.id) : undefined;
+          const res = id ? results.get(id) : null;
+          const isError = !!(res && res.is_error === true);
+          return {
+            ...(id ? { id } : {}),
+            name: String(tc.name),
+            args: parseToolArgs(tc.arguments),
+            status: res ? (isError ? 'failed' : 'succeeded') : 'unknown',
+            success: res ? !isError : false,
+            ...(isError && res ? { error: String(res.content == null ? '' : res.content) } : {}),
+          };
+        });
+    }
     return row;
   };
 
@@ -1100,7 +1200,7 @@ return (function () {
       return {
         messages: rows.map(historyMessage),
         blocks: [],
-        todos: [],
+        todos: todosFromTranscript(rows),
         sessionFiles: [],
         hasMore: false,
         revision: 'studio-' + liveId,
@@ -1173,6 +1273,12 @@ return (function () {
           clientMessageId: clientMessageId || null,
           text: shown || '',
           timestamp: Date.now(),
+          // Echo the display fields back. The frontend confirms the optimistic
+          // bubble with `{...current, ...message}`, so an omitted key here is not
+          // "leave it alone" — it overwrites the optimistic value with
+          // `undefined`. Dropping these is what made quotes / attachments /
+          // skills disappear the instant the turn was confirmed.
+          ...displayFields(msg.displayMessage),
         },
       });
 
@@ -1221,6 +1327,27 @@ return (function () {
                 sessionId: liveId,
                 sessionPath: livePath,
                 delta: progress.delta || '',
+              });
+            } else if (kind === 'tool_start') {
+              push({
+                type: 'tool_start',
+                sessionId: liveId,
+                sessionPath: livePath,
+                id: progress.id,
+                name: progress.name,
+                args: progress.args,
+              });
+            } else if (kind === 'tool_end') {
+              push({
+                type: 'tool_end',
+                sessionId: liveId,
+                sessionPath: livePath,
+                id: progress.id,
+                name: progress.name,
+                success: progress.success !== false,
+                status: progress.success === false ? 'failed' : 'succeeded',
+                ...(progress.error ? { error: progress.error } : {}),
+                ...(progress.details ? { details: progress.details } : {}),
               });
             }
           });

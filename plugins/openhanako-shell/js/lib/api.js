@@ -363,12 +363,112 @@ return (function () {
     }
   };
 
+  // ── Tool call propagation ──
+  // Studio's transcript carries `tool_calls` (raw JSON `arguments`) plus
+  // `tool_results`, but the live stream only ever pushed text/reasoning. The UI
+  // renders tool cards, the todo list and file/reference cards from tool events,
+  // so diff the transcript across polls and emit one start/end per call.
+  const parseToolArgs = (raw) => {
+    if (raw == null) return undefined;
+    if (typeof raw === 'object') return raw;
+    try {
+      const parsed = JSON.parse(String(raw));
+      return parsed && typeof parsed === 'object' ? parsed : undefined;
+    } catch (_) {
+      return undefined;
+    }
+  };
+
+  // Tool results arrive as text; the todo / card surfaces read structured
+  // `details`, so expose parsed JSON when the payload is one.
+  const parseToolDetails = (content) => {
+    if (content == null) return undefined;
+    if (typeof content === 'object') return content;
+    if (typeof content !== 'string') return undefined;
+    const trimmed = content.trim();
+    if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return undefined;
+    try {
+      const parsed = JSON.parse(trimmed);
+      return parsed && typeof parsed === 'object' ? parsed : undefined;
+    } catch (_) {
+      return undefined;
+    }
+  };
+
+  // Todo tools carry the authoritative list in their CALL ARGUMENTS; Studio's
+  // tool result is only text ("todo list updated (N items)"), and dsh emits
+  // `todo/write` as a session event the transcript never surfaces. The Hana UI
+  // reads `details.todos` on `tool_end`, so synthesise it from the args and
+  // normalise to that shape (`activeForm` is required by the frontend gate).
+  const TODO_TOOL_NAMES = new Set(['todo', 'todo_write']);
+  const todoDetailsFromArgs = (name, args) => {
+    if (!TODO_TOOL_NAMES.has(name)) return undefined;
+    const list = args && Array.isArray(args.todos) ? args.todos : null;
+    if (!list) return undefined;
+    const todos = list.map((entry) => {
+      const content = entry && typeof entry.content === 'string' ? entry.content : '';
+      const activeForm = entry && typeof entry.activeForm === 'string' && entry.activeForm
+        ? entry.activeForm
+        : content;
+      const status = entry && (entry.status === 'in_progress' || entry.status === 'completed')
+        ? entry.status
+        : 'pending';
+      return { content, activeForm, status };
+    }).filter((t) => t.content);
+    return { todos };
+  };
+
+  const emitToolProgress = (rows, baseline, state, onProgress) => {
+    if (typeof onProgress !== 'function') return;
+    if (!state.tools) state.tools = new Map();
+    const slice = rows.slice(baseline);
+    const results = new Map();
+    for (const m of slice) {
+      const trs = (m && m.tool_results) || [];
+      for (const tr of trs) {
+        if (tr && tr.tool_call_id) results.set(String(tr.tool_call_id), tr);
+      }
+    }
+    for (let rowIndex = 0; rowIndex < slice.length; rowIndex += 1) {
+      const m = slice[rowIndex];
+      if (!m || m.role !== 'assistant') continue;
+      const tcs = Array.isArray(m.tool_calls) ? m.tool_calls : [];
+      tcs.forEach((tc, index) => {
+        if (!tc || !tc.name) return;
+        // Studio always supplies `call_id`; the synthetic key is defensive and
+        // scoped to the absolute row so id-less calls never collide across
+        // messages when the same tool name repeats.
+        const id = tc.id != null ? String(tc.id) : `row${baseline + rowIndex}:${index}:${tc.name}`;
+        let entry = state.tools.get(id);
+        if (!entry) {
+          const args = parseToolArgs(tc.arguments);
+          entry = { name: tc.name, done: false, args };
+          state.tools.set(id, entry);
+          onProgress({ kind: 'tool_start', id, name: tc.name, args });
+        }
+        if (entry.done) return;
+        const res = tc.id != null ? results.get(String(tc.id)) : null;
+        if (!res) return;
+        entry.done = true;
+        const isError = res.is_error === true;
+        onProgress({
+          kind: 'tool_end',
+          id,
+          name: tc.name,
+          success: !isError,
+          error: isError ? String(res.content == null ? '' : res.content) : undefined,
+          details: parseToolDetails(res.content) || (isError ? undefined : todoDetailsFromArgs(tc.name, entry.args)),
+        });
+      });
+    }
+  };
+
   const sendWithProgress = async (agentId, text, msgId, onProgress) => {
     if (!tauri.available()) return mock.sendStreaming(agentId, text, msgId, onProgress);
 
     const before = await readTranscript(agentId);
     const beforeCount = before.length;
-    const state = { text: '', reasoning: '', thinking: false };
+    const state = { text: '', reasoning: '', thinking: false, tools: new Map() };
     let stopped = false;
 
     // Primary path: Studio push (assistant/chunk → studio://chat-partial).
@@ -407,6 +507,9 @@ return (function () {
       // (previous turn), then prefix-slices A2 against A1 → A1+A2 glue /
       // mid-message corruption like 「要干活直接说。件（`write_file`）」.
       if (rows.length <= beforeCount) return;
+      // Tools first: they occur before the step's follow-up text, and the
+      // frontend appends blocks in arrival order.
+      emitToolProgress(rows, beforeCount, state, onProgress);
       const assistant = lastAssistant(rows.slice(beforeCount));
       if (!assistant) return;
       emitDiff(null, assistant, onProgress, state);

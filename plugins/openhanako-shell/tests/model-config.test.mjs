@@ -47,6 +47,17 @@ const api = {
     return structuredClone(llmState);
   },
   create: async (provider, model) => `agent-${provider}-${model}`,
+  rebind: async (agentId, provider, model) => {
+    if (provider) llmState.current = { provider, model };
+    return agentId;
+  },
+  dispose: async (agentId) => agentId,
+  softUnbind: async (agentId) => agentId,
+  listModels: async () => Object.entries(llmState.model_lists).flatMap(([provider, list]) =>
+    (list || []).map((id) => ({ id, name: id, provider }))),
+  getLlmConfig: async () => structuredClone(llmState),
+  fetchLlmModels: async (opts) => (llmState.model_lists[opts?.provider] || []).map((id) => ({ id, name: id, provider: opts?.provider })),
+  syncLlmAdapters: async () => structuredClone(llmState),
   sessions: async () => [],
   resume: async (id) => id,
   transcript: async () => [],
@@ -68,7 +79,9 @@ check('lists deepseek models', models.models.some((m) => m.id === 'deepseek-reas
 check('marks current model', models.models.some((m) => m.isCurrent && m.id === 'deepseek-chat'));
 check('no phantom provider-named model', !models.models.some((m) => m.id === m.provider && m.provider !== 'mock'));
 
-const switched = await adapter.http('POST', '/api/models/switch', { provider: 'mock', modelId: 'mock-1' });
+// Per-session switch: the upstream ModelSelector posts sessionPath, and the
+// adapter rebinds that session's live agent to the chosen provider/model.
+const switched = await adapter.http('POST', '/api/models/switch', { sessionPath: 'studio://sess-1', provider: 'mock', modelId: 'mock-1' });
 check('switch updates selection', switched.ok && llmState.current.provider === 'mock');
 
 const summary = await adapter.http('GET', '/api/providers/summary');
@@ -80,8 +93,8 @@ check('config providers expose deepseek', !!cfg.providers.deepseek);
 await adapter.http('PUT', '/api/config', {
   providers: {
     openai: {
-      baseUrl: 'https://api.openai.com/v1',
-      apiKey: 'sk-x',
+      base_url: 'https://api.openai.com/v1',
+      api_key: 'sk-x',
       model: 'gpt-4o',
       models: ['gpt-4o', 'gpt-4o-mini'],
     },

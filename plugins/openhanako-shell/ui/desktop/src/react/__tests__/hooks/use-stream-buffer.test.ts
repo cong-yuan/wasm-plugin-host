@@ -320,6 +320,22 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
     expect(snapshotStreamBuffer(PATH)).toBeNull();
   });
 
+  it('工具前/后两段文字各自成块，工具组夹在中间且不被并进段落', () => {
+    // 回合内一次工具调用会把文本切成两段。旧实现用 findIndex 永远覆盖第一个
+    // text 块，且 textAcc 跨整个 turn 累积、tool_start 不清空，于是「工具后的正文」
+    // 被并回「工具前的段落」、tool_group 被推到末尾 —— 表现为文字粘连/错位。
+    streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '我先读文件。' });
+    streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'c1', name: 'read', args: { file_path: '/tmp/a.ts' } });
+    streamBufferManager.handle({ type: 'tool_end', sessionPath: PATH, id: 'c1', name: 'read', success: true });
+    streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '读完了，结论是 X。' });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath: PATH });
+
+    const blocks = getAssistantMessage()?.blocks ?? [];
+    expect(blocks.map((block) => block.type)).toEqual(['text', 'tool_group', 'text']);
+    expect(blocks[0]).toMatchObject({ type: 'text', source: '我先读文件。' });
+    expect(blocks[2]).toMatchObject({ type: 'text', source: '读完了，结论是 X。' });
+  });
+
   it('tool_end 有调用 ID 时只闭合对应的同名工具', () => {
     streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'call_a', name: 'echo', args: { value: 'first' } });
     streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'call_b', name: 'echo', args: { value: 'second' } });
