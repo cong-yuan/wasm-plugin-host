@@ -8,12 +8,17 @@
 //
 // Default provider/model match Studio's offline demo (`mock` / `mock-1`).
 // Callers may pass another pair; nothing here reads the user's settings.
+//
+// Studio's `send_message` awaits the whole turn (`when_idle`) and does not
+// emit Tauri token events. Incremental chat therefore polls `transcript`
+// while the invoke is in flight and reports text/reasoning growth.
 return (function () {
   const tauri = studio.require('lib/tauri-invoke');
 
   // Studio chat page uses this pair for offline demos.
   const DEFAULT_PROVIDER = 'mock';
   const DEFAULT_MODEL = 'mock-1';
+  const POLL_MS = 40;
 
   const sessionsStore = [
     { id: 'sess-welcome', title: 'Welcome', busy: false, live: true, status: 'idle', messages: 1, turns: 1, usage: null, updated_at: Date.now() },
@@ -44,6 +49,15 @@ return (function () {
     if (typeof value === 'object' && value.id != null) return String(value.id);
     return String(value);
   };
+
+  const lastAssistant = (rows) => {
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      if (rows[i] && rows[i].role === 'assistant') return rows[i];
+    }
+    return null;
+  };
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const mock = {
     status: () => ({
@@ -99,8 +113,55 @@ return (function () {
       }
       return true;
     },
+    // Chunked mock turn so unit tests can assert incremental deltas.
+    sendStreaming: async (agentId, text, msgId, onProgress) => {
+      if (!transcripts[agentId]) transcripts[agentId] = [];
+      transcripts[agentId].push({ role: 'user', text, reasoning: '', tool_calls: [], tool_results: [] });
+      const reply = '（mock fallback）已收到，但当前窗口没有 Tauri invoke，没有调用 send_message。';
+      const reasoning = 'mock-think';
+      const assistant = {
+        role: 'assistant',
+        text: '',
+        reasoning: '',
+        tool_calls: [],
+        tool_results: [],
+      };
+      transcripts[agentId].push(assistant);
+      const row = sessionsStore.find((s) => s.id === agentId);
+      if (row) {
+        row.busy = true;
+        row.status = 'running';
+        row.updated_at = Date.now();
+      }
+      if (typeof onProgress === 'function') {
+        onProgress({ kind: 'thinking_start' });
+        for (const piece of ['mock-', 'think']) {
+          await sleep(5);
+          assistant.reasoning += piece;
+          onProgress({ kind: 'thinking_delta', delta: piece });
+        }
+        onProgress({ kind: 'thinking_end' });
+        for (const piece of chunkText(reply, 24)) {
+          await sleep(5);
+          assistant.text += piece;
+          onProgress({ kind: 'text_delta', delta: piece });
+        }
+      } else {
+        assistant.reasoning = reasoning;
+        assistant.text = reply;
+      }
+      if (row) {
+        row.busy = false;
+        row.status = 'idle';
+        row.messages = transcripts[agentId].length;
+        row.turns += 1;
+        row.updated_at = Date.now();
+        if (!row.title || row.title === 'New session') row.title = String(text || '').slice(0, 48);
+      }
+      return true;
+    },
     cancel: async () => null,
-    steer: async (agentId, text) => mock.send(agentId, text, 'steer'),
+    steer: async (agentId, text, msgId) => mock.send(agentId, text, msgId || 'steer'),
     dispose: async (agentId) => {
       const i = sessionsStore.findIndex((s) => s.id === agentId);
       if (i >= 0) sessionsStore.splice(i, 1);
@@ -108,6 +169,14 @@ return (function () {
       return null;
     },
     pickProvider: async () => DEFAULT_PROVIDER,
+  };
+
+  const chunkText = (text, size) => {
+    const out = [];
+    const src = String(text || '');
+    if (!src) return out;
+    for (let i = 0; i < src.length; i += size) out.push(src.slice(i, i + size));
+    return out;
   };
 
   const liveSessions = async () => {
@@ -127,6 +196,90 @@ return (function () {
   };
 
   const mode = () => (tauri.available() ? 'tauri' : 'mock');
+
+  const readTranscript = async (agentId) => {
+    if (!tauri.available()) return mock.transcript(agentId);
+    const rows = await tauri.invoke('transcript', { agentId });
+    if (!Array.isArray(rows)) return [];
+    return rows.map((m) => ({
+      role: (m && m.role) || 'assistant',
+      text: (m && m.text) || '',
+      reasoning: (m && m.reasoning) || '',
+      tool_calls: (m && m.tool_calls) || [],
+      tool_results: (m && m.tool_results) || [],
+    }));
+  };
+
+  // Diff assistant growth against the previous snapshot and emit progress.
+  // Studio itself has no token channel; this is best-effort over transcript.
+  const emitDiff = (prev, next, onProgress, state) => {
+    if (typeof onProgress !== 'function') return;
+    const reasoning = (next && next.reasoning) || '';
+    const text = (next && next.text) || '';
+    if (reasoning.length > state.reasoning.length) {
+      if (!state.thinking) {
+        onProgress({ kind: 'thinking_start' });
+        state.thinking = true;
+      }
+      onProgress({ kind: 'thinking_delta', delta: reasoning.slice(state.reasoning.length) });
+      state.reasoning = reasoning;
+    }
+    if (text.length > state.text.length) {
+      if (state.thinking) {
+        onProgress({ kind: 'thinking_end' });
+        state.thinking = false;
+      }
+      onProgress({ kind: 'text_delta', delta: text.slice(state.text.length) });
+      state.text = text;
+    }
+  };
+
+  const sendWithProgress = async (agentId, text, msgId, onProgress) => {
+    if (!tauri.available()) return mock.sendStreaming(agentId, text, msgId, onProgress);
+
+    const before = await readTranscript(agentId);
+    const beforeCount = before.length;
+    const state = { text: '', reasoning: '', thinking: false };
+    let stopped = false;
+
+    const pollOnce = async () => {
+      const rows = await readTranscript(agentId);
+      // Prefer a new trailing assistant message; otherwise grow the previous last one.
+      let assistant = null;
+      if (rows.length > beforeCount) {
+        assistant = lastAssistant(rows.slice(beforeCount));
+      }
+      if (!assistant) assistant = lastAssistant(rows);
+      if (!assistant) return;
+      emitDiff(null, assistant, onProgress, state);
+    };
+
+    const sendPromise = tauri.invoke('send_message', {
+      agentId,
+      text,
+      msgId: msgId || ('ohk-' + Date.now()),
+    });
+
+    const loop = (async () => {
+      while (!stopped) {
+        try { await pollOnce(); } catch (_) { /* mid-turn read can race */ }
+        await sleep(POLL_MS);
+      }
+    })();
+
+    try {
+      await sendPromise;
+    } finally {
+      stopped = true;
+      await loop.catch(() => {});
+      try { await pollOnce(); } catch (_) {}
+      if (state.thinking && typeof onProgress === 'function') {
+        onProgress({ kind: 'thinking_end' });
+        state.thinking = false;
+      }
+    }
+    return true;
+  };
 
   return {
     DEFAULT_PROVIDER,
@@ -170,18 +323,7 @@ return (function () {
       }
     },
 
-    transcript: async (agentId) => {
-      if (!tauri.available()) return mock.transcript(agentId);
-      const rows = await tauri.invoke('transcript', { agentId });
-      if (!Array.isArray(rows)) return [];
-      return rows.map((m) => ({
-        role: (m && m.role) || 'assistant',
-        text: (m && m.text) || '',
-        reasoning: (m && m.reasoning) || '',
-        tool_calls: (m && m.tool_calls) || [],
-        tool_results: (m && m.tool_results) || [],
-      }));
-    },
+    transcript: async (agentId) => readTranscript(agentId),
 
     resume: async (sessionId) => {
       if (!tauri.available()) return mock.resume(sessionId);
@@ -201,8 +343,7 @@ return (function () {
       }));
     },
 
-    // `send_message` awaits the whole turn (no token stream). Void success is
-    // not an error — only a rejected invoke fails the call.
+    // Blocking whole-turn send (legacy). Prefer sendWithProgress for chat UI.
     send: async (agentId, text, msgId) => {
       if (!tauri.available()) return mock.send(agentId, text, msgId);
       await tauri.invoke('send_message', {
@@ -213,14 +354,16 @@ return (function () {
       return true;
     },
 
+    sendWithProgress,
+
     cancel: async (agentId) => {
       if (!tauri.available()) return mock.cancel(agentId);
       return tauri.invoke('cancel_agent', { agentId });
     },
 
-    // Argument names follow send_message (agentId/text/msgId).
+    // Studio's steer_agent requires msgId (same as send_message).
     steer: async (agentId, text, msgId) => {
-      if (!tauri.available()) return mock.steer(agentId, text);
+      if (!tauri.available()) return mock.steer(agentId, text, msgId);
       return tauri.invoke('steer_agent', {
         agentId,
         text,

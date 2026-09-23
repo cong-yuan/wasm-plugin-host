@@ -4,6 +4,10 @@
 // (`studio://<id>`) because the iframe keys transcripts by `sessionPath`.
 // The Hana assistant id stays a constant (`studio`) so agent switch UI does
 // not treat every session as a different assistant.
+//
+// For prompts, progress is pushed through an optional `emit` callback as soon
+// as transcript growth is observed — Studio has no token Tauri channel, so the
+// parent polls `transcript` while `send_message` is in flight.
 return (function () {
   const api = studio.require('lib/api');
 
@@ -81,43 +85,54 @@ return (function () {
     return row;
   };
 
-  const eventsForTurn = (sessionId, sessionPath, clientMessageId, userText, assistant) => {
-    const reply = (assistant && assistant.text) || '';
-    const reasoning = (assistant && assistant.reasoning) || '';
-    const events = [
-      { type: 'status', sessionId, sessionPath, isStreaming: true },
-      {
-        type: 'session_user_message',
-        sessionId,
-        sessionPath,
-        clientMessageId: clientMessageId || null,
-        message: {
-          id: clientMessageId || ('user-' + Date.now()),
-          clientMessageId: clientMessageId || null,
-          text: userText || '',
-          timestamp: Date.now(),
-        },
-      },
-    ];
-    // StreamBufferManager (upstream use-stream-buffer.ts) appends assistant
-    // text from `text_delta.delta`. `turn_end` is what ws-message-handler uses
-    // to refresh the session list. One full delta is enough: send_message
-    // already awaited the turn.
-    if (reasoning) {
-      events.push({ type: 'thinking_start', sessionId, sessionPath });
-      events.push({ type: 'thinking_delta', sessionId, sessionPath, delta: reasoning });
-      events.push({ type: 'thinking_end', sessionId, sessionPath });
+  // Soft stubs for openhanako surfaces that are not part of the Studio agent
+  // vertical slice. Returning empty/ok stops noisy 404s in the harness and
+  // iframe console without pretending the feature exists.
+  const stubHttp = (pathname, verb) => {
+    if (pathname === '/api/preferences/models' && verb === 'GET') {
+      return {
+        models: [{ id: api.DEFAULT_MODEL, name: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER }],
+        current: api.DEFAULT_MODEL,
+      };
     }
-    events.push({ type: 'text_delta', sessionId, sessionPath, delta: reply });
-    events.push({ type: 'turn_end', sessionId, sessionPath });
-    events.push({ type: 'status', sessionId, sessionPath, isStreaming: false });
-    return events;
-  };
-
-  const lastAssistant = (rows) => {
-    for (let i = rows.length - 1; i >= 0; i -= 1) {
-      if (rows[i] && rows[i].role === 'assistant') return rows[i];
+    if (pathname === '/api/session-thinking-level' && (verb === 'GET' || verb === 'POST')) {
+      return { level: 'off' };
     }
+    if (pathname === '/api/user-profile' && verb === 'GET') {
+      return { name: 'User', avatar: null };
+    }
+    if (pathname === '/api/desk/cron' && verb === 'GET') {
+      return { jobs: [] };
+    }
+    if (pathname === '/api/agents/primary' && verb === 'GET') {
+      return { id: ASSISTANT_ID, name: ASSISTANT_NAME };
+    }
+    if (pathname === '/api/agents/switch' && verb === 'POST') {
+      return { ok: true, agentId: ASSISTANT_ID };
+    }
+    if (pathname === '/api/providers/fetch-models' && verb === 'POST') {
+      return { models: [{ id: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER }] };
+    }
+    if (pathname === '/api/models/auxiliary-vision' && verb === 'GET') {
+      return { available: false };
+    }
+    if (pathname === '/api/upload-blob' && verb === 'POST') {
+      return { ok: false, error: 'studio bridge: upload not supported' };
+    }
+    if (pathname.startsWith('/api/bridge')) {
+      return { ok: true, studioBridge: api.mode() };
+    }
+    if (pathname === '/api/sessions/archived' && verb === 'GET') return [];
+    if (pathname === '/api/sessions/archive' && verb === 'POST') return { ok: true };
+    if (pathname === '/api/sessions/archived/delete' && verb === 'POST') return { ok: true };
+    if (pathname === '/api/sessions/cleanup' && verb === 'POST') return { ok: true };
+    if (pathname === '/api/sessions/continue-deleted-agent' && verb === 'POST') return { ok: false };
+    if (pathname === '/api/sessions/fresh-compact' && verb === 'POST') return { ok: true };
+    if (pathname === '/api/sessions/pin' && verb === 'POST') return { ok: true };
+    if (pathname === '/api/sessions/pin-order' && verb === 'POST') return { ok: true };
+    if (pathname === '/api/sessions/rename' && verb === 'POST') return { ok: true };
+    if (pathname === '/api/sessions/restore' && verb === 'POST') return { ok: true };
+    if (pathname === '/api/sessions/todos/complete' && verb === 'POST') return { ok: true };
     return null;
   };
 
@@ -162,9 +177,6 @@ return (function () {
     }
 
     if (pathname === '/api/server/identity' && verb === 'GET') {
-      // Enough for mergeServerIdentity to keep the existing local connection.
-      // Diagnostic only upstream; it must not 500 or initApp aborts before
-      // loadSessions.
       return {
         connectionKind: 'local',
         serverId: 'local',
@@ -274,43 +286,48 @@ return (function () {
       };
     }
 
+    const stub = stubHttp(pathname, verb);
+    if (stub !== null) return stub;
+
     return { error: 'studio bridge: unhandled ' + verb + ' ' + pathname };
   };
 
-  const ws = async (message) => {
+  const ws = async (message, emit) => {
     const msg = message || {};
     const type = msg.type;
     const sessionId = idFrom(msg.sessionId || msg.sessionPath);
     const sessionPath = msg.sessionPath || (sessionId ? pathFor(sessionId) : '');
+    const collected = [];
+    const push = (event) => {
+      collected.push(event);
+      if (typeof emit === 'function') emit(event);
+    };
 
     if (type === 'context_usage' || type === 'resume_stream' || type === 'stream_resume') {
-      return { events: [] };
+      return { events: [], streamed: true };
     }
 
     if (type === 'abort') {
       if (sessionId) {
         try { await api.cancel(sessionId); } catch (err) {
-          return {
-            events: [{
-              type: 'error',
-              sessionId,
-              sessionPath,
-              message: err && err.message ? err.message : String(err),
-            }],
-          };
+          push({
+            type: 'error',
+            sessionId,
+            sessionPath,
+            message: err && err.message ? err.message : String(err),
+          });
+          return { events: collected, streamed: typeof emit === 'function' };
         }
       }
-      return {
-        events: [
-          { type: 'turn_end', sessionId, sessionPath },
-          { type: 'status', sessionId, sessionPath, isStreaming: false },
-        ],
-      };
+      push({ type: 'turn_end', sessionId, sessionPath });
+      push({ type: 'status', sessionId, sessionPath, isStreaming: false });
+      return { events: collected, streamed: typeof emit === 'function' };
     }
 
     if (type === 'prompt' || type === 'interject') {
       if (!sessionId) {
-        return { events: [{ type: 'error', message: 'missing sessionId', code: 'session_identity_unresolved' }] };
+        push({ type: 'error', message: 'missing sessionId', code: 'session_identity_unresolved' });
+        return { events: collected, streamed: typeof emit === 'function' };
       }
       const text = typeof msg.text === 'string' ? msg.text : '';
       const shown = msg.displayMessage && typeof msg.displayMessage.text === 'string'
@@ -318,21 +335,74 @@ return (function () {
         : text;
       const clientMessageId = typeof msg.clientMessageId === 'string' ? msg.clientMessageId : '';
       const liveId = await ensureLive(sessionId);
-      const livePath = pathFor(liveId);
-      if (type === 'interject') await api.steer(liveId, text);
-      else await api.send(liveId, text, clientMessageId || ('ohk-' + Date.now()));
-      const rows = await api.transcript(liveId);
-      return {
-        events: eventsForTurn(liveId, msg.sessionPath || livePath, clientMessageId, shown, lastAssistant(rows)),
-      };
+      const livePath = msg.sessionPath || pathFor(liveId);
+      const msgId = clientMessageId || ('ohk-' + Date.now());
+
+      push({ type: 'status', sessionId: liveId, sessionPath: livePath, isStreaming: true });
+      push({
+        type: 'session_user_message',
+        sessionId: liveId,
+        sessionPath: livePath,
+        clientMessageId: clientMessageId || null,
+        message: {
+          id: clientMessageId || ('user-' + Date.now()),
+          clientMessageId: clientMessageId || null,
+          text: shown || '',
+          timestamp: Date.now(),
+        },
+      });
+
+      try {
+        if (type === 'interject') {
+          await api.steer(liveId, text, msgId);
+          // Steer is fire-and-forget at a step boundary; surface a short ack.
+          push({ type: 'text_delta', sessionId: liveId, sessionPath: livePath, delta: '' });
+        } else {
+          await api.sendWithProgress(liveId, text, msgId, (progress) => {
+            const kind = progress && progress.kind;
+            if (kind === 'thinking_start') {
+              push({ type: 'thinking_start', sessionId: liveId, sessionPath: livePath });
+            } else if (kind === 'thinking_delta') {
+              push({
+                type: 'thinking_delta',
+                sessionId: liveId,
+                sessionPath: livePath,
+                delta: progress.delta || '',
+              });
+            } else if (kind === 'thinking_end') {
+              push({ type: 'thinking_end', sessionId: liveId, sessionPath: livePath });
+            } else if (kind === 'text_delta') {
+              push({
+                type: 'text_delta',
+                sessionId: liveId,
+                sessionPath: livePath,
+                delta: progress.delta || '',
+              });
+            }
+          });
+        }
+      } catch (err) {
+        push({
+          type: 'error',
+          sessionId: liveId,
+          sessionPath: livePath,
+          message: err && err.message ? err.message : String(err),
+        });
+        push({ type: 'status', sessionId: liveId, sessionPath: livePath, isStreaming: false });
+        return { events: collected, streamed: typeof emit === 'function' };
+      }
+
+      push({ type: 'turn_end', sessionId: liveId, sessionPath: livePath });
+      push({ type: 'status', sessionId: liveId, sessionPath: livePath, isStreaming: false });
+      return { events: collected, streamed: typeof emit === 'function' };
     }
 
-    return { events: [] };
+    return { events: [], streamed: true };
   };
 
-  const handle = (req) => {
+  const handle = (req, emit) => {
     const data = req || {};
-    if (data.op === 'ws') return ws(data.message || {});
+    if (data.op === 'ws') return ws(data.message || {}, emit);
     const path = data.path || '/';
     const search = data.search ? String(data.search).replace(/^\?/, '') : '';
     const full = search ? (path + (path.indexOf('?') >= 0 ? '&' : '?') + search) : path;

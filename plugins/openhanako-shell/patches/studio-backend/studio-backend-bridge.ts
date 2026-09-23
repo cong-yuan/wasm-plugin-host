@@ -5,6 +5,10 @@
  * `/ws` socket are forwarded with postMessage. Tauri stays in the parent.
  * Standalone openhanako (no parent hello) keeps using its own server.
  *
+ * Streaming: parent may push `{ type: 'event', requestId, event }` while a
+ * WS `prompt` is still in flight. Those land on the matching StudioSocket
+ * immediately as `text_delta` / `thinking_*` / `status` / `turn_end`.
+ *
  * Upstream shapes this matches:
  * - loadSessions → GET /api/sessions (session-actions.ts)
  * - ensureSession → POST /api/sessions/new-detached
@@ -24,6 +28,13 @@ type Pending = {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  socket?: StudioSocketLike;
+};
+
+type StudioSocketLike = {
+  readyState: number;
+  onmessage: SocketHandler;
+  deliver: (event: unknown) => void;
 };
 
 const HANDSHAKE_MS = 2000;
@@ -84,7 +95,7 @@ function probe(): void {
   }
 }
 
-function rpc(payload: Record<string, unknown>): Promise<unknown> {
+function rpc(payload: Record<string, unknown>, socket?: StudioSocketLike): Promise<unknown> {
   const requestId = 'sb-' + (++seq);
   const timeout = payload.op === 'ws' ? WS_TIMEOUT_MS : HTTP_TIMEOUT_MS;
   return new Promise((resolve, reject) => {
@@ -92,7 +103,7 @@ function rpc(payload: Record<string, unknown>): Promise<unknown> {
       pending.delete(requestId);
       reject(new Error('studio bridge timeout'));
     }, timeout);
-    pending.set(requestId, { resolve, reject, timer });
+    pending.set(requestId, { resolve, reject, timer, socket });
     try {
       window.parent.postMessage({
         source: PEER_SOURCE,
@@ -114,6 +125,11 @@ function onParentMessage(ev: MessageEvent): void {
   if (!data || data.source !== SHELL_SOURCE) return;
   if (data.type === 'studio-backend-hello') {
     enable();
+    return;
+  }
+  if (data.type === 'event' && data.requestId && data.event != null) {
+    const item = pending.get(data.requestId);
+    if (item && item.socket) item.socket.deliver(data.event);
     return;
   }
   if (data.type !== 'response' || !data.requestId) return;
@@ -141,21 +157,42 @@ function requestUrl(input: RequestInfo | URL): { pathname: string; search: strin
   }
 }
 
-/** Paths the vertical slice must answer from Studio, plus the init gates
- *  that otherwise abort before loadSessions / the socket. */
+/** Paths the vertical slice must answer from Studio, plus soft stubs that
+ *  otherwise 404 in the harness / init path. */
 export function intercepts(pathname: string): boolean {
   if (pathname === '/api/health') return true;
   if (pathname === '/api/config') return true;
   if (pathname === '/api/agents') return true;
+  if (pathname === '/api/agents/primary') return true;
+  if (pathname === '/api/agents/switch') return true;
   if (pathname === '/api/models') return true;
+  if (pathname === '/api/models/auxiliary-vision') return true;
   if (pathname === '/api/server/identity') return true;
   if (pathname === '/api/ws-ticket') return true;
   if (pathname === '/api/preferences/session-permission-default') return true;
+  if (pathname === '/api/preferences/models') return true;
+  if (pathname === '/api/session-thinking-level') return true;
+  if (pathname === '/api/user-profile') return true;
+  if (pathname === '/api/desk/cron') return true;
+  if (pathname === '/api/providers/fetch-models') return true;
+  if (pathname === '/api/upload-blob') return true;
   if (pathname === '/api/sessions') return true;
   if (pathname === '/api/sessions/messages') return true;
   if (pathname === '/api/sessions/switch') return true;
   if (pathname === '/api/sessions/new') return true;
   if (pathname === '/api/sessions/new-detached') return true;
+  if (pathname === '/api/sessions/archive') return true;
+  if (pathname === '/api/sessions/archived') return true;
+  if (pathname === '/api/sessions/archived/delete') return true;
+  if (pathname === '/api/sessions/cleanup') return true;
+  if (pathname === '/api/sessions/continue-deleted-agent') return true;
+  if (pathname === '/api/sessions/fresh-compact') return true;
+  if (pathname === '/api/sessions/pin') return true;
+  if (pathname === '/api/sessions/pin-order') return true;
+  if (pathname === '/api/sessions/rename') return true;
+  if (pathname === '/api/sessions/restore') return true;
+  if (pathname === '/api/sessions/todos/complete') return true;
+  if (pathname.startsWith('/api/bridge')) return true;
   if (/^\/api\/agents\/[^/]+\/config$/.test(pathname)) return true;
   return false;
 }
@@ -192,6 +229,7 @@ function StudioSocket(this: {
   close: () => void;
   addEventListener: (type: string, fn: SocketHandler) => void;
   removeEventListener: () => void;
+  deliver: (event: unknown) => void;
 }, url: string) {
   this.url = String(url);
   this.readyState = 0;
@@ -211,33 +249,55 @@ function StudioSocket(this: {
   });
 }
 
+StudioSocket.prototype.deliver = function deliver(event: unknown) {
+  if (typeof this.onmessage === 'function') {
+    this.onmessage({ data: JSON.stringify(event), target: this });
+  }
+};
+
 StudioSocket.prototype.send = function send(data: string) {
   let message: Record<string, unknown> = {};
   try { message = JSON.parse(String(data)); } catch { return; }
-  const self = this;
-  rpc({ op: 'ws', message }).then((result) => {
-    const events = result && typeof result === 'object' && Array.isArray((result as { events?: unknown }).events)
-      ? (result as { events: unknown[] }).events
-      : [];
-    events.forEach((event) => {
+  const self = this as StudioSocketLike & {
+    onmessage: SocketHandler;
+    onerror: SocketHandler;
+  };
+
+  // Wait for parent hello before RPCing — never open a native socket to the
+  // dummy loopback port while handshake is still pending.
+  whenReady().then((on) => {
+    if (!on) {
       if (typeof self.onmessage === 'function') {
-        self.onmessage({ data: JSON.stringify(event), target: self });
+        self.onmessage({
+          data: JSON.stringify({
+            type: 'error',
+            message: 'studio bridge unavailable (no parent hello)',
+          }),
+          target: self,
+        });
       }
-    });
-  }).catch((err) => {
-    const sessionPath = typeof message.sessionPath === 'string' ? message.sessionPath : '';
-    const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
-    if (typeof self.onmessage === 'function') {
-      self.onmessage({
-        data: JSON.stringify({
-          type: 'error',
-          sessionPath,
-          sessionId,
-          message: err instanceof Error ? err.message : String(err),
-        }),
-        target: self,
-      });
+      return;
     }
+    rpc({ op: 'ws', message }, self).then((result) => {
+      const streamed = !!(result && typeof result === 'object' && (result as { streamed?: boolean }).streamed);
+      const events = result && typeof result === 'object' && Array.isArray((result as { events?: unknown }).events)
+        ? (result as { events: unknown[] }).events
+        : [];
+      // When the parent already pushed events, the final ack carries an empty
+      // list. Only replay leftover events for non-streaming responses.
+      if (!streamed) {
+        events.forEach((event) => self.deliver(event));
+      }
+    }).catch((err) => {
+      const sessionPath = typeof message.sessionPath === 'string' ? message.sessionPath : '';
+      const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+      self.deliver({
+        type: 'error',
+        sessionPath,
+        sessionId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    });
   });
 };
 
@@ -261,9 +321,9 @@ function installWebSocketShim(): void {
 
   function Patched(this: WebSocket, url: string | URL, protocols?: string | string[]) {
     const href = String(url);
-    // pending 阶段也要走桥：hello 尚未到达时若先连原生 /ws（假端口），
-    // 会失败且不会在握手后自动重建。
-    if (mode !== 'off' && isChatSocket(href)) {
+    // Always shim chat /ws inside the iframe. Using Native while handshake is
+    // still `pending` used to dial the dummy getServerPort (17321) and 404.
+    if (inIframe() && isChatSocket(href)) {
       return new (StudioSocket as unknown as new (u: string) => WebSocket)(href);
     }
     if (protocols === undefined) return new Native(url);
@@ -306,7 +366,12 @@ function ensurePlatform(): void {
   const host = window as unknown as { platform?: Record<string, unknown> };
   if (!host.platform) {
     host.platform = {
-      getServerPort: async () => '17321',
+      getServerPort: async () => {
+        const on = await whenReady();
+        // Only advertise a port after hello. A dummy port during pending made
+        // early native sockets hit 127.0.0.1:17321.
+        return on ? '17321' : null;
+      },
       getServerToken: async () => 'studio-bridge',
       appReady() {},
       onSettingsChanged() {},
@@ -325,7 +390,7 @@ function ensurePlatform(): void {
         const port = await orig();
         if (port !== undefined && port !== null && String(port).trim() !== '') return port;
       } catch {
-        // embedded shell has no Hana port; the dummy below is loopback-only
+        // embedded shell has no Hana port
       }
     }
     const on = await whenReady();

@@ -43,14 +43,18 @@ Bootstrap-only (so `initApp` reaches the session list without a Hana API):
 
 Everything else is passed through to `fetch` / the real `WebSocket`.
 
-Inbound WS events the shim pushes after `send_message` returns (one full
-turn, not a token stream):
+Inbound WS events are pushed as `{ type: 'event', requestId, event }` while
+`send_message` is in flight (Studio has no token Tauri channel; the parent
+polls `transcript` for growth). Final `response` carries `{ streamed: true, events: [] }`.
 
-1. `status` `{ isStreaming: true, sessionPath, sessionId }`
-2. `session_user_message` `{ sessionPath, message: { text, clientMessageId } }`
-3. optional `thinking_start` / `thinking_delta` / `thinking_end` when Studio returns `reasoning`
-4. `text_delta` `{ sessionPath, delta }` — StreamBufferManager appends assistant text from `delta`
-5. `turn_end` `{ sessionPath }`
-6. `status` `{ isStreaming: false, sessionPath, sessionId }`
+1. `status` `{ isStreaming: true, … }` — immediately
+2. `session_user_message` — immediately
+3. optional `thinking_*` as `reasoning` grows
+4. `text_delta` `{ delta }` as assistant text grows
+5. `turn_end` after invoke resolves
+6. `status` `{ isStreaming: false, … }`
+
+Handshake: chat `/ws` always uses the StudioSocket shim inside the iframe
+(never the native WebSocket to the dummy `getServerPort` while hello is pending).
 
 `sessionPath` is `studio://<AgentRow.id>`. `sessionId` is that same id.

@@ -38,7 +38,7 @@ iframe 也用 `{ "source": "openhanako-studio-bridge", "type": "hello" }` 探测
 
 `AgentRow.id` 就是 openhanako 的 `sessionId`。路径固定成 `studio://<id>`，因为上游用 `sessionPath` 做转录键。助手 id 恒为 `studio`（名字 Hanako），避免每个会话被当成另一个助手。
 
-`create_agent` 默认 `provider: "mock"`、`model: "mock-1"`（与 Studio 离线演示一致），写在 `js/lib/api.js` 顶部的 `DEFAULT_PROVIDER` / `DEFAULT_MODEL`。`send_message` 会等整轮结束；v1 在 invoke 返回后推一条完整的 `text_delta`，再推 `turn_end`，不做 token 流。
+`create_agent` 默认 `provider: "mock"`、`model: "mock-1"`（与 Studio 离线演示一致），写在 `js/lib/api.js` 顶部的 `DEFAULT_PROVIDER` / `DEFAULT_MODEL`。Studio 的 `send_message` 本身会 `await when_idle`（没有 Tauri token 事件）；桥在 invoke 进行中轮询 `transcript`，把助手文本/reasoning 的增长实时推成 `text_delta` / `thinking_*`（父→iframe 的 `{ type: "event" }`），结束后再 `turn_end`。
 
 当前窗口没有 Tauri invoke 时，`lib/api.js` 退回内存 fixture，`mode()` 为 `"mock"`，健康检查里的 `studioBridge` 同样是 `"mock"`。invoke 一旦存在，命令失败会抛错，不会再假装有会话。
 
@@ -56,22 +56,24 @@ iframe 也用 `{ "source": "openhanako-studio-bridge", "type": "hello" }` 探测
 | `POST /api/sessions/switch` | 若 `live === false` 则 `resume_session { sessionId }` | `{ sessionId, isStreaming: false, agentId: "studio" }` |
 | `GET /api/sessions/messages?path=&sessionId=` | `transcript { agentId }` | `{ messages: [{ role, content, thinking? }], hasMore: false }`。`content` 是 `ChatMessage.text` |
 | WS `{ type: "prompt", text, sessionId, sessionPath, clientMessageId }` | `send_message { agentId, text, msgId }` | 见下方入站事件 |
-| WS `{ type: "interject", ... }` | `steer_agent { agentId, text }` | 参数名按 `send_message` 推断，上游若不同会在这一跳失败 |
+| WS `{ type: "interject", ... }` | `steer_agent { agentId, text, msgId }` | 与 `send_message` 同参；缺 `msgId` 会在 Studio 侧失败 |
 | WS `{ type: "abort", sessionId, sessionPath }` | `cancel_agent { agentId }` | 随后 `turn_end` + `status isStreaming: false` |
 | WS `context_usage` / `resume_stream` | — | 空事件，避免重连循环 |
 
-`send_message` 返回后，父页面让 iframe 依次 `onmessage`：
+父页面在 turn 进行中通过 `{ type: "event", requestId, event }` 推送（最终 `response` 的 `events` 为空，避免重放）：
 
 | 事件 | 作用 |
 |---|---|
-| `{ type: "status", isStreaming: true, sessionPath, sessionId }` | `applyStreamingStatus` / `beginTurn` |
-| `{ type: "session_user_message", sessionPath, clientMessageId, message: { text } }` | 确认乐观用户气泡（`ws-message-handler.ts`） |
-| `thinking_start` / `thinking_delta` / `thinking_end` | 仅当 `ChatMessage.reasoning` 非空 |
-| `{ type: "text_delta", sessionPath, delta }` | `StreamBufferManager` 把 `delta` 收成一条助手消息。v1 整段一次推完 |
-| `{ type: "turn_end", sessionPath }` | 刷新会话列表、交还输入焦点 |
+| `{ type: "status", isStreaming: true, sessionPath, sessionId }` | `applyStreamingStatus` / `beginTurn`（立刻） |
+| `{ type: "session_user_message", sessionPath, clientMessageId, message: { text } }` | 确认乐观用户气泡（立刻） |
+| `thinking_start` / `thinking_delta` / `thinking_end` | `transcript.reasoning` 增长时 |
+| `{ type: "text_delta", sessionPath, delta }` | `StreamBufferManager` 追加；轮询到增量就推，不整段等待 |
+| `{ type: "turn_end", sessionPath }` | `send_message` 返回后 |
 | `{ type: "status", isStreaming: false, sessionPath, sessionId }` | 结束 streaming |
 
 另外几条只为了让 `initApp` 在没有 Hana API 时也能走到 `loadSessions`：`GET /api/server/identity`、`GET /api/models`、`POST /api/ws-ticket`、`GET /api/agents/:id/config`、`GET /api/preferences/session-permission-default`。它们不是 agent 协议。
+
+会话周边会 404 的表面（archive/pin/rename、user-profile、desk/cron、preferences/models 等）由 shim 返回空/`{ ok: true }` 软桩，避免 harness 控制台噪音；不实现真实行为。
 
 ## 跑起来
 
