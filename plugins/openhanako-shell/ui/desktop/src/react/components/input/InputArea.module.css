@@ -1868,3 +1868,45 @@
     margin: 0;
     padding-left: var(--space-4);
 }
+
+
+/* Qoder-like context strip under the composer */
+.session-context-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+  padding: 0 0.35rem 0.15rem;
+  min-height: 1.35rem;
+  color: var(--text-muted, rgba(0, 0, 0, 0.48));
+  font-size: var(--fs-hint, 0.75rem);
+  line-height: 1.3;
+  user-select: none;
+  pointer-events: none;
+}
+
+.session-context-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  min-width: 0;
+  max-width: 42%;
+}
+
+.session-context-key {
+  opacity: 0.72;
+  flex: 0 0 auto;
+}
+
+.session-context-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-light, rgba(0, 0, 0, 0.62));
+  font-weight: 520;
+}
+
+.session-context-sep {
+  opacity: 0.4;
+  flex: 0 0 auto;
+}

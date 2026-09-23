@@ -84,26 +84,25 @@ Hana 前端已经迁进本插件的 `ui/`，不再依赖外部 `openhanako` / `o
 
 ## 跑起来
 
-```bash
-# 1) 本仓库内前端（Vite，默认 http://127.0.0.1:5173）
-cd plugins/openhanako-shell/ui
-npm install   # 首次
-npm run dev:web
-
-# 2) wasm
-cargo build -p openhanako-shell -p demo-openhanako-addon --release --target wasm32-wasip1
-
-# 3) Studio 启用 openhanako-shell（+ 可选 demo-openhanako-addon）
-#    启动窗会加载 iframe。父页面 hello 之后：侧栏会话来自 list_sessions，
-#    发送一条消息会等 send_message，再在对话里出现助手回复。
-```
-
-若要把 `patches/` 再同步进 `ui/`（一般不需要，改动已在 `ui/`）：
+**推荐：UI + Studio 一起开**
 
 ```bash
-ROOT=plugins/openhanako-shell/ui/desktop/src/react
-# 见 patches/*/README.md
+# 在仓库根或本插件目录
+bash plugins/openhanako-shell/scripts/dev-with-studio.sh
+# 或
+npm --prefix plugins/openhanako-shell run dev:with-studio
 ```
+
+脚本会：若 `127.0.0.1:5173` 还没起来就后台启动 `ui/` 的 `npm run dev:web`，再启动 `dsh-wasm-studio`（`tauri dev`）。Studio iframe 默认加载 `http://127.0.0.1:5173/index.html`，两者本来就可以同时跑；白屏通常只是只开了 Studio、没开 UI。
+
+只起 UI：
+
+```bash
+bash plugins/openhanako-shell/scripts/dev-ui.sh
+# 或
+cd plugins/openhanako-shell/ui && npm run dev:web
+```
+
 
 ## 槽位
 

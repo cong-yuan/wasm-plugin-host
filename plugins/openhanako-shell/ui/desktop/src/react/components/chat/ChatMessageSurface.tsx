@@ -79,6 +79,21 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
   const timelineAnchors = useMemo(() => (
     active && timelinePrepared ? buildTimelineAnchors(items) : EMPTY_TIMELINE_ANCHORS
   ), [active, items, timelinePrepared]);
+
+  // Always prepare the right-rail ticks once there are enough user turns (Qoder-like).
+  useEffect(() => {
+    if (!active) return;
+    let userTurns = 0;
+    for (const it of items) {
+      if (it.type === 'message' && it.data.role === 'user') {
+        userTurns += 1;
+        if (userTurns >= 2) break;
+      }
+    }
+    if (userTurns >= 2) setTimelinePrepared(true);
+  }, [active, items]);
+
+  const timelineTicksAlways = timelineAnchors.length >= 2;
   const emitScrollButton = useCallback((state: ChatScrollButtonState) => {
     onScrollButtonChange?.(state);
   }, [onScrollButtonChange]);
@@ -448,6 +463,12 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
               <div className={styles.typingIndicator} />
             </div>
           )}
+          {items.length === 0 && !isSessionStreaming && (
+            <div className={styles.sessionEmptyFill} aria-hidden="true">
+              <div className={styles.sessionEmptyTitle}>开始一段对话</div>
+              <div className={styles.sessionEmptyHint}>问问代码、改改文件，或让 Hana 帮你梳理当前项目。</div>
+            </div>
+          )}
           <div className={styles.sessionFooter} />
         </div>
       </div>
@@ -457,7 +478,7 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
         contentRef={contentRef}
         messageElementsRef={messageElementsRef}
         active={active}
-        railVisible={timelineRailVisible}
+        railVisible={timelineRailVisible || timelineTicksAlways}
       />
       {boxSelection.box && (
         <div

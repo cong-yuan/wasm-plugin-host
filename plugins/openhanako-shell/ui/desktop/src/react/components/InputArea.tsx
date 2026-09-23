@@ -33,6 +33,7 @@ import { SlashCommandMenu } from './input/SlashCommandMenu';
 import { MentionMenu, type MentionMenuItem } from './input/MentionMenu';
 import { InputStatusBars } from './input/InputStatusBars';
 import { InputContextRow } from './input/InputContextRow';
+import { SessionContextStrip } from './input/SessionContextStrip';
 import { InputControlBar } from './input/InputControlBar';
 import type { PermissionMode } from './input/PlanModeButton';
 import { SessionConfirmationPrompt } from './input/SessionConfirmationPrompt';
@@ -2383,6 +2384,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
             </div>
           )}
         </div>
+        <SessionContextStrip />
       </div>
     </div>
   );
