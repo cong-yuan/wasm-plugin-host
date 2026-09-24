@@ -384,6 +384,12 @@ return (function () {
     return id == null ? '' : String(id);
   };
 
+  const toolTimestamp = (value, snakeKey, camelKey) => {
+    if (!value || typeof value !== 'object') return undefined;
+    const timestamp = value[snakeKey] ?? value[camelKey];
+    return typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : undefined;
+  };
+
   // Studio/provider results may be strings, JSON objects, or multipart text.
   // Keep a plain-text rendering for users and a structured copy for cards.
   const toolResultText = (content) => {
@@ -462,7 +468,7 @@ return (function () {
         let entry = state.tools.get(id);
         if (!entry) {
           const args = parseToolArgs(tc.arguments);
-          const startedAt = Date.now();
+          const startedAt = toolTimestamp(tc, 'started_at', 'startedAt') ?? Date.now();
           entry = { name: tc.name, done: false, args, startedAt };
           state.tools.set(id, entry);
           onProgress({ kind: 'tool_start', id, name: tc.name, args, startedAt });
@@ -471,7 +477,7 @@ return (function () {
         const res = callId ? results.get(callId) : null;
         if (!res) return;
         entry.done = true;
-        const finishedAt = Date.now();
+        const finishedAt = toolTimestamp(res, 'finished_at', 'finishedAt') ?? Date.now();
         const isError = res.is_error === true || res.isError === true;
         const output = toolResultText(res.content ?? res.output);
         const resultDetails = (res.details && typeof res.details === 'object' ? res.details : undefined)

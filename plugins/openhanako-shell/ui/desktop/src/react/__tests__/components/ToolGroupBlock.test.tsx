@@ -188,6 +188,24 @@ describe('ToolGroupBlock', () => {
     expect(screen.queryByText(/用完电脑|用完插件/)).not.toBeInTheDocument();
   });
 
+  it('shows a truthful sub-second duration instead of 0s', () => {
+    render(
+      <ToolGroupBlock
+        collapsed={false}
+        tools={[{
+          name: 'read',
+          done: true,
+          success: true,
+          startedAt: 1_000,
+          finishedAt: 1_400,
+        }]}
+      />,
+    );
+
+    expect(screen.getByText('<1s')).toBeInTheDocument();
+    expect(screen.queryByText('0s')).not.toBeInTheDocument();
+  });
+
   it('renders write_stdin with its technical name and useful input summary', () => {
     render(
       <ToolGroupBlock

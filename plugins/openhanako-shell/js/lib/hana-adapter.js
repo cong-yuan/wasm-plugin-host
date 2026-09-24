@@ -728,6 +728,12 @@ return (function () {
     return id == null ? '' : String(id);
   };
 
+  const toolTimestamp = (value, snakeKey, camelKey) => {
+    if (!value || typeof value !== 'object') return undefined;
+    const timestamp = value[snakeKey] ?? value[camelKey];
+    return typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : undefined;
+  };
+
   const toolResultText = (content) => {
     if (content == null) return '';
     if (typeof content === 'string') return content;
@@ -867,12 +873,16 @@ return (function () {
                 ...todoDetails,
               }
             : resultDetails;
+          const startedAt = toolTimestamp(tc, 'started_at', 'startedAt');
+          const finishedAt = res ? toolTimestamp(res, 'finished_at', 'finishedAt') : undefined;
           return {
             ...(id ? { id } : {}),
             name: String(tc.name),
             args: parseToolArgs(tc.arguments),
             status: res ? (isError ? 'failed' : 'succeeded') : 'unknown',
             success: res ? !isError : false,
+            ...(startedAt !== undefined ? { startedAt } : {}),
+            ...(finishedAt !== undefined ? { finishedAt } : {}),
             ...(output ? { output } : {}),
             ...(parsedDetails ? { details: parsedDetails } : {}),
             ...(isError && output ? { error: output } : {}),

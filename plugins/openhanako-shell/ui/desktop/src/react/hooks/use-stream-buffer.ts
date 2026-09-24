@@ -495,6 +495,9 @@ class StreamBufferManager {
                 status: msg.status || (msg.success ? 'succeeded' : 'failed'),
                 ...(typeof msg.error === 'string' && msg.error ? { error: msg.error } : {}),
                 ...(typeof msg.output === 'string' && msg.output ? { output: msg.output } : {}),
+                startedAt: typeof msg.startedAt === 'number' && Number.isFinite(msg.startedAt)
+                  ? msg.startedAt
+                  : tools[toolIdx].startedAt,
                 finishedAt: typeof msg.finishedAt === 'number' && Number.isFinite(msg.finishedAt)
                   ? msg.finishedAt
                   : Date.now(),

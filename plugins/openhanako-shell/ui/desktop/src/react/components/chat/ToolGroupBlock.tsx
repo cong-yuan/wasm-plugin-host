@@ -216,6 +216,10 @@ function shortError(value: string): string {
   return value.length <= limit ? value : `${value.slice(0, limit - 1)}…`;
 }
 
+function formatToolDuration(ms: number): string {
+  return ms < 1_000 ? '<1s' : formatElapsed(ms);
+}
+
 const ToolIndicator = memo(function ToolIndicator({ tool }: { tool: ToolCall }) {
   const [expanded, setExpanded] = useState(false);
   const [input, setInput] = useState('');
@@ -234,7 +238,7 @@ const ToolIndicator = memo(function ToolIndicator({ tool }: { tool: ToolCall }) 
   const detailTitle = detail.title || detail.href;
   const status = tool.status || (tool.done ? (tool.success ? 'succeeded' : 'failed') : 'running');
   const duration = Number.isFinite(tool.startedAt) && Number.isFinite(tool.finishedAt)
-    ? formatElapsed(Math.max(0, tool.finishedAt! - tool.startedAt!))
+    ? formatToolDuration(Math.max(0, tool.finishedAt! - tool.startedAt!))
     : '';
   const tag = tool.args?.agentId as string | undefined;
   const hasInput = hasEnumerableKey(tool.args);

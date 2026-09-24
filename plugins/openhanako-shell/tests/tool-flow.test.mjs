@@ -61,8 +61,8 @@ rows.push({ role: 'user', text: 'hi', tool_calls: [], tool_results: [] });
 rows.push({
   role: 'assistant', text: 'done', reasoning: '',
   tool_calls: [
-    { call_id: 'c1', name: 'read', arguments: '{"file_path":"/tmp/x.ts"}' },
-    { id: 'c2', name: 'todo_write', arguments: '{"todos":[{"content":"a","activeForm":"a","status":"in_progress"}]}' },
+    { call_id: 'c1', name: 'read', arguments: '{"file_path":"/tmp/x.ts"}', started_at: 100 },
+    { id: 'c2', name: 'todo_write', arguments: '{"todos":[{"content":"a","activeForm":"a","status":"in_progress"}]}', started_at: 200 },
   ],
   tool_results: [],
 });
@@ -70,8 +70,8 @@ rows.push({
 rows.push({
   role: 'user', text: '', reasoning: '', tool_calls: [],
   tool_results: [
-    { tool_call_id: 'c1', content: 'file body', is_error: false },
-    { tool_call_id: 'c2', content: '{"todos":[{"content":"a","activeForm":"a","status":"in_progress"}]}', is_error: false },
+    { tool_call_id: 'c1', content: 'file body', is_error: false, finished_at: 3_500 },
+    { tool_call_id: 'c2', content: '{"todos":[{"content":"a","activeForm":"a","status":"in_progress"}]}', is_error: false, finished_at: 4_000 },
   ],
 });
 
@@ -81,6 +81,7 @@ check('history assistant carries toolCalls', Array.isArray(asst.toolCalls) && as
 check('tool arguments parsed to object', asst.toolCalls[0].args?.file_path === '/tmp/x.ts');
 check('tool success derived from tool_result', asst.toolCalls[0].success === true && asst.toolCalls[0].status === 'succeeded');
 check('history supports call_id and keeps text output', asst.toolCalls[0].id === 'c1' && asst.toolCalls[0].output === 'file body');
+check('history keeps Studio tool event timestamps', asst.toolCalls[0].startedAt === 100 && asst.toolCalls[0].finishedAt === 3_500);
 check('todo_write arguments stay structured', Array.isArray(asst.toolCalls[1].args?.todos));
 check('history keeps structured tool details', Array.isArray(asst.toolCalls[1].details?.todos));
 check('history hides transport-only tool result messages', msgs.messages.every((m) => m.content || m.role !== 'user'));
@@ -90,7 +91,7 @@ duringSend = async () => {
   rows.push({ role: 'user', text: 'go', tool_calls: [], tool_results: [] });
   const assistantRow = {
     role: 'assistant', text: '', reasoning: '',
-    tool_calls: [{ id: 'c9', name: 'bash', arguments: '{"command":"ls"}' }],
+    tool_calls: [{ id: 'c9', name: 'bash', arguments: '{"command":"ls"}', started_at: 1_200 }],
     tool_results: [],
   };
   rows.push(assistantRow);
@@ -98,7 +99,7 @@ duringSend = async () => {
   assistantRow.text = 'done';
   rows.push({
     role: 'user', text: '', reasoning: '', tool_calls: [],
-    tool_results: [{ call_id: 'c9', content: [{ type: 'text', text: 'first line' }, { type: 'text', text: 'second line' }], is_error: false }],
+    tool_results: [{ call_id: 'c9', content: [{ type: 'text', text: 'first line' }, { type: 'text', text: 'second line' }], is_error: false, finished_at: 4_600 }],
   });
 };
 
@@ -116,6 +117,7 @@ const started = events.find((e) => e.type === 'tool_start');
 check('tool_start names the tool with parsed args', started?.name === 'bash' && started?.args?.command === 'ls');
 const ended = events.find((e) => e.type === 'tool_end');
 check('tool_end supports call_id and keeps multipart output', ended?.id === 'c9' && ended?.success === true && ended?.output === 'first line\nsecond line');
+check('live tool events use Studio times instead of poll times', started?.startedAt === 1_200 && ended?.startedAt === 1_200 && ended?.finishedAt === 4_600);
 const echoed = events.find((e) => e.type === 'session_user_message');
 check('session_user_message echoes quotedText', echoed?.message?.quotedText === '引用的话');
 

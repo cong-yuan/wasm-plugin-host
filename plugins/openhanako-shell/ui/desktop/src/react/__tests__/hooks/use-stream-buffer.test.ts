@@ -463,6 +463,7 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
       id: 'call_output',
       name: 'bash',
       success: true,
+      startedAt: 900,
       finishedAt: 3_500,
       output: 'tests: 12 passed',
       details: { passed: 12 },
@@ -476,7 +477,7 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
       done: true,
       success: true,
       output: 'tests: 12 passed',
-      startedAt: 1_000,
+      startedAt: 900,
       finishedAt: 3_500,
       details: { passed: 12 },
     });
