@@ -90,6 +90,60 @@ describe('ws stream lifecycle after abort', () => {
     useStore.getState().initSession(PATH, [userItem('u1', 'start project')], false);
   });
 
+  it('status=false marks every still-running tool terminal', () => {
+    handleServerMessage({
+      type: 'tool_start',
+      sessionPath: PATH,
+      id: 'cancelled-read',
+      name: 'read',
+      startedAt: 1_000,
+    });
+
+    handleServerMessage({
+      type: 'status',
+      sessionPath: PATH,
+      isStreaming: false,
+    });
+
+    const assistant = messageItems().find((message) => message.role === 'assistant');
+    const group = assistant?.blocks?.find((block) => block.type === 'tool_group');
+    expect(group?.type).toBe('tool_group');
+    if (!group || group.type !== 'tool_group') throw new Error('expected tool group');
+    expect(group.tools).toEqual([
+      expect.objectContaining({
+        id: 'cancelled-read',
+        done: true,
+        success: false,
+        status: 'unknown',
+      }),
+    ]);
+    expect(group.tools[0].finishedAt).toEqual(expect.any(Number));
+  });
+
+  it('aborted turn_end followed by status=false keeps tools cancelled', () => {
+    handleServerMessage({
+      type: 'tool_start',
+      sessionPath: PATH,
+      id: 'cancelled-in-real-order',
+      name: 'bash',
+      startedAt: 1_000,
+    });
+
+    handleServerMessage({ type: 'turn_end', sessionPath: PATH, aborted: true });
+    handleServerMessage({ type: 'status', sessionPath: PATH, isStreaming: false });
+
+    const assistant = messageItems().find((message) => message.role === 'assistant');
+    const group = assistant?.blocks?.find((block) => block.type === 'tool_group');
+    expect(group?.type).toBe('tool_group');
+    if (!group || group.type !== 'tool_group') throw new Error('expected tool group');
+    expect(group.tools[0]).toMatchObject({
+      id: 'cancelled-in-real-order',
+      done: true,
+      success: false,
+      status: 'cancelled',
+    });
+  });
+
   it('status=false ends the local turn binding so the next reply lands after the new user message', () => {
     handleServerMessage({
       type: 'text_delta',

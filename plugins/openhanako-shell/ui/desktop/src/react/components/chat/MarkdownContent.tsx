@@ -147,6 +147,7 @@ function codeBlockToolbarLabels(): CodeBlockToolbarLabels {
 
 export const MarkdownContent = memo(function MarkdownContent({ html, className, tailFadeCount = 0, linkContext }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const hadTailFadeRef = useRef(false);
   const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
   const classes = className ? `md-content ${className}` : 'md-content';
   const toolbarLabels = useMemo(() => codeBlockToolbarLabels(), []);
@@ -248,7 +249,13 @@ export const MarkdownContent = memo(function MarkdownContent({ html, className, 
       // DOM 节点身份，用户在其中的原生文字选区不会被打断。
       reconcileTopLevelChildren(root, renderedHtml);
     }
-    applyTailFade(root, tailFadeCount);
+    if (tailFadeCount > 0) {
+      applyTailFade(root, tailFadeCount);
+      hadTailFadeRef.current = true;
+    } else if (hadTailFadeRef.current) {
+      clearTailFade(root);
+      hadTailFadeRef.current = false;
+    }
   }, [renderedHtml, tailFadeCount]);
 
   useMermaidDiagrams(ref, [renderedHtml]);

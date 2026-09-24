@@ -1884,6 +1884,68 @@ function mockPermissionDefault(mode = 'ask') {
       expect(calls.filter(u => u.startsWith('/api/sessions/messages'))).toHaveLength(0);
     });
 
+    it('已缓存 session 在后端切换响应前立即显示', async () => {
+      (mockState.chatSessions as Record<string, unknown>)['/a'] = {
+        items: [{ type: 'message', data: { id: 'cached', text: 'cached' } }],
+        hasMore: false,
+        loadingMore: false,
+      };
+      Object.assign(mockState, {
+        currentSessionPath: '/previous',
+        sessions: [
+          { path: '/previous', sessionId: 'previous' },
+          { path: '/a', sessionId: 'session-a' },
+        ],
+      });
+
+      let resolveSwitch!: (response: Response) => void;
+      mockFetch.mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveSwitch = resolve;
+      }));
+
+      const switching = switchSession('/a');
+      expect(mockState.currentSessionPath).toBe('/a');
+      expect(mockState.pendingSessionSwitchPath).toBe('/a');
+
+      resolveSwitch(jsonResponse({
+        sessionId: 'session-a',
+        agentId: null,
+        currentModelId: null,
+        currentModelName: null,
+        currentModelProvider: null,
+      }));
+      await switching;
+      expect(mockState.pendingSessionSwitchPath).toBeNull();
+    });
+
+    it('已缓存 session 切换失败时回滚原会话身份和附件', async () => {
+      (mockState.chatSessions as Record<string, unknown>)['/a'] = {
+        items: [{ type: 'message', data: { id: 'cached', text: 'cached' } }],
+        hasMore: false,
+        loadingMore: false,
+      };
+      Object.assign(mockState, {
+        currentSessionPath: '/previous',
+        currentSessionId: 'previous',
+        attachedFiles: [{ name: 'previous.txt' }],
+        attachedFilesBySession: {
+          '/a': [{ name: 'target.txt' }],
+        },
+        sessions: [
+          { path: '/previous', sessionId: 'previous' },
+          { path: '/a', sessionId: 'session-a' },
+        ],
+      });
+      mockFetch.mockResolvedValueOnce(jsonResponse({ error: 'switch rejected' }, false));
+
+      await switchSession('/a');
+
+      expect(mockState.currentSessionPath).toBe('/previous');
+      expect(mockState.currentSessionId).toBe('previous');
+      expect(mockState.pendingSessionSwitchPath).toBeNull();
+      expect(mockState.attachedFiles).toEqual([{ name: 'previous.txt' }]);
+    });
+
     it('后端确认目标 session 已结束时，清掉刷新前遗留的 streaming 标记', async () => {
       (mockState.chatSessions as Record<string, unknown>)['/a'] = {
         items: [{ type: 'message', data: { id: '0', text: 'cached' } }],

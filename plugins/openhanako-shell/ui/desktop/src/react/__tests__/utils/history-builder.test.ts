@@ -9,7 +9,7 @@ describe('buildItemsFromHistory user image restoration', () => {
         role: 'assistant',
         content: '',
         toolCalls: [
-          { id: 'call-ok', name: 'read', status: 'succeeded' },
+          { id: 'call-ok', name: 'read', status: 'succeeded', output: 'file body', details: { bytes: 9 } },
           { id: 'call-fail', name: 'read', status: 'failed', error: 'file not found' },
           { id: 'call-missing', name: 'read', status: 'unknown' },
         ],
@@ -22,7 +22,7 @@ describe('buildItemsFromHistory user image restoration', () => {
     const group = first.data.blocks?.find((block) => block.type === 'tool_group');
     expect(group).toMatchObject({
       tools: [
-        { id: 'call-ok', status: 'succeeded', done: true, success: true },
+        { id: 'call-ok', status: 'succeeded', done: true, success: true, output: 'file body', details: { bytes: 9 } },
         { id: 'call-fail', status: 'failed', done: true, success: false, error: 'file not found' },
         { id: 'call-missing', status: 'unknown', done: true, success: false },
       ],

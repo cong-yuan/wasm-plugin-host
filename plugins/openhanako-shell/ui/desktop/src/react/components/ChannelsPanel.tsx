@@ -581,6 +581,12 @@ export function AgentPhoneSessionPreview({ sessionPath, agentId, agentYuan }: {
                 ...(id ? { id } : {}),
                 done: true,
                 success: !!event.success,
+                status: event.status || (event.success ? 'succeeded' : 'failed'),
+                ...(typeof event.error === 'string' && event.error ? { error: event.error } : {}),
+                ...(typeof event.output === 'string' && event.output ? { output: event.output } : {}),
+                finishedAt: typeof event.finishedAt === 'number' && Number.isFinite(event.finishedAt)
+                  ? event.finishedAt
+                  : Date.now(),
                 details: event.details,
               };
               blocks[i] = { ...block, tools, collapsed: tools.length > 1 && tools.every((tool) => tool.done) };

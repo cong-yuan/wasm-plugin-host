@@ -514,6 +514,8 @@ describe('SessionList context menu', () => {
     expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionItem:not\(\.sessionItemSingleLine\):hover \.sessionArchiveBtn/);
     expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionItemSingleLine:hover \.sessionItemActions\s*\{[\s\S]*width:\s*calc\(40px \+ var\(--space-4\)\)/);
     expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionListScroller:hover \.sectionTitleActions/);
+    expect(css).toMatch(/\.sessionListScroller\s*\{[^}]*scrollbar-width:\s*none/s);
+    expect(css).toMatch(/\.sessionListScroller::-webkit-scrollbar\s*\{[^}]*display:\s*none/s);
   });
 
   it('keeps the mobile session search input at 16px to avoid browser auto zoom', () => {

@@ -49,6 +49,8 @@ interface Buffer {
   flushTimer: ReturnType<typeof setTimeout> | null;
   /** 当前 turn 绑定的 assistant message id */
   messageId: string | null;
+  /** Buffered presentation state changed since the last store update. */
+  dirty: boolean;
 }
 
 function createBuffer(sessionPath: string): Buffer {
@@ -67,6 +69,7 @@ function createBuffer(sessionPath: string): Buffer {
     lastFlushTime: 0,
     flushTimer: null,
     messageId: null,
+    dirty: false,
   };
 }
 
@@ -178,14 +181,36 @@ class StreamBufferManager {
     buf.cardAttrs = null;
     buf.cardDescAcc = '';
     buf.messageId = null;
+    buf.dirty = false;
   }
 
-  private finishBufferTurn(buf: Buffer): void {
+  private finishBufferTurn(buf: Buffer, cancelled = false): void {
     if (this.hasTurnState(buf)) {
       this.flush(buf);
     } else if (buf.flushTimer) {
       clearTimeout(buf.flushTimer);
       buf.flushTimer = null;
+    }
+    if (buf.messageId) {
+      const finishedAt = Date.now();
+      this.updateTargetMessage(buf, (message) => {
+        let changed = false;
+        const blocks = (message.blocks || []).map((block) => {
+          if (block.type !== 'tool_group' || block.tools.every((tool) => tool.done)) return block;
+          changed = true;
+          return {
+            ...block,
+            tools: block.tools.map((tool) => tool.done ? tool : {
+              ...tool,
+              done: true,
+              success: false,
+              status: cancelled ? 'cancelled' as const : 'unknown' as const,
+              finishedAt,
+            }),
+          };
+        });
+        return changed ? { ...message, blocks } : message;
+      });
     }
     this.resetTurnState(buf);
   }
@@ -253,6 +278,11 @@ class StreamBufferManager {
       clearTimeout(buf.flushTimer);
       buf.flushTimer = null;
     }
+    // Tool/content events call flush to preserve ordering. Once pending prose
+    // was committed, repeated tool events must not clone and publish the whole
+    // assistant message again.
+    if (!buf.dirty) return;
+    buf.dirty = false;
 
     this.updateTargetMessage(buf, (msg) => {
       const blocks = [...(msg.blocks || [])];
@@ -318,23 +348,29 @@ class StreamBufferManager {
     const buf = this.getBuffer(sessionPath, sessionId);
 
     switch (msg.type) {
-      case 'text_delta':
+      case 'text_delta': {
         this.ensureMessage(buf);
-        buf.textAcc += msg.delta || '';
+        const delta = msg.delta || '';
+        if (!delta) break;
+        buf.textAcc += delta;
+        buf.dirty = true;
         this.scheduleFlush(buf);
         break;
+      }
 
       case 'thinking_start':
         this.ensureMessage(buf);
         buf.inThinking = true;
         buf.hasThinkingBlock = true;
         buf.thinkingAcc = '';
+        buf.dirty = true;
         this.flush(buf);
         break;
 
       case 'thinking_delta':
         buf.hasThinkingBlock = true;
         buf.thinkingAcc += msg.delta || '';
+        buf.dirty = true;
         // 与 text/mood 共用时间节流，避免思考流只能在结束后显示。
         this.scheduleFlush(buf);
         break;
@@ -342,6 +378,7 @@ class StreamBufferManager {
       case 'thinking_end':
         buf.hasThinkingBlock = true;
         buf.inThinking = false;
+        buf.dirty = true;
         this.flush(buf);
         break;
 
@@ -350,16 +387,19 @@ class StreamBufferManager {
         buf.inMood = true;
         buf.moodAcc = '';
         buf.moodYuan = resolveSessionYuan(sessionPath);
+        buf.dirty = true;
         this.flush(buf);
         break;
 
       case 'mood_text':
         buf.moodAcc += msg.delta || '';
+        buf.dirty = true;
         this.scheduleFlush(buf);
         break;
 
       case 'mood_end':
         buf.inMood = false;
+        buf.dirty = true;
         this.flush(buf);
         break;
 
@@ -404,21 +444,29 @@ class StreamBufferManager {
         buf.textAcc = '';
         this.updateTargetMessage(buf, (m) => {
           const blocks = [...(m.blocks || [])];
-          // 找最后一个 tool_group 或创建新的
-          let lastTg = blocks.length - 1;
-          while (lastTg >= 0 && blocks[lastTg].type !== 'tool_group') lastTg--;
-          if (lastTg >= 0 && blocks[lastTg].type === 'tool_group') {
-            const tg = blocks[lastTg] as Extract<ContentBlock, { type: 'tool_group' }>;
-            // 如果上一个 group 里还有未完成的工具，追加到同一个 group
-            if (tg.tools.some(t => !t.done)) {
-              blocks[lastTg] = {
-                ...tg,
-                tools: [...tg.tools, toolCallFromStartEvent(msg)],
-              };
-              return { ...m, blocks };
-            }
+          const id = toolCallIdFromEvent(msg);
+          if (id && blocks.some((block) => (
+            block.type === 'tool_group'
+            && block.tools.some((tool) => tool.id === id)
+          ))) {
+            return m;
           }
-          // 新建 tool_group
+          // Consecutive calls belong to one visual step even when an earlier
+          // call already finished before the next starts. Text is the only
+          // boundary that opens a new group. Keeping adjacent tools together
+          // also gives assistant_snapshot one stable slot before and after the
+          // whole run instead of accidentally inserting suffix prose between
+          // completed tools.
+          const last = blocks.length - 1;
+          if (last >= 0 && blocks[last].type === 'tool_group') {
+            const group = blocks[last] as Extract<ContentBlock, { type: 'tool_group' }>;
+            blocks[last] = {
+              ...group,
+              tools: [...group.tools, toolCallFromStartEvent(msg)],
+            };
+            return { ...m, blocks };
+          }
+          // New group after text or another structural block.
           blocks.push({
             type: 'tool_group',
             tools: [toolCallFromStartEvent(msg)],
@@ -446,6 +494,10 @@ class StreamBufferManager {
                 success: !!msg.success,
                 status: msg.status || (msg.success ? 'succeeded' : 'failed'),
                 ...(typeof msg.error === 'string' && msg.error ? { error: msg.error } : {}),
+                ...(typeof msg.output === 'string' && msg.output ? { output: msg.output } : {}),
+                finishedAt: typeof msg.finishedAt === 'number' && Number.isFinite(msg.finishedAt)
+                  ? msg.finishedAt
+                  : Date.now(),
                 details: msg.details,
               };
               const allDone = tools.every(t => t.done);
@@ -456,6 +508,41 @@ class StreamBufferManager {
           return m;
         });
         break;
+
+      case 'assistant_snapshot': {
+        const segments = Array.isArray(msg.segments)
+          ? msg.segments.filter((segment: unknown): segment is string => typeof segment === 'string')
+          : [];
+        if (segments.length === 0) break;
+        this.flush(buf);
+        this.updateTargetMessage(buf, (m) => {
+          const blocks = m.blocks || [];
+          const structuralBlocks = blocks.filter((block) => block.type !== 'text');
+          const rebuilt: ContentBlock[] = [];
+          let segmentIndex = 0;
+
+          // Transcript emits one assistant row per model step. Tool groups mark
+          // those step boundaries, so fill one authoritative text slot before
+          // each group and put the remaining slot after the final group.
+          for (const block of structuralBlocks) {
+            if (block.type === 'tool_group' && segmentIndex < segments.length) {
+              const source = segments[segmentIndex++];
+              if (source) rebuilt.push({ type: 'text', source, html: renderMarkdown(source) });
+            }
+            rebuilt.push(block);
+          }
+          while (segmentIndex < segments.length) {
+            const source = segments[segmentIndex++];
+            if (source) rebuilt.push({ type: 'text', source, html: renderMarkdown(source) });
+          }
+          return { ...m, blocks: rebuilt };
+        });
+        // Snapshot already committed all authoritative text. Keeping its last
+        // segment in textAcc would make turn_end flush it again after a trailing
+        // tool group.
+        buf.textAcc = '';
+        break;
+      }
 
       case 'content_block': {
         let block = msg.block;
@@ -507,7 +594,7 @@ class StreamBufferManager {
           assistantEntryId: msg.assistantEntryId,
           assistantMessageId: buf.messageId,
         });
-        this.finishBufferTurn(buf);
+        this.finishBufferTurn(buf, msg.aborted === true);
         break;
 
     }

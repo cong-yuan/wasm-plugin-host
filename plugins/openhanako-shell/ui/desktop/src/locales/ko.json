@@ -668,7 +668,17 @@
     "failed": "⚠ 뭔가 이상한 것 같아요 · {n}단계",
     "countWithFail": "{total}개 도구 ({fail}개 실패)",
     "count": "{n}개 도구",
-    "running": "{n}개 도구 실행 중"
+    "running": "{n}개 도구 실행 중",
+    "output": "도구 출력",
+    "input": "입력",
+    "response": "응답",
+    "status": {
+      "running": "실행 중",
+      "succeeded": "실행 완료",
+      "failed": "실패",
+      "cancelled": "중지됨",
+      "unknown": "완료"
+    }
   },
   "processFold": {
     "summary": "✨ {name}이(가) 한동안 바쁘게 움직였어요",

@@ -668,7 +668,17 @@
     "failed": "⚠ Something seems off · {n} steps",
     "countWithFail": "{total} tools ({fail} failed)",
     "count": "{n} tools",
-    "running": "{n} tools running"
+    "running": "{n} tools running",
+    "output": "Tool output",
+    "input": "Input",
+    "response": "Response",
+    "status": {
+      "running": "Running",
+      "succeeded": "Ran",
+      "failed": "Failed",
+      "cancelled": "Stopped",
+      "unknown": "Finished"
+    }
   },
   "processFold": {
     "summary": "✨ {name} worked for a while",

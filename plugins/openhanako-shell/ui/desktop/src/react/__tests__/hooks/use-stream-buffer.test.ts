@@ -336,6 +336,85 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
     expect(blocks[2]).toMatchObject({ type: 'text', source: '读完了，结论是 X。' });
   });
 
+  it('keeps consecutive completed tools between the first and second prose segments', () => {
+    streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '上一轮已经完整测过一轮了，这次换个角度压测。' });
+    streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'edge-1', name: 'read' });
+    streamBufferManager.handle({ type: 'tool_end', sessionPath: PATH, id: 'edge-1', name: 'read', success: true });
+    streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'edge-2', name: 'grep' });
+    streamBufferManager.handle({ type: 'tool_end', sessionPath: PATH, id: 'edge-2', name: 'grep', success: true });
+    streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '第二段描述。' });
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath: PATH,
+      segments: ['上一轮已经完整测过一轮了，这次换个角度压测。', '', '第二段描述。'],
+    });
+
+    const blocks = getAssistantMessage()?.blocks ?? [];
+    expect(blocks.map((block) => block.type)).toEqual(['text', 'tool_group', 'text']);
+    expect(blocks[0]).toMatchObject({
+      type: 'text',
+      source: '上一轮已经完整测过一轮了，这次换个角度压测。',
+    });
+    const group = blocks[1];
+    expect(group?.type).toBe('tool_group');
+    if (!group || group.type !== 'tool_group') throw new Error('expected tool group');
+    expect(group.tools.map((tool) => tool.id)).toEqual(['edge-1', 'edge-2']);
+    expect(blocks[2]).toMatchObject({ type: 'text', source: '第二段描述。' });
+  });
+
+  it('authoritative assistant snapshot restores text lost between tool calls', () => {
+    streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '开头。' });
+    streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'snap-tool', name: 'read' });
+    streamBufferManager.handle({ type: 'tool_end', sessionPath: PATH, id: 'snap-tool', name: 'read', success: true });
+    // Simulate a dropped push chunk: only final suffix reached renderer.
+    streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '结尾。' });
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath: PATH,
+      segments: ['开头完整。', '工具后完整结论。'],
+    });
+
+    const blocks = getAssistantMessage()?.blocks ?? [];
+    expect(blocks.map((block) => block.type)).toEqual(['text', 'tool_group', 'text']);
+    expect(blocks[0]).toMatchObject({ type: 'text', source: '开头完整。' });
+    expect(blocks[2]).toMatchObject({ type: 'text', source: '工具后完整结论。' });
+  });
+
+  it('inserts a fully dropped pre-tool segment before the matching tool group', () => {
+    streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'missing-pre', name: 'read' });
+    streamBufferManager.handle({ type: 'tool_end', sessionPath: PATH, id: 'missing-pre', name: 'read', success: true });
+    streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '残缺结尾。' });
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath: PATH,
+      segments: ['完整前言。', '完整结论。'],
+    });
+
+    const blocks = getAssistantMessage()?.blocks ?? [];
+    expect(blocks.map((block) => block.type)).toEqual(['text', 'tool_group', 'text']);
+    expect(blocks[0]).toMatchObject({ type: 'text', source: '完整前言。' });
+    expect(blocks[2]).toMatchObject({ type: 'text', source: '完整结论。' });
+  });
+
+  it('duplicate tool events with the same call id are idempotent', () => {
+    const start = { type: 'tool_start', sessionPath: PATH, id: 'same-call', name: 'bash', args: { command: 'echo ok' } };
+    streamBufferManager.handle(start);
+    streamBufferManager.handle(start);
+    streamBufferManager.handle({
+      type: 'tool_end', sessionPath: PATH, id: 'same-call', name: 'bash', success: true, output: 'first result',
+    });
+    streamBufferManager.handle({
+      type: 'tool_end', sessionPath: PATH, id: 'same-call', name: 'bash', success: false, error: 'late duplicate',
+    });
+
+    const groups = getAssistantMessage()?.blocks?.filter((block) => block.type === 'tool_group') ?? [];
+    const tools = groups.flatMap((group) => group.type === 'tool_group' ? group.tools : []);
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({
+      id: 'same-call', done: true, success: true, status: 'succeeded', output: 'first result',
+    });
+  });
+
   it('tool_end 有调用 ID 时只闭合对应的同名工具', () => {
     streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'call_a', name: 'echo', args: { value: 'first' } });
     streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'call_b', name: 'echo', args: { value: 'second' } });
@@ -371,6 +450,35 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
       success: false,
       status: 'failed',
       error: 'permission denied',
+    });
+  });
+
+  it('tool_end keeps output, details, and timing metadata', () => {
+    streamBufferManager.handle({
+      type: 'tool_start', sessionPath: PATH, id: 'call_output', name: 'bash', startedAt: 1_000,
+    });
+    streamBufferManager.handle({
+      type: 'tool_end',
+      sessionPath: PATH,
+      id: 'call_output',
+      name: 'bash',
+      success: true,
+      finishedAt: 3_500,
+      output: 'tests: 12 passed',
+      details: { passed: 12 },
+    });
+
+    const group = getAssistantMessage()?.blocks?.find((block) => block.type === 'tool_group');
+    expect(group).toBeTruthy();
+    if (!group || group.type !== 'tool_group') throw new Error('expected tool group');
+    expect(group.tools[0]).toMatchObject({
+      id: 'call_output',
+      done: true,
+      success: true,
+      output: 'tests: 12 passed',
+      startedAt: 1_000,
+      finishedAt: 3_500,
+      details: { passed: 12 },
     });
   });
 

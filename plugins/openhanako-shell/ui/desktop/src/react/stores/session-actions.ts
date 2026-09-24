@@ -32,6 +32,13 @@ import { findPrimaryAgent, resolveAgentWorkspace } from '../utils/agent-workspac
 
 let _switchVersion = 0;
 let _switchAbortController: AbortController | null = null;
+let _optimisticSessionSwitch: {
+  version: number;
+  targetPath: string;
+  previousSessionPath: string | null;
+  previousSessionId: string | null;
+  previousPendingNewSession: boolean;
+} | null = null;
 let _pendingDraftSequence = 0;
 
 export interface SessionRef {
@@ -734,9 +741,30 @@ export function upsertOptimisticSessionFirstMessage(
 
 export async function switchSession(path: string): Promise<void> {
   const s = useStore.getState();
+  const optimistic = _optimisticSessionSwitch;
+  if (optimistic && s.pendingSessionSwitchPath === optimistic.targetPath) {
+    if (path === optimistic.targetPath) return;
+    if (path === optimistic.previousSessionPath) {
+      _switchVersion += 1;
+      _switchAbortController?.abort();
+      _switchAbortController = null;
+      _optimisticSessionSwitch = null;
+      useStore.setState((prev: Record<string, any>) => ({
+        ...currentSessionIdentityPatch(prev, optimistic.previousSessionPath, optimistic.previousSessionId),
+        pendingSessionSwitchPath: null,
+        pendingNewSession: optimistic.previousPendingNewSession,
+        attachedFiles: optimistic.previousSessionPath
+          ? sessionScopedValue(prev, prev.attachedFilesBySession || {}, optimistic.previousSessionPath) || []
+          : [],
+      }));
+      return;
+    }
+  }
+
   const myVersion = ++_switchVersion;
   _switchAbortController?.abort();
   _switchAbortController = null;
+  _optimisticSessionSwitch = null;
 
   if (path === s.currentSessionPath && !s.pendingNewSession) {
     useStore.setState(state => ({
@@ -763,6 +791,61 @@ export async function switchSession(path: string): Promise<void> {
   const abortController = new AbortController();
   _switchAbortController = abortController;
   const targetSessionId = sessionIdForPathFromState(s as Record<string, any>, path);
+  const hasData = !!sessionScopedValue(
+    useStore.getState() as Record<string, any>,
+    useStore.getState().chatSessions,
+    path,
+  );
+  const previousSessionPath = s.currentSessionPath;
+  const previousSessionId = s.currentSessionId;
+  const previousPendingNewSession = s.pendingNewSession;
+  let showedCachedSession = false;
+
+  if (hasData) {
+    if (previousSessionPath) {
+      useStore.setState(prev => ({
+        attachedFilesBySession: putSessionScopedStateValue(
+          prev as Record<string, any>,
+          prev.attachedFilesBySession || {},
+          previousSessionPath,
+          [...(s.attachedFiles || [])],
+        ),
+      }));
+    }
+    useStore.setState((prev: Record<string, any>) => ({
+      ...currentSessionIdentityPatch(prev, path, targetSessionId),
+      pendingSessionSwitchPath: path,
+      pendingNewSession: false,
+      welcomeVisible: false,
+      unreadOutputSessionPaths: filterSessionScopedStateList(
+        prev,
+        prev.unreadOutputSessionPaths || [],
+        path,
+      ),
+      attachedFiles: sessionScopedValue(prev, prev.attachedFilesBySession || {}, path) || [],
+    }));
+    showedCachedSession = true;
+    _optimisticSessionSwitch = {
+      version: myVersion,
+      targetPath: path,
+      previousSessionPath,
+      previousSessionId,
+      previousPendingNewSession,
+    };
+  }
+
+  const rollbackCachedSession = () => {
+    if (!showedCachedSession || !isCurrentSwitch(myVersion, path)) return;
+    if (_optimisticSessionSwitch?.version === myVersion) _optimisticSessionSwitch = null;
+    useStore.setState((prev: Record<string, any>) => ({
+      ...currentSessionIdentityPatch(prev, previousSessionPath, previousSessionId),
+      pendingSessionSwitchPath: null,
+      pendingNewSession: previousPendingNewSession,
+      attachedFiles: previousSessionPath
+        ? sessionScopedValue(prev, prev.attachedFilesBySession || {}, previousSessionPath) || []
+        : [],
+    }));
+  };
 
   try {
     const res = await hanaFetch('/api/sessions/switch', {
@@ -781,6 +864,7 @@ export async function switchSession(path: string): Promise<void> {
       // 带上错误码，呈现层才能把它翻成人话；没有码的原生崩溃走兜底文案 + 详情。
       const routeError = normalizeSessionRouteError(data);
       console.error('[session] switch failed:', routeError.message, routeError.code || '');
+      rollbackCachedSession();
       useStore.setState({ pendingSessionSwitchPath: null });
       showSessionSwitchError(path, errorWithCode(routeError.message, routeError.code));
       return;
@@ -821,7 +905,7 @@ export async function switchSession(path: string): Promise<void> {
     // 保存当前 session 的附件到 keyed store
     const currentPath = s.currentSessionPath;
     const currentAttachments = state.attachedFiles;
-    if (currentPath) {
+    if (currentPath && !showedCachedSession) {
       useStore.setState(prev => ({
         attachedFilesBySession: putSessionScopedStateValue(
           prev as Record<string, any>,
@@ -836,13 +920,13 @@ export async function switchSession(path: string): Promise<void> {
     // 一旦 currentSessionPath 指向新 session，主窗口 WebSocket 会将该 session 的流式事件
     // 路由到 streamBufferManager，触发 bumpMessageLiveVersion，导致 loadMessages 的
     // 竞态守卫跳过 hydrate，store 丢失完整历史。提前加载可避免此竞态。
-    const hasData = !!sessionScopedValue(useStore.getState() as Record<string, any>, useStore.getState().chatSessions, path);
     if (!hasData) {
       await loadMessages(path);
       if (myVersion !== _switchVersion) return;
     }
 
     // 批量更新 store（切 currentSessionPath 切换对话内容；可见 desk/preview 状态由 workspace 激活流程恢复）
+    if (_optimisticSessionSwitch?.version === myVersion) _optimisticSessionSwitch = null;
     useStore.setState((prev: any) => ({
       ...currentSessionIdentityPatch(prev, path, data.sessionId),
       pendingSessionSwitchPath: null,
@@ -958,6 +1042,7 @@ export async function switchSession(path: string): Promise<void> {
     requestChatInputFocus(path);
   } catch (err) {
     if (myVersion !== _switchVersion || isAbortError(err)) return;
+    rollbackCachedSession();
     useStore.setState((state: Record<string, any>) => (
       state.pendingSessionSwitchPath === path ? { pendingSessionSwitchPath: null } : {}
     ));

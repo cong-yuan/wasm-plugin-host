@@ -11,16 +11,18 @@
  *   { type: "compact", sessionId: "..." }  (新客户端只发送 sessionId；sessionPath 仅旧客户端兼容输入，服务端会在边界解析为 sessionId 后丢弃)
  *
  * Server → Client:
- *   { type: "text_delta", delta: "..." }
+ *   流式聊天事件均携带同一非空 streamId；Stop 后该 streamId 的迟到事件必须丢弃。
+ *   { type: "text_delta", delta: "...", streamId: "..." }
+ *   { type: "assistant_snapshot", segments: ["text before tool", "text after tool"], streamId: "..." }  (turn-end authoritative text slots; empty strings preserve tool boundaries)
  *   { type: "mood_start" }
  *   { type: "mood_text", delta: "..." }
  *   { type: "mood_end" }
  *   { type: "thinking_start" }
  *   { type: "thinking_delta", delta: "..." }
  *   { type: "thinking_end" }
- *   { type: "tool_start", id?: "tool_call_id", name: "..." }
- *   { type: "tool_end", id?: "tool_call_id", name: "...", success: bool, details?: object }
- *   { type: "turn_end" }
+ *   { type: "tool_start", id?: "tool_call_id", name: "...", startedAt?: number, streamId: "..." }
+ *   { type: "tool_end", id?: "tool_call_id", name: "...", success: bool, output?: string, details?: object, startedAt?: number, finishedAt?: number, streamId: "..." }
+ *   { type: "turn_end", streamId?: "...", aborted?: bool }  (aborted=true 将仍在运行的工具标记为已停止)
  *   { type: "error", message: "..." }
  *   { type: "status", sessionId?: string, sessionPath: "...", isStreaming: bool, streamId?: string|null, turnId?: string|null }
  *   { type: "abort_rejected", reason: "stale_stream", sessionId?: string|null, sessionPath: "...", streamId?: string|null }

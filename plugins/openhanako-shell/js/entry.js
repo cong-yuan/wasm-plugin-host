@@ -10,6 +10,20 @@ studio.register('OpenhanakoShell', (el) => {
   const B = studio.require('lib/bridge');
   const H = studio.require('lib/host-bridge');
 
+  const RETRY_DELAY_MS = 4000;
+  let retryTimer = null;
+  let retryAttempt = 0;
+  let ready = false;
+
+  const retryUrl = () => {
+    const hashAt = url.indexOf('#');
+    const base = hashAt >= 0 ? url.slice(0, hashAt) : url;
+    const hash = hashAt >= 0 ? url.slice(hashAt) : '';
+    const separator = base.includes('?') ? '&' : '?';
+    retryAttempt += 1;
+    return `${base}${separator}_ohk_retry=${retryAttempt}${hash}`;
+  };
+
   el.style.cssText =
     'position:absolute;inset:0;margin:0;padding:0;overflow:hidden;background:#EFE8DB';
   el.innerHTML = '';
@@ -35,13 +49,41 @@ studio.register('OpenhanakoShell', (el) => {
     disposers.push(h.dispose);
   }
 
+  const recovery = document.createElement('div');
+  recovery.textContent = 'Open Hana UI unavailable. Retrying…';
+  recovery.style.cssText =
+    'position:absolute;inset:0;z-index:2;display:none;align-items:center;justify-content:center;' +
+    'padding:24px;color:#6f6254;background:#EFE8DB;font:14px system-ui,sans-serif';
+
+  const markReady = () => {
+    ready = true;
+    recovery.style.display = 'none';
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = null;
+  };
+  const armRecovery = () => {
+    ready = false;
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => {
+      if (ready) return;
+      recovery.style.display = 'flex';
+      frame.src = retryUrl();
+      armRecovery();
+    }, RETRY_DELAY_MS);
+  };
+  frame.addEventListener('load', armRecovery);
+
   el.appendChild(frame);
   el.appendChild(layer);
+  el.appendChild(recovery);
+  armRecovery();
 
-  const detachBridge = B.attach(frame, layer, hosts);
+  const detachBridge = B.attach(frame, layer, hosts, { onReady: markReady });
   const detachHost = H.attach(frame);
 
   return () => {
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    frame.removeEventListener('load', armRecovery);
     detachHost();
     detachBridge();
     for (const d of disposers) {
@@ -49,5 +91,6 @@ studio.register('OpenhanakoShell', (el) => {
     }
     frame.remove();
     layer.remove();
+    recovery.remove();
   };
 });

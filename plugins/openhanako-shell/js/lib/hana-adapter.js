@@ -17,6 +17,33 @@ return (function () {
 
   const pathFor = (id) => PATH_PREFIX + encodeURIComponent(String(id));
 
+  // Studio progress callbacks can outlive cancel_agent. Keep a per-session
+  // turn token so Stop can synchronously invalidate every late callback before
+  // awaiting the backend cancellation request.
+  const activeTurns = new Map();
+  let streamSequence = 0;
+  const newStreamId = () => 'studio-stream-' + Date.now().toString(36) + '-' + (++streamSequence).toString(36);
+  const deactivateTurn = (turn) => {
+    if (!turn || !turn.active) return;
+    turn.active = false;
+    turn.keys.forEach((key) => {
+      if (activeTurns.get(key) === turn) activeTurns.delete(key);
+    });
+  };
+  const activateTurn = (...ids) => {
+    const keys = Array.from(new Set(ids.map((id) => String(id || '').trim()).filter(Boolean)));
+    keys.forEach((key) => deactivateTurn(activeTurns.get(key)));
+    const turn = { streamId: newStreamId(), keys, primaryKey: keys[0] || '', active: true };
+    keys.forEach((key) => activeTurns.set(key, turn));
+    return turn;
+  };
+  const isActiveTurn = (turn) => !!(
+    turn
+    && turn.active
+    && turn.primaryKey
+    && activeTurns.get(turn.primaryKey) === turn
+  );
+
   const idFrom = (value) => {
     if (value == null) return '';
     const raw = String(value).trim();
@@ -642,13 +669,17 @@ return (function () {
   const projection = (row) => {
     const path = pathFor(row.id);
     const pin = loadPins()[path] || null;
+    const updatedAt = row.updated_at ?? row.updatedAt ?? null;
+    const timestamp = updatedAt == null ? null : new Date(updatedAt);
+    const isoTimestamp = timestamp && !Number.isNaN(timestamp.getTime())
+      ? timestamp.toISOString()
+      : null;
     return {
       path,
       sessionId: row.id,
       title: row.title || null,
       firstMessage: row.title || '',
-      modified: new Date(row.updated_at || Date.now()).toISOString(),
-      created: new Date(row.updated_at || Date.now()).toISOString(),
+      ...(isoTimestamp ? { modified: isoTimestamp, created: isoTimestamp } : {}),
       messageCount: row.messages || 0,
       cwd: null,
       agentId: ASSISTANT_ID,
@@ -685,6 +716,39 @@ return (function () {
     if (typeof raw === 'object') return raw;
     try {
       const parsed = JSON.parse(String(raw));
+      return parsed && typeof parsed === 'object' ? parsed : undefined;
+    } catch (_) {
+      return undefined;
+    }
+  };
+
+  const toolCallId = (value) => {
+    if (!value || typeof value !== 'object') return '';
+    const id = value.id ?? value.call_id ?? value.tool_call_id ?? value.toolCallId;
+    return id == null ? '' : String(id);
+  };
+
+  const toolResultText = (content) => {
+    if (content == null) return '';
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      return content.map((part) => {
+        if (typeof part === 'string') return part;
+        if (part && typeof part.text === 'string') return part.text;
+        if (part && typeof part.content === 'string') return part.content;
+        try { return JSON.stringify(part); } catch (_) { return String(part); }
+      }).filter(Boolean).join('\n');
+    }
+    try { return JSON.stringify(content, null, 2); } catch (_) { return String(content); }
+  };
+
+  const parseToolDetails = (content) => {
+    if (content == null) return undefined;
+    if (typeof content === 'object' && !Array.isArray(content)) return content;
+    const trimmed = toolResultText(content).trim();
+    if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return undefined;
+    try {
+      const parsed = JSON.parse(trimmed);
       return parsed && typeof parsed === 'object' ? parsed : undefined;
     } catch (_) {
       return undefined;
@@ -735,16 +799,29 @@ return (function () {
     return { todos };
   };
 
-  // Latest todo snapshot from the transcript. dsh's `todo_write` puts the list
-  // in the CALL ARGUMENTS and emits a `todo/write` session event that Studio's
-  // `derive_messages` never surfaces, so scanning tool calls is the only way to
-  // rebuild the checklist after a reload / session switch.
-  const todosFromTranscript = (rows) => {
+  const toolResultsFromTranscript = (rows) => {
+    const results = new Map();
+    for (const message of (rows || [])) {
+      for (const result of (message && Array.isArray(message.tool_results) ? message.tool_results : [])) {
+        const id = toolCallId(result);
+        if (id) results.set(id, result);
+      }
+    }
+    return results;
+  };
+
+  // Latest successful todo snapshot from the transcript. Studio projects tool
+  // calls and results into separate assistant/user rows, so pair globally by id.
+  const todosFromTranscript = (rows, results = toolResultsFromTranscript(rows)) => {
     let latest = null;
     for (const m of (rows || [])) {
       if (!m || m.role !== 'assistant' || !Array.isArray(m.tool_calls)) continue;
       for (const tc of m.tool_calls) {
         if (!tc || !TODO_TOOL_NAMES.has(tc.name)) continue;
+        const id = toolCallId(tc);
+        const result = id ? results.get(id) : null;
+        if (!result) continue;
+        if (result.is_error === true || result.isError === true || result.success === false || result.status === 'failed') continue;
         const details = todoDetailsFromArgs(tc.name, parseToolArgs(tc.arguments));
         if (details) latest = details.todos;
       }
@@ -752,7 +829,7 @@ return (function () {
     return latest || [];
   };
 
-  const historyMessage = (m, index) => {
+  const historyMessage = (m, index, transcriptResults) => {
     const role = m.role === 'user' ? 'user' : 'assistant';
     const text = m.text || '';
     const row = {
@@ -768,23 +845,37 @@ return (function () {
     // the object the renderer expects, and merge the matching tool_result so
     // done/success/error/details are populated.
     if (role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) {
-      const results = new Map();
-      for (const tr of (m.tool_results || [])) {
-        if (tr && tr.tool_call_id) results.set(String(tr.tool_call_id), tr);
-      }
+      const results = transcriptResults || toolResultsFromTranscript([m]);
       row.toolCalls = m.tool_calls
         .filter((tc) => tc && tc.name)
         .map((tc) => {
-          const id = tc.id != null ? String(tc.id) : undefined;
+          const id = toolCallId(tc) || undefined;
           const res = id ? results.get(id) : null;
-          const isError = !!(res && res.is_error === true);
+          const isError = !!(res && (res.is_error === true || res.isError === true));
+          const resultContent = res ? (res.content ?? res.output) : undefined;
+          const output = res ? toolResultText(resultContent) : '';
+          const resultDetails = res
+            ? ((res.details && typeof res.details === 'object' ? res.details : undefined)
+              || parseToolDetails(resultContent))
+            : undefined;
+          const todoDetails = res && !isError
+            ? todoDetailsFromArgs(tc.name, parseToolArgs(tc.arguments))
+            : undefined;
+          const parsedDetails = todoDetails
+            ? {
+                ...(resultDetails && !Array.isArray(resultDetails) ? resultDetails : {}),
+                ...todoDetails,
+              }
+            : resultDetails;
           return {
             ...(id ? { id } : {}),
             name: String(tc.name),
             args: parseToolArgs(tc.arguments),
             status: res ? (isError ? 'failed' : 'succeeded') : 'unknown',
             success: res ? !isError : false,
-            ...(isError && res ? { error: String(res.content == null ? '' : res.content) } : {}),
+            ...(output ? { output } : {}),
+            ...(parsedDetails ? { details: parsedDetails } : {}),
+            ...(isError && output ? { error: output } : {}),
           };
         });
     }
@@ -1115,11 +1206,11 @@ return (function () {
     if (pathname === '/api/sessions/switch' && verb === 'POST') {
       const sessionId = sessionIdOf(body, query);
       if (!sessionId) return { error: 'missing session' };
+      // `ensureLive` restores a cold session with its persisted model. Never
+      // rebind during navigation: rebind stops and recreates the driver, making
+      // every session click expensive and risking loss of live runtime state.
       const liveId = await ensureLive(sessionId);
       const assigned = modelForPath(pathFor(liveId));
-      try {
-        await api.rebind(liveId, assigned.provider, assigned.modelId);
-      } catch (_) { /* keep resumed agent; UI still shows stored/default model */ }
       return {
         ok: true,
         path: pathFor(liveId),
@@ -1197,10 +1288,21 @@ return (function () {
       if (!sessionId) return { messages: [], blocks: [], todos: [], sessionFiles: [], hasMore: false };
       const liveId = await ensureLive(sessionId);
       const rows = await api.transcript(liveId);
+      const results = toolResultsFromTranscript(rows);
       return {
-        messages: rows.map(historyMessage),
+        messages: rows
+          .map((message, index) => {
+            const transportOnly = message?.role === 'user'
+              && !message.text
+              && !message.reasoning
+              && (!Array.isArray(message.tool_calls) || message.tool_calls.length === 0)
+              && Array.isArray(message.tool_results)
+              && message.tool_results.length > 0;
+            return transportOnly ? null : historyMessage(message, index, results);
+          })
+          .filter(Boolean),
         blocks: [],
-        todos: todosFromTranscript(rows),
+        todos: todosFromTranscript(rows, results),
         sessionFiles: [],
         hasMore: false,
         revision: 'studio-' + liveId,
@@ -1222,9 +1324,15 @@ return (function () {
     const sessionId = idFrom(msg.sessionId || msg.sessionPath);
     const sessionPath = msg.sessionPath || (sessionId ? pathFor(sessionId) : '');
     const collected = [];
+    let turn = null;
     const push = (event) => {
-      collected.push(event);
-      if (typeof emit === 'function') emit(event);
+      if (turn && !isActiveTurn(turn)) return false;
+      const payload = turn && event.streamId == null
+        ? { ...event, streamId: turn.streamId }
+        : event;
+      collected.push(payload);
+      if (typeof emit === 'function') emit(payload);
+      return true;
     };
 
     if (type === 'context_usage' || type === 'resume_stream' || type === 'stream_resume') {
@@ -1232,19 +1340,45 @@ return (function () {
     }
 
     if (type === 'abort') {
+      const requestedStreamId = typeof msg.streamId === 'string' && msg.streamId.trim()
+        ? msg.streamId.trim()
+        : null;
+      const active = activeTurns.get(sessionId) || null;
+      if (requestedStreamId && (!active || active.streamId !== requestedStreamId)) {
+        push({
+          type: 'abort_result',
+          status: 'rejected',
+          reason: 'stale_stream',
+          sessionId,
+          sessionPath,
+          streamId: active ? active.streamId : requestedStreamId,
+        });
+        return { events: collected, streamed: typeof emit === 'function' };
+      }
+
+      const streamId = active ? active.streamId : requestedStreamId;
+      if (active) deactivateTurn(active);
+      push({
+        type: 'abort_result',
+        status: active ? 'accepted' : 'already_stopped',
+        sessionId,
+        sessionPath,
+        streamId,
+      });
+      push({ type: 'turn_end', sessionId, sessionPath, streamId, aborted: true });
+      push({ type: 'status', sessionId, sessionPath, streamId, isStreaming: false });
+
       if (sessionId) {
         try { await api.cancel(sessionId); } catch (err) {
           push({
             type: 'error',
             sessionId,
             sessionPath,
+            streamId,
             message: err && err.message ? err.message : String(err),
           });
-          return { events: collected, streamed: typeof emit === 'function' };
         }
       }
-      push({ type: 'turn_end', sessionId, sessionPath });
-      push({ type: 'status', sessionId, sessionPath, isStreaming: false });
       return { events: collected, streamed: typeof emit === 'function' };
     }
 
@@ -1261,6 +1395,26 @@ return (function () {
       const liveId = await ensureLive(sessionId);
       const livePath = msg.sessionPath || pathFor(liveId);
       const msgId = clientMessageId || ('ohk-' + Date.now());
+
+      if (type === 'prompt') {
+        // Check before activating a new token. A rejected second prompt must not
+        // invalidate the callback token owned by the turn already in progress.
+        try {
+          const rows = await api.sessions();
+          const row = rows.find((s) => s.id === liveId);
+          if (row && row.busy) {
+            push({
+              type: 'error',
+              sessionId: liveId,
+              sessionPath: livePath,
+              message: 'session is busy; wait for the current turn to finish',
+              code: 'session_busy',
+            });
+            return { events: collected, streamed: typeof emit === 'function' };
+          }
+        } catch (_) { /* listing can race; still try send */ }
+        turn = activateTurn(sessionId, liveId);
+      }
 
       push({ type: 'status', sessionId: liveId, sessionPath: livePath, isStreaming: true });
       push({
@@ -1288,23 +1442,6 @@ return (function () {
           // Steer is fire-and-forget at a step boundary; surface a short ack.
           push({ type: 'text_delta', sessionId: liveId, sessionPath: livePath, delta: '' });
         } else {
-          // Refuse a second prompt while Studio still marks the agent busy.
-          try {
-            const rows = await api.sessions();
-            const row = rows.find((s) => s.id === liveId);
-            if (row && row.busy) {
-              push({
-                type: 'error',
-                sessionId: liveId,
-                sessionPath: livePath,
-                message: 'session is busy; wait for the current turn to finish',
-                code: 'session_busy',
-              });
-              push({ type: 'status', sessionId: liveId, sessionPath: livePath, isStreaming: false });
-              return { events: collected, streamed: typeof emit === 'function' };
-            }
-          } catch (_) { /* listing can race; still try send */ }
-
           // Seed an empty assistant bubble immediately so the avatar + waiting
           // dots show before the first real token arrives from Studio.
           push({ type: 'text_delta', sessionId: liveId, sessionPath: livePath, delta: '' });
@@ -1328,6 +1465,13 @@ return (function () {
                 sessionPath: livePath,
                 delta: progress.delta || '',
               });
+            } else if (kind === 'assistant_snapshot') {
+              push({
+                type: 'assistant_snapshot',
+                sessionId: liveId,
+                sessionPath: livePath,
+                segments: Array.isArray(progress.segments) ? progress.segments : [],
+              });
             } else if (kind === 'tool_start') {
               push({
                 type: 'tool_start',
@@ -1336,6 +1480,7 @@ return (function () {
                 id: progress.id,
                 name: progress.name,
                 args: progress.args,
+                startedAt: progress.startedAt,
               });
             } else if (kind === 'tool_end') {
               push({
@@ -1346,6 +1491,9 @@ return (function () {
                 name: progress.name,
                 success: progress.success !== false,
                 status: progress.success === false ? 'failed' : 'succeeded',
+                startedAt: progress.startedAt,
+                finishedAt: progress.finishedAt,
+                ...(progress.output ? { output: progress.output } : {}),
                 ...(progress.error ? { error: progress.error } : {}),
                 ...(progress.details ? { details: progress.details } : {}),
               });
@@ -1360,11 +1508,13 @@ return (function () {
           message: err && err.message ? err.message : String(err),
         });
         push({ type: 'status', sessionId: liveId, sessionPath: livePath, isStreaming: false });
+        if (turn) deactivateTurn(turn);
         return { events: collected, streamed: typeof emit === 'function' };
       }
 
       push({ type: 'turn_end', sessionId: liveId, sessionPath: livePath });
       push({ type: 'status', sessionId: liveId, sessionPath: livePath, isStreaming: false });
+      if (turn) deactivateTurn(turn);
       return { events: collected, streamed: typeof emit === 'function' };
     }
 

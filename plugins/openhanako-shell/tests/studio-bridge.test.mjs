@@ -193,6 +193,9 @@ global.window.__TAURI_INTERNALS__ = {
 check('api mode flips to tauri once invoke exists', api.mode() === 'tauri');
 const live = await api.sessions();
 check('sessions call list_sessions', calls.some((c) => c.cmd === 'list_sessions') && live[0].id === 'agent-1');
+const projectedLive = await adapter.http('GET', '/api/sessions');
+check('sessions without backend timestamps do not become just-now on every refresh',
+  projectedLive.every((session) => session.modified == null && session.created == null));
 
 const created = await adapter.http('POST', '/api/sessions/new-detached', {});
 check('create_agent uses mock/mock-1',
@@ -203,9 +206,10 @@ check('create_agent uses mock/mock-1',
 
 calls.length = 0;
 const switched = await adapter.http('POST', '/api/sessions/switch', { path: 'studio://agent-2', sessionId: 'agent-2' });
-check('cold session resumes',
+check('cold session resumes without rebuilding its model driver',
   switched.sessionId === 'agent-2'
-  && calls.some((c) => c.cmd === 'resume_session' && c.args.sessionId === 'agent-2'));
+  && calls.some((c) => c.cmd === 'resume_session' && c.args.sessionId === 'agent-2')
+  && !calls.some((c) => c.cmd === 'rebind_agent_model'));
 
 const messages = await adapter.http('GET', '/api/sessions/messages?path=' + encodeURIComponent('studio://agent-1') + '&sessionId=agent-1');
 check('transcript becomes history content',
@@ -249,6 +253,161 @@ check('transcript becomes history content',
   const joined = deltas.map((e) => e.delta).join('');
   check('second-turn deltas are ONLY A2 (no A1 concat)',
     joined === 'Hello from Studio' && !joined.includes('pong'));
+}
+
+// Push events carry both an absolute current-step snapshot and its delta.
+// Text from different assistant steps may overlap or even be identical; those
+// are distinct model output and must not be content-deduplicated across tools.
+{
+  let partialHandler = null;
+  window.__TAURI__ = {
+    event: {
+      listen: async (_event, handler) => {
+        partialHandler = handler;
+        return () => { partialHandler = null; };
+      },
+    },
+  };
+  const baseline = [
+    { role: 'user', text: 'old', reasoning: '', tool_calls: [], tool_results: [] },
+    { role: 'assistant', text: 'old reply', reasoning: '', tool_calls: [], tool_results: [] },
+  ];
+  liveTranscript = baseline;
+  global.window.__TAURI_INTERNALS__.invoke = (cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === 'list_sessions') {
+      return Promise.resolve([
+        { id: 'agent-1', title: 'Race', busy: false, live: true, messages: liveTranscript.length, turns: 1, status: 'idle', usage: null },
+      ]);
+    }
+    if (cmd === 'transcript') return Promise.resolve(liveTranscript.map((m) => structuredClone(m)));
+    if (cmd === 'send_message') {
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          partialHandler?.({ payload: { agentId: args.agentId, text: 'abc', textDelta: 'abc', reasoning: '', reasoningDelta: '' } });
+          liveTranscript = [
+            ...baseline,
+            { role: 'user', text: args.text, reasoning: '', tool_calls: [], tool_results: [] },
+            { role: 'assistant', text: '', reasoning: '', tool_calls: [{ id: 'overlap-tool', name: 'read_file', arguments: '{"path":"x"}' }], tool_results: [] },
+            { role: 'user', text: '', reasoning: '', tool_calls: [], tool_results: [{ tool_call_id: 'overlap-tool', content: 'ok', is_error: false }] },
+          ];
+        }, 10);
+        setTimeout(() => {
+          partialHandler?.({ payload: { agentId: args.agentId, text: 'cdef', textDelta: 'cdef', reasoning: '', reasoningDelta: '' } });
+          liveTranscript = [
+            ...liveTranscript,
+            { role: 'assistant', text: 'cdef', reasoning: '', tool_calls: [{ id: 'same-tool', name: 'read_file', arguments: '{"path":"y"}' }], tool_results: [] },
+            { role: 'user', text: '', reasoning: '', tool_calls: [], tool_results: [{ tool_call_id: 'same-tool', content: 'ok', is_error: false }] },
+          ];
+        }, 60);
+        setTimeout(() => {
+          partialHandler?.({ payload: { agentId: args.agentId, text: 'cdef', textDelta: 'cdef', reasoning: '', reasoningDelta: '' } });
+          liveTranscript = [...liveTranscript, { role: 'assistant', text: 'cdef', reasoning: '', tool_calls: [], tool_results: [] }];
+          resolve(undefined);
+        }, 110);
+      });
+    }
+    return Promise.resolve(undefined);
+  };
+
+  const progress = [];
+  await api.sendWithProgress('agent-1', 'race', 'race-1', (event) => progress.push(event));
+  const text = progress.filter((event) => event.kind === 'text_delta').map((event) => event.delta).join('');
+  check('snapshot+delta keeps overlapping assistant steps exact', text === 'abccdefcdef');
+  const snapshot = progress.find((event) => event.kind === 'assistant_snapshot');
+  check('assistant snapshot preserves empty pre-tool slots',
+    Array.isArray(snapshot?.segments)
+    && snapshot.segments.length === 3
+    && snapshot.segments[0] === ''
+    && snapshot.segments[1] === 'cdef'
+    && snapshot.segments[2] === 'cdef');
+  check('push+transcript race emits each completed tool once',
+    progress.filter((event) => event.kind === 'tool_start').length === 2
+    && progress.filter((event) => event.kind === 'tool_end').length === 2);
+  window.__TAURI__ = null;
+}
+
+// Stop invalidates the current progress callback before cancel_agent resolves.
+// A new prompt gets a distinct stream and late output from the stopped turn
+// cannot leak into either transcript.
+{
+  const originalSessions = api.sessions;
+  const originalSendWithProgress = api.sendWithProgress;
+  const originalCancel = api.cancel;
+  let oldProgress = null;
+  let resolveOldSend = null;
+  let sendCount = 0;
+
+  api.sessions = async () => [
+    { id: 'agent-race', title: 'Race', busy: false, live: true, messages: 0, turns: 0, status: 'idle' },
+  ];
+  api.cancel = async () => undefined;
+  api.sendWithProgress = async (_agentId, _text, _msgId, onProgress) => {
+    sendCount += 1;
+    if (sendCount === 1) {
+      oldProgress = onProgress;
+      await new Promise((resolve) => { resolveOldSend = resolve; });
+      return true;
+    }
+    onProgress({ kind: 'text_delta', delta: 'new answer' });
+    return true;
+  };
+
+  const oldEvents = [];
+  const oldTurn = adapter.ws({
+    type: 'prompt',
+    text: 'old prompt',
+    sessionId: 'agent-race',
+    sessionPath: 'studio://agent-race',
+    clientMessageId: 'old-message',
+  }, (event) => oldEvents.push(event));
+  while (!oldProgress) await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const oldStreamId = oldEvents[0]?.streamId;
+  check('prompt events carry one streamId',
+    typeof oldStreamId === 'string'
+    && oldEvents.every((event) => event.streamId === oldStreamId));
+
+  const stopEvents = [];
+  await adapter.ws({
+    type: 'abort',
+    sessionId: 'agent-race',
+    sessionPath: 'studio://agent-race',
+    streamId: oldStreamId,
+  }, (event) => stopEvents.push(event));
+  const countAfterStop = oldEvents.length;
+
+  oldProgress({ kind: 'text_delta', delta: 'late old answer' });
+  oldProgress({ kind: 'tool_end', id: 'late-tool', name: 'bash', success: true, output: 'late' });
+  oldProgress({ kind: 'assistant_snapshot', segments: ['late old answer'] });
+
+  const newEvents = [];
+  await adapter.ws({
+    type: 'prompt',
+    text: 'new prompt',
+    sessionId: 'agent-race',
+    sessionPath: 'studio://agent-race',
+    clientMessageId: 'new-message',
+  }, (event) => newEvents.push(event));
+  resolveOldSend();
+  await oldTurn;
+
+  check('accepted Stop reports aborted terminal events for stopped stream',
+    stopEvents.some((event) => event.type === 'abort_result' && event.status === 'accepted')
+    && stopEvents.some((event) => event.type === 'turn_end' && event.aborted === true)
+    && stopEvents.every((event) => event.streamId === oldStreamId));
+  check('stopped turn drops all late progress and final events',
+    oldEvents.length === countAfterStop
+    && !oldEvents.some((event) => event.delta === 'late old answer' || event.id === 'late-tool'));
+  check('next prompt uses a new isolated stream',
+    newEvents[0]?.streamId
+    && newEvents[0].streamId !== oldStreamId
+    && newEvents.every((event) => event.streamId === newEvents[0].streamId)
+    && newEvents.some((event) => event.type === 'text_delta' && event.delta === 'new answer'));
+
+  api.sessions = originalSessions;
+  api.sendWithProgress = originalSendWithProgress;
+  api.cancel = originalCancel;
 }
 
 // steer must pass msgId

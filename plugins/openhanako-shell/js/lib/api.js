@@ -41,7 +41,9 @@ return (function () {
     messages: (row && row.messages) || 0,
     turns: (row && row.turns) || 0,
     usage: (row && row.usage) || null,
-    updated_at: Date.now(),
+    updated_at: row && Number.isFinite(Number(row.updated_at ?? row.updatedAt))
+      ? Number(row.updated_at ?? row.updatedAt)
+      : null,
   });
 
   const asId = (value) => {
@@ -321,10 +323,10 @@ return (function () {
     }
   };
 
-  // Sync UI state to a Studio partial. Absolute `text`/`reasoning` are the
-  // source of truth when present; `*Delta` only fills a missing suffix.
-  // Blindly appending textDelta after poll already advanced state caused
-  // A1+A2 / stuttered identity text.
+  // Push payloads carry both a current-step snapshot and the exact growth for
+  // that step. Delta owns live output when present: content-based de-dup across
+  // steps is invalid because adjacent model messages may overlap or be equal.
+  // Absolute snapshots remain a fallback for hosts without event delivery.
   const applyPartial = (partial, onProgress, state, agentId) => {
     if (!partial || partial.agentId !== agentId) return;
     if (typeof onProgress !== 'function') return;
@@ -334,32 +336,29 @@ return (function () {
     const textDelta = typeof partial.textDelta === 'string' ? partial.textDelta : null;
     const reasoningDelta = typeof partial.reasoningDelta === 'string' ? partial.reasoningDelta : null;
 
-    if (absReasoning !== null) {
-      emitDiff(null, { text: state.text, reasoning: absReasoning }, onProgress, state);
-    } else if (reasoningDelta) {
-      if (reasoningDelta && !state.reasoning.endsWith(reasoningDelta)) {
+    if (reasoningDelta !== null) {
+      if (reasoningDelta) {
         if (!state.thinking) {
           onProgress({ kind: 'thinking_start' });
           state.thinking = true;
         }
         onProgress({ kind: 'thinking_delta', delta: reasoningDelta });
-        state.reasoning = state.reasoning + reasoningDelta;
+        state.reasoning += reasoningDelta;
       }
+    } else if (absReasoning !== null) {
+      emitDiff(null, { text: state.text, reasoning: absReasoning }, onProgress, state);
     }
 
-    if (absText !== null) {
-      emitDiff(null, { text: absText, reasoning: state.reasoning }, onProgress, state);
-      return;
-    }
-    if (textDelta) {
+    if (textDelta !== null) {
       if (!textDelta) return;
-      if (state.text.endsWith(textDelta)) return;
       if (state.thinking) {
         onProgress({ kind: 'thinking_end' });
         state.thinking = false;
       }
       onProgress({ kind: 'text_delta', delta: textDelta });
-      state.text = state.text + textDelta;
+      state.text += textDelta;
+    } else if (absText !== null) {
+      emitDiff(null, { text: absText, reasoning: state.reasoning }, onProgress, state);
     }
   };
 
@@ -379,13 +378,32 @@ return (function () {
     }
   };
 
-  // Tool results arrive as text; the todo / card surfaces read structured
-  // `details`, so expose parsed JSON when the payload is one.
+  const toolCallId = (value) => {
+    if (!value || typeof value !== 'object') return '';
+    const id = value.id ?? value.call_id ?? value.tool_call_id ?? value.toolCallId;
+    return id == null ? '' : String(id);
+  };
+
+  // Studio/provider results may be strings, JSON objects, or multipart text.
+  // Keep a plain-text rendering for users and a structured copy for cards.
+  const toolResultText = (content) => {
+    if (content == null) return '';
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      return content.map((part) => {
+        if (typeof part === 'string') return part;
+        if (part && typeof part.text === 'string') return part.text;
+        if (part && typeof part.content === 'string') return part.content;
+        try { return JSON.stringify(part); } catch (_) { return String(part); }
+      }).filter(Boolean).join('\n');
+    }
+    try { return JSON.stringify(content, null, 2); } catch (_) { return String(content); }
+  };
+
   const parseToolDetails = (content) => {
     if (content == null) return undefined;
-    if (typeof content === 'object') return content;
-    if (typeof content !== 'string') return undefined;
-    const trimmed = content.trim();
+    if (typeof content === 'object' && !Array.isArray(content)) return content;
+    const trimmed = toolResultText(content).trim();
     if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return undefined;
     try {
       const parsed = JSON.parse(trimmed);
@@ -426,7 +444,8 @@ return (function () {
     for (const m of slice) {
       const trs = (m && m.tool_results) || [];
       for (const tr of trs) {
-        if (tr && tr.tool_call_id) results.set(String(tr.tool_call_id), tr);
+        const id = toolCallId(tr);
+        if (id) results.set(id, tr);
       }
     }
     for (let rowIndex = 0; rowIndex < slice.length; rowIndex += 1) {
@@ -438,26 +457,42 @@ return (function () {
         // Studio always supplies `call_id`; the synthetic key is defensive and
         // scoped to the absolute row so id-less calls never collide across
         // messages when the same tool name repeats.
-        const id = tc.id != null ? String(tc.id) : `row${baseline + rowIndex}:${index}:${tc.name}`;
+        const callId = toolCallId(tc);
+        const id = callId || `row${baseline + rowIndex}:${index}:${tc.name}`;
         let entry = state.tools.get(id);
         if (!entry) {
           const args = parseToolArgs(tc.arguments);
-          entry = { name: tc.name, done: false, args };
+          const startedAt = Date.now();
+          entry = { name: tc.name, done: false, args, startedAt };
           state.tools.set(id, entry);
-          onProgress({ kind: 'tool_start', id, name: tc.name, args });
+          onProgress({ kind: 'tool_start', id, name: tc.name, args, startedAt });
         }
         if (entry.done) return;
-        const res = tc.id != null ? results.get(String(tc.id)) : null;
+        const res = callId ? results.get(callId) : null;
         if (!res) return;
         entry.done = true;
-        const isError = res.is_error === true;
+        const finishedAt = Date.now();
+        const isError = res.is_error === true || res.isError === true;
+        const output = toolResultText(res.content ?? res.output);
+        const resultDetails = (res.details && typeof res.details === 'object' ? res.details : undefined)
+          || parseToolDetails(res.content ?? res.output);
+        const todoDetails = isError ? undefined : todoDetailsFromArgs(tc.name, entry.args);
+        const details = todoDetails
+          ? {
+              ...(resultDetails && !Array.isArray(resultDetails) ? resultDetails : {}),
+              ...todoDetails,
+            }
+          : resultDetails;
         onProgress({
           kind: 'tool_end',
           id,
           name: tc.name,
           success: !isError,
-          error: isError ? String(res.content == null ? '' : res.content) : undefined,
-          details: parseToolDetails(res.content) || (isError ? undefined : todoDetailsFromArgs(tc.name, entry.args)),
+          startedAt: entry.startedAt,
+          finishedAt,
+          output: output || undefined,
+          error: isError ? output : undefined,
+          details,
         });
       });
     }
@@ -472,7 +507,7 @@ return (function () {
     let stopped = false;
 
     // Primary path: Studio push (assistant/chunk → studio://chat-partial).
-    let unlisten = () => {};
+    let unlisten = null;
     let listenOk = false;
     try {
       unlisten = await tauri.listen('studio://chat-partial', (partial) => {
@@ -480,7 +515,7 @@ return (function () {
       });
       listenOk = typeof unlisten === 'function';
     } catch (_) {
-      unlisten = () => {};
+      unlisten = null;
       listenOk = false;
     }
 
@@ -507,12 +542,12 @@ return (function () {
       // (previous turn), then prefix-slices A2 against A1 → A1+A2 glue /
       // mid-message corruption like 「要干活直接说。件（`write_file`）」.
       if (rows.length <= beforeCount) return;
-      // Tools first: they occur before the step's follow-up text, and the
-      // frontend appends blocks in arrival order.
+      // Transcript owns tool lifecycle in both modes. With push available it
+      // must not also emit text: that would apply one model step twice.
       emitToolProgress(rows, beforeCount, state, onProgress);
+      if (listenOk) return;
       const assistant = lastAssistant(rows.slice(beforeCount));
-      if (!assistant) return;
-      emitDiff(null, assistant, onProgress, state);
+      if (assistant) emitDiff(null, assistant, onProgress, state);
     };
 
     if (!listenOk) {
@@ -537,9 +572,35 @@ return (function () {
       await sendPromise;
     } finally {
       stopped = true;
-      try { unlisten(); } catch (_) {}
+      try { if (unlisten) unlisten(); } catch (_) {}
       await loop.catch(() => {});
       try { await pollOnce(); } catch (_) {}
+      // Final transcript is authoritative and includes every completed
+      // assistant step. Only append a missing suffix; never overlap-merge
+      // distinct steps or replay content already emitted by push deltas.
+      try {
+        const rows = await readTranscript(agentId);
+        const completed = rows.slice(beforeCount).filter((row) => row && row.role === 'assistant');
+        // Preserve empty text slots. Each assistant row before a tool group owns
+        // one slot; dropping an empty value makes a lost pre-tool delta
+        // indistinguishable from a genuinely absent segment in the renderer.
+        const segments = completed.map((row) => row.text || '');
+        const finalText = segments.join('');
+        const finalReasoning = completed.map((row) => row.reasoning || '').join('');
+        // Deltas can be dropped by WebView/event delivery. Snapshot replaces
+        // provisional text, so never emit a suffix after it: doing both can
+        // overwrite the reconciled final segment in the renderer.
+        onProgress({ kind: 'assistant_snapshot', segments });
+        state.text = finalText;
+        if (finalReasoning.startsWith(state.reasoning) && finalReasoning.length > state.reasoning.length) {
+          if (!state.thinking) {
+            onProgress({ kind: 'thinking_start' });
+            state.thinking = true;
+          }
+          onProgress({ kind: 'thinking_delta', delta: finalReasoning.slice(state.reasoning.length) });
+          state.reasoning = finalReasoning;
+        }
+      } catch (_) { /* final transcript can race persistence */ }
       if (state.thinking && typeof onProgress === 'function') {
         onProgress({ kind: 'thinking_end' });
         state.thinking = false;

@@ -49,12 +49,10 @@ return (function () {
     return fn(cmd, args || {});
   };
 
-  /** @returns {Promise<() => void>} unlisten */
+  /** @returns {Promise<(() => void) | null>} unlisten, or null when events are unavailable */
   const listen = async (event, handler) => {
     const fn = resolveListen();
-    if (!fn) {
-      return () => {};
-    }
+    if (!fn) return null;
     const unlisten = await fn(event, (ev) => {
       try {
         handler(ev && Object.prototype.hasOwnProperty.call(ev, 'payload') ? ev.payload : ev);

@@ -668,7 +668,17 @@
     "failed": "⚠ 好像出了点问题 · {n} 步",
     "countWithFail": "{total} 个工具（{fail} 个失败）",
     "count": "{n} 个工具",
-    "running": "{n} 个工具运行中"
+    "running": "{n} 个工具运行中",
+    "output": "工具输出",
+    "input": "输入",
+    "response": "响应",
+    "status": {
+      "running": "运行中",
+      "succeeded": "已运行",
+      "failed": "失败",
+      "cancelled": "已停止",
+      "unknown": "已完成"
+    }
   },
   "processFold": {
     "summary": "✨ {name}忙活了一阵子",

@@ -668,7 +668,17 @@
     "failed": "⚠ 何かおかしいようです · {n} ステップ",
     "countWithFail": "{total} 個のツール（{fail} 個失敗）",
     "count": "{n} 個のツール",
-    "running": "{n} 個のツール実行中"
+    "running": "{n} 個のツール実行中",
+    "output": "ツール出力",
+    "input": "入力",
+    "response": "応答",
+    "status": {
+      "running": "実行中",
+      "succeeded": "実行済み",
+      "failed": "失敗",
+      "cancelled": "停止済み",
+      "unknown": "完了"
+    }
   },
   "processFold": {
     "summary": "✨ {name} がしばらく動き回りました",

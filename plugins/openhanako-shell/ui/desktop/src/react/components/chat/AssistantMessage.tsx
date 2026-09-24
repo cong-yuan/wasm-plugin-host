@@ -104,7 +104,13 @@ export const AssistantMessage = memo(function AssistantMessage({
     [message.blocks],
   );
   const isInterludeOnly = blocks.length > 0 && blocks.every(block => block.type === 'interlude');
-  const hasWideBlock = blocks.some(b => b.type === 'interactive_card');
+  const hasWideBlock = blocks.some(b => b.type === 'interactive_card' || b.type === 'tool_group');
+  // Earlier text segments are sealed as soon as a tool follows them. Only the
+  // trailing text block can still receive deltas; treating every segment as
+  // active multiplies streaming work across long tool-heavy turns.
+  const activeTextBlockIndex = isStreaming && blocks[blocks.length - 1]?.type === 'text'
+    ? blocks.length - 1
+    : -1;
 
   const [copied, setCopied] = useState(false);
   const handleCopy = useCallback(() => {
@@ -192,7 +198,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               sessionPath={sessionPath}
               messageId={message.id}
               blockIdx={i}
-              isStreaming={isStreaming}
+              isStreaming={isStreaming && i === activeTextBlockIndex}
               readOnly={readOnly}
             />
           </ContentBlockErrorBoundary>

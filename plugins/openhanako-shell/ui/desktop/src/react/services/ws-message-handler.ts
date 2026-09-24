@@ -137,7 +137,7 @@ export function configureWsMessageHandler(options: {
 const REACT_CHAT_EVENTS = new Set([
   'text_delta', 'thinking_start', 'thinking_delta', 'thinking_end',
   'mood_start', 'mood_text', 'mood_end',
-  'tool_start', 'tool_end', 'turn_end',
+  'tool_start', 'tool_end', 'turn_end', 'assistant_snapshot',
   'content_block', 'plugin_card',
   'compaction_start', 'compaction_end',
 ]);
@@ -257,12 +257,18 @@ function resolveDmPeerIdForEvent(state: any, msg: any): string | null {
 
 function applyTodoToolEnd(msg: any): void {
   if (msg.type !== 'tool_end' || !TODO_TOOL_NAMES.includes(msg.name as TodoToolName)) return;
+  if (msg.success === false || msg.status === 'failed') return;
   const sp = msg.sessionPath;
   if (!sp) {
     console.warn('[ws] tool_end(todo) missing sessionPath, skipping');
     return;
   }
-  const todos = applyTodoLifecycle(migrateLegacyTodos(msg.details as { todos?: unknown[] } | null));
+  const details = msg.details;
+  if (!details || typeof details !== 'object' || !Array.isArray(details.todos)) {
+    console.warn('[ws] tool_end(todo) missing valid details.todos, keeping current todos');
+    return;
+  }
+  const todos = applyTodoLifecycle(migrateLegacyTodos(details as { todos: unknown[] }));
   useStore.getState().setSessionTodosForPath(sp, todos);
   // bump 版本：若 loadMessages 正在 fetch 旧快照，回来时会发现
   // 版本号变了，主动跳过 hydrate 写入，避免覆盖本次 live 状态。
@@ -1122,14 +1128,28 @@ export function handleServerMessage(msg: any): void {
     case 'status': {
       const sp = msg.sessionPath || null;
       const sid = typeof msg.sessionId === 'string' && msg.sessionId.trim() ? msg.sessionId.trim() : null;
+      const wasStreaming = !!sp && sessionScopedListIncludes(
+        useStore.getState(),
+        useStore.getState().streamingSessions,
+        sp,
+      );
       // streamingSessions 维护 + 焦点 UI 占位一并由 applyStreamingStatus 处理
       const applied = applyStreamingStatus(msg.isStreaming, sp, {
         streamId: msg.streamId ?? null,
         turnId: msg.turnId ?? null,
       });
-      if (sp && applied) {
-        if (msg.isStreaming) streamBufferManager.beginTurn(sp, sid);
-        else streamBufferManager.finishTurn(sp, sid);
+      const stillStreaming = !!sp && sessionScopedListIncludes(
+        useStore.getState(),
+        useStore.getState().streamingSessions,
+        sp,
+      );
+      if (sp && msg.isStreaming && applied) {
+        streamBufferManager.beginTurn(sp, sid);
+      } else if (sp && !msg.isStreaming && wasStreaming && !stillStreaming) {
+        // `applied` is false for background sessions even when removal worked.
+        // Final assistant_snapshot already reconciled dropped chunks; only
+        // release turn-local state here, preserving live tool timing metadata.
+        streamBufferManager.finishTurn(sp, sid);
       }
       break;
     }

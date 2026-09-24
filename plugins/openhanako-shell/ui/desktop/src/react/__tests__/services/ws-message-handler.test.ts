@@ -770,6 +770,26 @@ describe('ws-message-handler session-scoped desktop events', () => {
     expect(useStore.getState().todosLiveVersionBySession['/session/a.jsonl']).toBe(1);
   });
 
+  it('todo_write 缺少合法快照时保留已有计划，不把协议缺字段误判为清空', () => {
+    const currentTodos = [{ content: 'keep me', activeForm: 'keeping', status: 'in_progress' as const }];
+    useStore.setState({
+      currentSessionPath: '/session/a.jsonl',
+      todosBySession: { '/session/a.jsonl': currentTodos },
+      todosLiveVersionBySession: {},
+    } as never);
+
+    handleServerMessage({
+      type: 'tool_end',
+      sessionPath: '/session/a.jsonl',
+      name: 'todo_write',
+      success: true,
+      details: { message: 'updated' },
+    });
+
+    expect(useStore.getState().todosBySession['/session/a.jsonl']).toEqual(currentTodos);
+    expect(useStore.getState().todosLiveVersionBySession['/session/a.jsonl']).toBeUndefined();
+  });
+
   it('todo_update 事件按 sessionPath 更新 keyed todos', () => {
     useStore.setState({
       currentSessionPath: '/session/a.jsonl',
@@ -1357,7 +1377,7 @@ describe('ws-message-handler turn_end side effects', () => {
     expect(loadSessions).toHaveBeenCalledTimes(1);
   });
 
-  it('status=false requests input focus when the focused session was streaming', () => {
+  it('status=false requests input focus after final snapshot reconciliation', () => {
     useStore.setState({
       streamingSessions: ['/session/a.jsonl'],
       inputFocusTrigger: 0,

@@ -253,7 +253,7 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
         : typeof args.cmd === 'string'
           ? args.cmd
           : '';
-      return { text: truncateHead(command, 40), title: command || undefined };
+      return { text: truncateHead(command, 120), title: command || undefined };
     }
     case 'terminal':
     case 'write_stdin': {
@@ -262,7 +262,7 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
         : typeof args.chars === 'string'
           ? args.chars
           : '';
-      return { text: truncateHead(command, 40), title: command || undefined };
+      return { text: truncateHead(command, 120), title: command || undefined };
     }
     case 'glob':
     case 'find':
@@ -313,9 +313,11 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
       return { text: sessionId ? `…${sessionId.slice(-4)}` : '' };
     }
     default: {
-      // 插件工具：取第一个有意义的字符串参数作详情
-      const first = Object.values(args).find(v => typeof v === 'string' && v.length > 0);
-      return { text: first ? truncateHead(first as string, 30) : '' };
+      // Avoid scanning arbitrary plugin payloads while every collapsed row
+      // renders. Common summary fields stay cheap; full args serialize on open.
+      const candidates = [args.command, args.path, args.file_path, args.query, args.url, args.name, args.title];
+      const first = candidates.find(v => typeof v === 'string' && v.length > 0);
+      return { text: first ? truncateHead(first as string, 120) : '' };
     }
   }
 }

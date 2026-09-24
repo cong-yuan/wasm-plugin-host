@@ -29,11 +29,12 @@ return (function () {
     }
   };
 
-  const attach = (frameEl, layer, hosts) => {
+  const attach = (frameEl, layer, hosts, options) => {
     const onMessage = (ev) => {
       const data = ev.data;
       if (!data || data.source !== BRIDGE || data.type !== 'rects') return;
       if (ev.source !== frameEl.contentWindow) return;
+      if (options && typeof options.onReady === 'function') options.onReady();
       applyRects(layer, hosts, data.slots || {}, frameEl);
     };
     window.addEventListener('message', onMessage);

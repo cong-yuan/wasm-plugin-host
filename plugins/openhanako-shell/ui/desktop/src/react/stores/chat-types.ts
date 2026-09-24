@@ -17,8 +17,11 @@ export interface ToolCall {
   args?: Record<string, unknown>;
   done: boolean;
   success: boolean;
-  status?: 'running' | 'succeeded' | 'failed' | 'unknown';
+  status?: 'running' | 'succeeded' | 'failed' | 'unknown' | 'cancelled';
   error?: string;
+  output?: string;
+  startedAt?: number;
+  finishedAt?: number;
   details?: { card?: import('../types').PluginCardDetails; [key: string]: unknown };
 }
 
