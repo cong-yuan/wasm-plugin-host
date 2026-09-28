@@ -5,7 +5,21 @@
 // argument names are the Rust parameter names (Tauri maps them camelCase →
 // snake_case), so a mismatch fails at invoke time, not at load.
 return (function () {
+  const hostAction = () => (
+    studio && typeof studio.hostAction === 'function'
+      ? studio.hostAction.bind(studio)
+      : null
+  );
+
   const invoke = (cmd, args) => {
+    const bridge = hostAction();
+    if (bridge) {
+      return Promise.resolve(bridge({
+        kind: 'backend_command',
+        command: cmd,
+        args: args || {},
+      }));
+    }
     const i = window.__TAURI_INTERNALS__;
     if (i && typeof i.invoke === 'function') return i.invoke(cmd, args || {});
     const g = window.__TAURI__;
@@ -21,6 +35,7 @@ return (function () {
 
   /** Whether we can reach the backend at all — checked before promising data. */
   const available = () => {
+    if (hostAction()) return true;
     const i = window.__TAURI_INTERNALS__;
     if (i && typeof i.invoke === 'function') return true;
     const g = window.__TAURI__;

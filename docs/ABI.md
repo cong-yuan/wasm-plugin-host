@@ -364,6 +364,20 @@ Execution data is part of the typed action itself: backend commands carry
 `args`, and window opens carry `params` (both default to JSON `null`). This keeps
 authorization and execution on one immutable decoded value.
 
+The plugin-side Studio contract is intentionally small:
+
+```js
+studio.hostAction({
+  kind: "backend_command",
+  command: "list_sessions",
+  args: { limit: 20 }
+})
+```
+
+`hana-shell` and `openhanako-shell` prefer this method when present. The native host, not the plugin, supplies the authenticated slot identity. Compatibility hosts without `studio.hostAction` retain the historical raw Tauri invoke path for trusted deployments.
+
+When `studio.hostAction` exists, OpenHanako also refuses to silently fall back to raw Tauri event subscription. A host may expose controlled `studio.listenHostEvent(event, handler)`; otherwise streaming falls back to the capability-gated `chat_partial` backend command.
+
 `studio.renderSlot(slot, el)` is the missing half of opening a slot: a plugin
 that **provides** a slot must also render its children somewhere, or nothing it
 hosts will ever appear.

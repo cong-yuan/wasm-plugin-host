@@ -7,6 +7,16 @@
 return (function () {
   const missing = 'Tauri invoke is not available in this window (missing window.__TAURI__.core.invoke and window.__TAURI_INTERNALS__.invoke)';
 
+  // Preferred sandbox path. The Studio host binds the authenticated plugin
+  // slot out-of-band, parses this typed action with the Registry authorization
+  // entrypoint, then executes only the returned authorized action. No plugin
+  // identity is accepted from JS.
+  const resolveHostAction = () => (
+    studio && typeof studio.hostAction === 'function'
+      ? (action) => studio.hostAction(action)
+      : null
+  );
+
   const resolveInvoke = () => {
     const internals = window.__TAURI_INTERNALS__;
     if (internals && typeof internals.invoke === 'function') {
@@ -23,6 +33,14 @@ return (function () {
   // `__TAURI_INTERNALS__.transformCallback` + plugin listen). Prefer the
   // public event API used by Studio's own `onChatPartial`.
   const resolveListen = () => {
+    // A secure plugin host must not silently fall back to raw Tauri event IPC.
+    // If it exposes a controlled event listener use it; otherwise callers fall
+    // back to the capability-gated chat_partial backend command poll.
+    if (resolveHostAction()) {
+      return studio && typeof studio.listenHostEvent === 'function'
+        ? (event, handler) => studio.listenHostEvent(event, handler)
+        : null;
+    }
     const tauri = window.__TAURI__;
     if (tauri && tauri.event && typeof tauri.event.listen === 'function') {
       return (event, handler) => tauri.event.listen(event, handler);
@@ -41,9 +59,23 @@ return (function () {
     return null;
   };
 
-  const available = () => !!resolveInvoke();
+  const available = () => !!resolveHostAction() || !!resolveInvoke();
+
+  const mode = () => {
+    if (resolveHostAction()) return 'bridge';
+    if (resolveInvoke()) return 'tauri';
+    return 'missing';
+  };
 
   const invoke = (cmd, args) => {
+    const hostAction = resolveHostAction();
+    if (hostAction) {
+      return Promise.resolve(hostAction({
+        kind: 'backend_command',
+        command: cmd,
+        args: args || {},
+      }));
+    }
     const fn = resolveInvoke();
     if (!fn) return Promise.reject(new Error(missing));
     return fn(cmd, args || {});
@@ -61,5 +93,5 @@ return (function () {
     return typeof unlisten === 'function' ? unlisten : () => {};
   };
 
-  return { available, invoke, listen, missing };
+  return { available, mode, invoke, listen, missing };
 })();
