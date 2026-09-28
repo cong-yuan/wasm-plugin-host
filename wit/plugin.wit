@@ -1,0 +1,174 @@
+package wasm-plugin-host:plugin@0.1.0;
+
+interface types {
+  type json = string;
+
+  enum log-level {
+    debug,
+    info,
+    warn,
+    error,
+  }
+
+  enum hook-mode {
+    observe,
+    waterfall,
+  }
+
+  record tool-decl {
+    name: string,
+    description: string,
+    parameters-json: json,
+    exec: string,
+  }
+
+  record hook-decl {
+    on: string,
+    exec: string,
+    mode: hook-mode,
+    priority: s32,
+  }
+
+  record filesystem-capabilities {
+    read: list<string>,
+    write: list<string>,
+    create: list<string>,
+    delete: list<string>,
+  }
+
+  record network-capabilities {
+    allow: list<string>,
+    methods: list<string>,
+  }
+
+  record agent-capabilities {
+    observe: list<string>,
+    rewrite: list<string>,
+    veto: list<string>,
+  }
+
+  record service-capabilities {
+    consume: list<string>,
+    provide: list<string>,
+  }
+
+  record ui-capabilities {
+    slots: list<string>,
+    routes: list<string>,
+    windows: bool,
+    theme: bool,
+    adjusts: list<string>,
+    backend-commands: list<string>,
+    host-events: list<string>,
+  }
+
+  record capability-request {
+    filesystem: filesystem-capabilities,
+    network: network-capabilities,
+    agent: agent-capabilities,
+    services: service-capabilities,
+    ui: ui-capabilities,
+  }
+
+  record plugin-decl {
+    name: string,
+    abi: u32,
+    tools: list<tool-decl>,
+    hooks: list<hook-decl>,
+    injects: list<string>,
+    provides: list<string>,
+    capabilities: capability-request,
+    ui-json: option<json>,
+  }
+
+  record invoke-success {
+    content: string,
+    value-json: json,
+  }
+
+  record invoke-error {
+    code: string,
+    message: string,
+    value-json: json,
+  }
+
+  variant invoke-result {
+    success(invoke-success),
+    error(invoke-error),
+  }
+
+  record http-header {
+    name: string,
+    value: string,
+  }
+
+  record http-request {
+    url: string,
+    method: string,
+    headers: list<http-header>,
+    body: option<string>,
+  }
+
+  record http-response {
+    status: u16,
+    headers: list<http-header>,
+    body: string,
+  }
+}
+
+interface host-log {
+  use types.{log-level};
+
+  log: func(level: log-level, message: string);
+  now-ms: func() -> u64;
+}
+
+interface host-config {
+  use types.{json};
+
+  get-config: func() -> json;
+  config-version: func() -> u64;
+}
+
+interface host-network {
+  use types.{http-request, http-response};
+
+  http-fetch: func(request: http-request) -> result<http-response, string>;
+}
+
+interface host-filesystem {
+  read-file: func(root: string, path: string) -> result<list<u8>, string>;
+  write-file: func(root: string, path: string, data: list<u8>) -> result<_, string>;
+  create-file: func(root: string, path: string, data: list<u8>) -> result<_, string>;
+  delete-file: func(root: string, path: string) -> result<_, string>;
+  create-dir: func(root: string, path: string) -> result<_, string>;
+  delete-dir: func(root: string, path: string) -> result<_, string>;
+}
+
+interface host-services {
+  use types.{json};
+
+  has-service: func(service: string) -> bool;
+  call-service: func(service: string, op: string, args-json: json) -> result<json, string>;
+}
+
+interface lifecycle {
+  use types.{json, plugin-decl, invoke-result};
+
+  abi-version: func() -> u32;
+  init: func() -> result<_, string>;
+  configure: func(config-json: json) -> result<_, string>;
+  describe: func() -> plugin-decl;
+  invoke: func(op: string, args-json: json) -> invoke-result;
+  shutdown: func();
+}
+
+world plugin {
+  import host-log;
+  import host-config;
+  import host-network;
+  import host-filesystem;
+  import host-services;
+
+  export lifecycle;
+}

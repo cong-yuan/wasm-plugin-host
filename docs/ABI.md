@@ -815,10 +815,7 @@ unload — the host removes them from the registry automatically.
 
 * **Now (core module):** Rust and Go compile to `wasm32-wasip1` and can export
   these symbols directly. Go uses `//go:wasmexport`; Rust uses `#[no_mangle]`.
-* **Later (Component Model):** JS (`jco`), Python (`componentize-py`), and also
-  Rust emit *components*, not core modules. The host speaks WIT instead of raw
-  JSON-over-memory. The **lifecycle and registry layers are identical** — only
-  the `PluginRuntime` backend differs. See `host/src/plugin.rs::Runtime`.
+* **Component Model (Phase E started):** `wit/plugin.wit` now defines the first typed world for JS (`jco`), Python (`componentize-py`) and Rust components. Wasmtime `component::bindgen!` validates that contract in `host/tests/wit_contract.rs`. The current core-module ABI remains production-compatible; the next step is a Component-backed instance that implements the same internal lifecycle. The **Registry, slot identity, CapabilityGate, AuditSink and service/hook semantics remain authoritative and shared** — WIT replaces transport, not policy.
 
 
 ## Host imports (补充)
