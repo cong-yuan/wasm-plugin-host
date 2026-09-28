@@ -277,6 +277,15 @@ impl CapabilityGate {
         result
     }
 
+    pub fn require_resolved_ip(&self, ip: std::net::IpAddr) -> Result<(), String> {
+        let sensitive = sensitive_resolved_ip(ip);
+        let result = self.effective.read().unwrap().allows_resolved_ip(ip);
+        if sensitive {
+            self.audit_result("network.resolve", &ip.to_string(), &result);
+        }
+        result
+    }
+
     pub fn require_filesystem_write(&self, root: &str, path: &str) -> Result<(), String> {
         let effective = self.effective.read().unwrap();
         let result = effective.allows_named(

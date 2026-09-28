@@ -1394,6 +1394,14 @@ fn dns_name_resolving_to_loopback_needs_the_resolved_ip_grant() {
         .accept()
         .expect_err("filtered DNS result must not reach the loopback listener");
     assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
+    assert!(
+        reg.audit_events_for("fetcher").iter().any(|event| {
+            event.capability == "network.resolve"
+                && event.decision == wasm_plugin_host::AuditDecision::Deny
+                && event.target == "127.0.0.1"
+        }),
+        "resolver-level denial should be visible in the host audit stream"
+    );
 }
 
 #[test]
@@ -1455,6 +1463,14 @@ fn dns_name_resolving_to_loopback_can_be_enabled_with_exact_ip_grant() {
             .iter()
             .any(|record| record.message.contains("DNS_PRIVATE_OK")),
         "explicit resolved-IP grant should allow the connection"
+    );
+    assert!(
+        reg.audit_events_for("fetcher").iter().any(|event| {
+            event.capability == "network.resolve"
+                && event.decision == wasm_plugin_host::AuditDecision::Allow
+                && event.target == "127.0.0.1"
+        }),
+        "resolver-level allow should be visible in the host audit stream"
     );
 }
 

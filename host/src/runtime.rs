@@ -896,7 +896,7 @@ fn host_http_fetch(
                 &req_json,
                 state.http_timeout,
                 max_redirects,
-                Some(state.capability_gate.snapshot()),
+                state.capability_gate.clone(),
             )
         }
     };
@@ -927,7 +927,7 @@ fn http_fetch_json(
     req_json: &str,
     timeout: Duration,
     max_redirects: u32,
-    effective: Option<crate::capability::EffectiveCapabilities>,
+    capability_gate: crate::capability::CapabilityGate,
 ) -> serde_json::Value {
     use serde_json::json;
     use ureq::http;
@@ -964,15 +964,11 @@ fn http_fetch_json(
         .max_redirects(max_redirects)
         .timeout_global(Some(timeout))
         .build();
-    let agent = if let Some(effective) = effective {
-        ureq::Agent::with_parts(
-            config,
-            ureq::unversioned::transport::DefaultConnector::default(),
-            CapabilityResolver { effective },
-        )
-    } else {
-        ureq::Agent::new_with_config(config)
-    };
+    let agent = ureq::Agent::with_parts(
+        config,
+        ureq::unversioned::transport::DefaultConnector::default(),
+        CapabilityResolver { capability_gate },
+    );
     let run = match builder.body(body.unwrap_or_default()) {
         Ok(r) => agent.run(r),
         Err(e) => return json!({ "error": format!("building request: {e}") }),
@@ -1009,7 +1005,7 @@ fn http_fetch_json(
 
 #[derive(Debug)]
 struct CapabilityResolver {
-    effective: crate::capability::EffectiveCapabilities,
+    capability_gate: crate::capability::CapabilityGate,
 }
 
 impl ureq::unversioned::resolver::Resolver for CapabilityResolver {
@@ -1024,7 +1020,7 @@ impl ureq::unversioned::resolver::Resolver for CapabilityResolver {
         let resolved = DefaultResolver::default().resolve(uri, config, timeout)?;
         let mut filtered = self.empty();
         for addr in resolved.iter() {
-            if self.effective.allows_resolved_ip(addr.ip()).is_ok() {
+            if self.capability_gate.require_resolved_ip(addr.ip()).is_ok() {
                 filtered.push(*addr);
             }
         }
