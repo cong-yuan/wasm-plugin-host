@@ -73,13 +73,21 @@ pub struct UiCapabilities {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum UiHostAction {
-    BackendCommand { command: String },
+    BackendCommand {
+        command: String,
+        #[serde(default)]
+        args: serde_json::Value,
+    },
     Theme,
     Adjust { slot: String },
     ProvideSlot { slot: String },
     InjectSlot { slot: String },
     RenderSlot { slot: String },
-    OpenWindow { name: String },
+    OpenWindow {
+        name: String,
+        #[serde(default)]
+        params: serde_json::Value,
+    },
     CloseWindow { name: String },
 }
 
@@ -826,7 +834,8 @@ mod tests {
         assert_eq!(
             action,
             UiHostAction::BackendCommand {
-                command: "list_sessions".into()
+                command: "list_sessions".into(),
+                args: serde_json::Value::Null,
             }
         );
 

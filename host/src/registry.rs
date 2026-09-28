@@ -547,7 +547,7 @@ impl Registry {
     ) -> Result<()> {
         use crate::capability::UiHostAction;
         match action {
-            UiHostAction::BackendCommand { command } => {
+            UiHostAction::BackendCommand { command, .. } => {
                 self.authorize_ui_backend_command(slot, command)
             }
             UiHostAction::Theme => self.authorize_ui_theme(slot),
@@ -560,7 +560,7 @@ impl Registry {
                 .shared
                 .with_plugin(slot, |plugin| plugin.authorize_ui_injected_slot(target))
                 .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e)),
-            UiHostAction::OpenWindow { name } | UiHostAction::CloseWindow { name } => self
+            UiHostAction::OpenWindow { name, .. } | UiHostAction::CloseWindow { name } => self
                 .shared
                 .with_plugin(slot, |plugin| plugin.authorize_ui_window(name))
                 .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e)),

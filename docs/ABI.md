@@ -331,10 +331,10 @@ out-of-band and authorize privileged operations with
 The action is typed and intentionally does **not** carry a plugin id:
 
 ```json
-{ "kind": "backend_command", "command": "list_sessions" }
+{ "kind": "backend_command", "command": "list_sessions", "args": { "limit": 20 } }
 { "kind": "inject_slot", "slot": "dashboard.cards" }
 { "kind": "render_slot", "slot": "openhanako.sidebar.notice" }
-{ "kind": "open_window", "name": "main" }
+{ "kind": "open_window", "name": "main", "params": { "tab": "advanced" } }
 ```
 
 `open_window` additionally checks that the named window was declared by that
@@ -360,6 +360,9 @@ For untrusted browser messages, the preferred execution path is
 performs strict JSON decoding and capability/manifest authorization in one step
 and returns the exact typed action that was approved. The host should execute
 that returned value, not reparse or consult the raw message afterward.
+Execution data is part of the typed action itself: backend commands carry
+`args`, and window opens carry `params` (both default to JSON `null`). This keeps
+authorization and execution on one immutable decoded value.
 
 `studio.renderSlot(slot, el)` is the missing half of opening a slot: a plugin
 that **provides** a slot must also render its children somewhere, or nothing it

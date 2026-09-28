@@ -339,6 +339,7 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         "cap",
         &UiHostAction::BackendCommand {
             command: "list_sessions".into(),
+            args: serde_json::json!({ "limit": 20 }),
         },
     )
         .expect("requested and granted command should be allowed");
@@ -347,14 +348,16 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
             "cap",
             serde_json::json!({
                 "kind": "backend_command",
-                "command": "list_sessions"
+                "command": "list_sessions",
+                "args": { "limit": 20 }
             }),
         )
         .expect("strict JSON entrypoint should return the authorized typed action");
     assert_eq!(
         parsed,
         UiHostAction::BackendCommand {
-            command: "list_sessions".into()
+            command: "list_sessions".into(),
+            args: serde_json::json!({ "limit": 20 }),
         }
     );
     let err = reg
@@ -402,6 +405,7 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         "cap",
         &UiHostAction::OpenWindow {
             name: "main".into(),
+            params: serde_json::json!({ "tab": "advanced" }),
         },
     )
     .expect("declared window should be allowed at runtime");
@@ -410,6 +414,7 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
             "cap",
             &UiHostAction::BackendCommand {
                 command: "run_shell".into(),
+                args: serde_json::Value::Null,
             },
         )
         .expect_err("ungranted command must be denied");
@@ -419,6 +424,7 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
             "cap",
             &UiHostAction::OpenWindow {
                 name: "undeclared".into(),
+                params: serde_json::Value::Null,
             },
         )
         .expect_err("window capability must not allow undeclared window names");
