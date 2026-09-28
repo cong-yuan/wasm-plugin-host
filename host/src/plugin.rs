@@ -375,6 +375,30 @@ const INITIAL_BUF: usize = 64 * 1024;
 const MAX_BUF: usize = 16 * 1024 * 1024;
 
 impl Plugin {
+    pub fn authorize_ui_backend_command(&self, command: &str) -> Result<()> {
+        self.store
+            .data()
+            .capability_gate
+            .require_ui_backend_command(command)
+            .map_err(anyhow::Error::msg)
+    }
+
+    pub fn authorize_ui_theme(&self) -> Result<()> {
+        self.store
+            .data()
+            .capability_gate
+            .require_ui_theme()
+            .map_err(anyhow::Error::msg)
+    }
+
+    pub fn authorize_ui_adjust(&self, slot: &str) -> Result<()> {
+        self.store
+            .data()
+            .capability_gate
+            .require_ui_adjust(slot)
+            .map_err(anyhow::Error::msg)
+    }
+
     /// Load, init and describe a plugin. Registers nothing yet — the caller
     /// decides what to do with `decl.tools`. `config` is the entry's config
     /// object (JSON `null` when unset); it is pushed into the plugin's

@@ -281,3 +281,57 @@ fn ui_route_is_denied_without_the_matching_effective_capability() {
     )
     .expect("matching route request and grant should load");
 }
+
+#[test]
+fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits() {
+    let decl = serde_json::json!({
+        "name": "frontend",
+        "abi": 1,
+        "tools": [],
+        "capabilities": {
+            "ui": {
+                "theme": true,
+                "backend_commands": ["list_sessions"]
+            }
+        }
+    });
+
+    let reg = load(
+        "frontend-runtime-auth",
+        decl,
+        CapabilitySet {
+            ui: UiCapabilities {
+                theme: true,
+                backend_commands: vec!["list_sessions".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    reg.authorize_ui_backend_command("cap", "list_sessions")
+        .expect("requested and granted command should be allowed");
+    reg.authorize_ui_theme("cap")
+        .expect("requested and granted theme should be allowed");
+    let err = reg
+        .authorize_ui_backend_command("cap", "run_shell")
+        .expect_err("ungranted command must be denied");
+    assert!(err.to_string().contains("run_shell"));
+
+    let audit = reg.audit_events_for("cap");
+    assert!(audit.iter().any(|event| {
+        event.capability == "ui.backend_commands"
+            && event.target == "list_sessions"
+            && event.decision == AuditDecision::Allow
+    }));
+    assert!(audit.iter().any(|event| {
+        event.capability == "ui.backend_commands"
+            && event.target == "run_shell"
+            && event.decision == AuditDecision::Deny
+    }));
+    assert!(audit.iter().any(|event| {
+        event.capability == "ui.theme"
+            && event.decision == AuditDecision::Allow
+    }));
+}

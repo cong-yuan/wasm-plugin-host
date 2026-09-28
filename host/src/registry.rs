@@ -506,6 +506,28 @@ impl Registry {
         self.meta.get(slot).map(|m| &m.policy)
     }
 
+    /// Authorization seam for the external Studio/Tauri frontend host.
+    ///
+    /// The caller supplies the authenticated plugin slot; command names coming
+    /// from iframe/postMessage payloads must never be treated as identity.
+    pub fn authorize_ui_backend_command(&self, slot: &str, command: &str) -> Result<()> {
+        self.shared
+            .with_plugin(slot, |plugin| plugin.authorize_ui_backend_command(command))
+            .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e))
+    }
+
+    pub fn authorize_ui_theme(&self, slot: &str) -> Result<()> {
+        self.shared
+            .with_plugin(slot, |plugin| plugin.authorize_ui_theme())
+            .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e))
+    }
+
+    pub fn authorize_ui_adjust(&self, slot: &str, target_slot: &str) -> Result<()> {
+        self.shared
+            .with_plugin(slot, |plugin| plugin.authorize_ui_adjust(target_slot))
+            .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e))
+    }
+
     pub fn slot_has_config_hook(&self, slot: &str) -> bool {
         self.shared
             .with_plugin(slot, |p| Ok(p.has_config_hook()))
