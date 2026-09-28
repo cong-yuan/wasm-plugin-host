@@ -290,6 +290,7 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         "tools": [],
         "ui": {
             "provides": [{ "name": "frontend.panel", "description": "panel" }],
+            "injects": [{ "slot": "dashboard.cards", "component": "Card" }],
             "windows": [{
                 "name": "main",
                 "component": "Main",
@@ -299,7 +300,7 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         "capabilities": {
             "ui": {
                 "theme": true,
-                "slots": ["frontend.panel"],
+                "slots": ["frontend.panel", "dashboard.cards"],
                 "windows": true,
                 "backend_commands": ["list_sessions"]
             }
@@ -312,7 +313,7 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         CapabilitySet {
             ui: UiCapabilities {
                 theme: true,
-                slots: vec!["frontend.panel".into()],
+                slots: vec!["frontend.panel".into(), "dashboard.cards".into()],
                 windows: true,
                 backend_commands: vec!["list_sessions".into()],
                 ..Default::default()
@@ -340,6 +341,20 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
     .expect("granted slot should be allowed at runtime");
     reg.authorize_ui_action(
         "cap",
+        &UiHostAction::ProvideSlot {
+            slot: "frontend.panel".into(),
+        },
+    )
+    .expect("declared provided slot should be allowed at runtime");
+    reg.authorize_ui_action(
+        "cap",
+        &UiHostAction::InjectSlot {
+            slot: "dashboard.cards".into(),
+        },
+    )
+    .expect("declared injected slot should be allowed at runtime");
+    reg.authorize_ui_action(
+        "cap",
         &UiHostAction::OpenWindow {
             name: "main".into(),
         },
@@ -363,6 +378,31 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         )
         .expect_err("window capability must not allow undeclared window names");
     assert!(err.to_string().contains("does not declare UI window"));
+    let err = reg
+        .authorize_ui_action(
+            "cap",
+            &UiHostAction::RenderSlot {
+                slot: "dashboard.cards".into(),
+            },
+        )
+        .expect_err("an injected slot must not be treated as a provided/rendered slot");
+    assert!(err.to_string().contains("does not declare provided UI slot"));
+    let err = reg
+        .authorize_ui_action(
+            "cap",
+            &UiHostAction::InjectSlot {
+                slot: "frontend.panel".into(),
+            },
+        )
+        .expect_err("a provided slot must not be treated as an injected slot");
+    assert!(err.to_string().contains("does not declare injected UI slot"));
+    reg.authorize_ui_action(
+        "cap",
+        &UiHostAction::CloseWindow {
+            name: "main".into(),
+        },
+    )
+    .expect("closing a declared window uses the same runtime window authority");
 
     let audit = reg.audit_events_for("cap");
     assert!(audit.iter().any(|event| {
@@ -382,6 +422,11 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
     assert!(audit.iter().any(|event| {
         event.capability == "ui.slots"
             && event.target == "frontend.panel"
+            && event.decision == AuditDecision::Allow
+    }));
+    assert!(audit.iter().any(|event| {
+        event.capability == "ui.slots"
+            && event.target == "dashboard.cards"
             && event.decision == AuditDecision::Allow
     }));
     assert!(audit.iter().any(|event| {

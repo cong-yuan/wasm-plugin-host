@@ -76,8 +76,11 @@ pub enum UiHostAction {
     BackendCommand { command: String },
     Theme,
     Adjust { slot: String },
+    ProvideSlot { slot: String },
+    InjectSlot { slot: String },
     RenderSlot { slot: String },
     OpenWindow { name: String },
+    CloseWindow { name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

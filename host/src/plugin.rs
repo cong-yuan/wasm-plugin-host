@@ -399,7 +399,37 @@ impl Plugin {
             .map_err(anyhow::Error::msg)
     }
 
-    pub fn authorize_ui_slot(&self, slot: &str) -> Result<()> {
+    pub fn authorize_ui_provided_slot(&self, slot: &str) -> Result<()> {
+        let declared = self
+            .decl
+            .ui
+            .as_ref()
+            .is_some_and(|ui| ui.provides.iter().any(|provided| provided.name == slot));
+        if !declared {
+            return Err(anyhow!(
+                "plugin `{}` does not declare provided UI slot `{slot}`",
+                self.name
+            ));
+        }
+        self.store
+            .data()
+            .capability_gate
+            .require_ui_slot(slot)
+            .map_err(anyhow::Error::msg)
+    }
+
+    pub fn authorize_ui_injected_slot(&self, slot: &str) -> Result<()> {
+        let declared = self
+            .decl
+            .ui
+            .as_ref()
+            .is_some_and(|ui| ui.injects.iter().any(|inject| inject.slot == slot));
+        if !declared {
+            return Err(anyhow!(
+                "plugin `{}` does not declare injected UI slot `{slot}`",
+                self.name
+            ));
+        }
         self.store
             .data()
             .capability_gate

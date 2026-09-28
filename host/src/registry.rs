@@ -540,11 +540,15 @@ impl Registry {
             }
             UiHostAction::Theme => self.authorize_ui_theme(slot),
             UiHostAction::Adjust { slot: target } => self.authorize_ui_adjust(slot, target),
-            UiHostAction::RenderSlot { slot: target } => self
+            UiHostAction::ProvideSlot { slot: target } | UiHostAction::RenderSlot { slot: target } => self
                 .shared
-                .with_plugin(slot, |plugin| plugin.authorize_ui_slot(target))
+                .with_plugin(slot, |plugin| plugin.authorize_ui_provided_slot(target))
                 .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e)),
-            UiHostAction::OpenWindow { name } => self
+            UiHostAction::InjectSlot { slot: target } => self
+                .shared
+                .with_plugin(slot, |plugin| plugin.authorize_ui_injected_slot(target))
+                .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e)),
+            UiHostAction::OpenWindow { name } | UiHostAction::CloseWindow { name } => self
                 .shared
                 .with_plugin(slot, |plugin| plugin.authorize_ui_window(name))
                 .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e)),

@@ -332,12 +332,16 @@ The action is typed and intentionally does **not** carry a plugin id:
 
 ```json
 { "kind": "backend_command", "command": "list_sessions" }
+{ "kind": "inject_slot", "slot": "dashboard.cards" }
 { "kind": "render_slot", "slot": "openhanako.sidebar.notice" }
 { "kind": "open_window", "name": "main" }
 ```
 
 `open_window` additionally checks that the named window was declared by that
 plugin; `ui.windows: true` is not permission to invent arbitrary window names.
+Likewise `provide_slot` / `render_slot` must name one of the plugin's declared
+`ui.provides`, while `inject_slot` must name one of its declared `ui.injects`.
+The capability grant may narrow those declarations but may not expand them.
 The browser-side `source` string or `postMessage` payload must never be treated
 as the authenticated plugin identity.
 
