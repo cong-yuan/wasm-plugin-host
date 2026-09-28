@@ -21,7 +21,7 @@ pub use audit::{AuditDecision, AuditEvent, AuditSink, DEFAULT_AUDIT_CAPACITY};
 pub use capability::{
     AgentCapabilities, CapabilityGate, CapabilitySet, EffectiveCapabilities,
     FilesystemCapabilities, NetworkCapabilities, PluginPolicy, ResourceLimits, ServiceCapabilities,
-    TrustMode, UiCapabilities,
+    TrustMode, UiCapabilities, UiHostAction,
 };
 pub use config::{CacheConfig, Config, PluginEntry, ValidationIssue, Watch};
 pub use flow::{run_turn, Model, ScriptedModel, TurnOutcome};

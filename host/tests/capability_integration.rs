@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 use wasm_plugin_host::{
     AgentCapabilities, AuditDecision, CapabilitySet, PluginPolicy, Registry, Runtime,
-    ServiceCapabilities, TrustMode, UiCapabilities,
+    ServiceCapabilities, TrustMode, UiCapabilities, UiHostAction,
 };
 
 fn tmpdir(name: &str) -> PathBuf {
@@ -288,9 +288,19 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         "name": "frontend",
         "abi": 1,
         "tools": [],
+        "ui": {
+            "provides": [{ "name": "frontend.panel", "description": "panel" }],
+            "windows": [{
+                "name": "main",
+                "component": "Main",
+                "title": "Main"
+            }]
+        },
         "capabilities": {
             "ui": {
                 "theme": true,
+                "slots": ["frontend.panel"],
+                "windows": true,
                 "backend_commands": ["list_sessions"]
             }
         }
@@ -302,6 +312,8 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         CapabilitySet {
             ui: UiCapabilities {
                 theme: true,
+                slots: vec!["frontend.panel".into()],
+                windows: true,
                 backend_commands: vec!["list_sessions".into()],
                 ..Default::default()
             },
@@ -310,14 +322,47 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
     )
     .unwrap();
 
-    reg.authorize_ui_backend_command("cap", "list_sessions")
+    reg.authorize_ui_action(
+        "cap",
+        &UiHostAction::BackendCommand {
+            command: "list_sessions".into(),
+        },
+    )
         .expect("requested and granted command should be allowed");
-    reg.authorize_ui_theme("cap")
+    reg.authorize_ui_action("cap", &UiHostAction::Theme)
         .expect("requested and granted theme should be allowed");
+    reg.authorize_ui_action(
+        "cap",
+        &UiHostAction::RenderSlot {
+            slot: "frontend.panel".into(),
+        },
+    )
+    .expect("granted slot should be allowed at runtime");
+    reg.authorize_ui_action(
+        "cap",
+        &UiHostAction::OpenWindow {
+            name: "main".into(),
+        },
+    )
+    .expect("declared window should be allowed at runtime");
     let err = reg
-        .authorize_ui_backend_command("cap", "run_shell")
+        .authorize_ui_action(
+            "cap",
+            &UiHostAction::BackendCommand {
+                command: "run_shell".into(),
+            },
+        )
         .expect_err("ungranted command must be denied");
     assert!(err.to_string().contains("run_shell"));
+    let err = reg
+        .authorize_ui_action(
+            "cap",
+            &UiHostAction::OpenWindow {
+                name: "undeclared".into(),
+            },
+        )
+        .expect_err("window capability must not allow undeclared window names");
+    assert!(err.to_string().contains("does not declare UI window"));
 
     let audit = reg.audit_events_for("cap");
     assert!(audit.iter().any(|event| {
@@ -332,6 +377,16 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
     }));
     assert!(audit.iter().any(|event| {
         event.capability == "ui.theme"
+            && event.decision == AuditDecision::Allow
+    }));
+    assert!(audit.iter().any(|event| {
+        event.capability == "ui.slots"
+            && event.target == "frontend.panel"
+            && event.decision == AuditDecision::Allow
+    }));
+    assert!(audit.iter().any(|event| {
+        event.capability == "ui.windows"
+            && event.target == "main"
             && event.decision == AuditDecision::Allow
     }));
 }

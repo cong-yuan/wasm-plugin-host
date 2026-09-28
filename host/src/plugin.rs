@@ -399,6 +399,33 @@ impl Plugin {
             .map_err(anyhow::Error::msg)
     }
 
+    pub fn authorize_ui_slot(&self, slot: &str) -> Result<()> {
+        self.store
+            .data()
+            .capability_gate
+            .require_ui_slot(slot)
+            .map_err(anyhow::Error::msg)
+    }
+
+    pub fn authorize_ui_window(&self, name: &str) -> Result<()> {
+        let declared = self
+            .decl
+            .ui
+            .as_ref()
+            .is_some_and(|ui| ui.windows.iter().any(|window| window.name == name));
+        if !declared {
+            return Err(anyhow!(
+                "plugin `{}` does not declare UI window `{name}`",
+                self.name
+            ));
+        }
+        self.store
+            .data()
+            .capability_gate
+            .require_ui_window_named(name)
+            .map_err(anyhow::Error::msg)
+    }
+
     /// Load, init and describe a plugin. Registers nothing yet — the caller
     /// decides what to do with `decl.tools`. `config` is the entry's config
     /// object (JSON `null` when unset); it is pushed into the plugin's

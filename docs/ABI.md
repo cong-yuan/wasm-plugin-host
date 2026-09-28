@@ -324,6 +324,23 @@ The frontend runs `entry.js` with a `studio` object that exposes `register`,
 `components`, `require`, `provideSlot`, `inject`, `renderSlot`, `openWindow`,
 `closeWindow`, `windowParams`, `windowLabel`, and `dispose`.
 
+For a sandboxed embedding, those frontend methods are not authorization by
+themselves. The native Studio/Tauri host should bind the plugin slot identity
+out-of-band and authorize privileged operations with
+`Registry::authorize_ui_action(slot, &UiHostAction)` before executing them.
+The action is typed and intentionally does **not** carry a plugin id:
+
+```json
+{ "kind": "backend_command", "command": "list_sessions" }
+{ "kind": "render_slot", "slot": "openhanako.sidebar.notice" }
+{ "kind": "open_window", "name": "main" }
+```
+
+`open_window` additionally checks that the named window was declared by that
+plugin; `ui.windows: true` is not permission to invent arbitrary window names.
+The browser-side `source` string or `postMessage` payload must never be treated
+as the authenticated plugin identity.
+
 `studio.renderSlot(slot, el)` is the missing half of opening a slot: a plugin
 that **provides** a slot must also render its children somewhere, or nothing it
 hosts will ever appear.

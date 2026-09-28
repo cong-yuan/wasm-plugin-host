@@ -528,6 +528,29 @@ impl Registry {
             .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e))
     }
 
+    pub fn authorize_ui_action(
+        &self,
+        slot: &str,
+        action: &crate::capability::UiHostAction,
+    ) -> Result<()> {
+        use crate::capability::UiHostAction;
+        match action {
+            UiHostAction::BackendCommand { command } => {
+                self.authorize_ui_backend_command(slot, command)
+            }
+            UiHostAction::Theme => self.authorize_ui_theme(slot),
+            UiHostAction::Adjust { slot: target } => self.authorize_ui_adjust(slot, target),
+            UiHostAction::RenderSlot { slot: target } => self
+                .shared
+                .with_plugin(slot, |plugin| plugin.authorize_ui_slot(target))
+                .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e)),
+            UiHostAction::OpenWindow { name } => self
+                .shared
+                .with_plugin(slot, |plugin| plugin.authorize_ui_window(name))
+                .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e)),
+        }
+    }
+
     pub fn slot_has_config_hook(&self, slot: &str) -> bool {
         self.shared
             .with_plugin(slot, |p| Ok(p.has_config_hook()))

@@ -68,6 +68,18 @@ pub struct UiCapabilities {
     pub backend_commands: Vec<String>,
 }
 
+/// Typed frontend-host operation. The authenticated plugin identity is supplied
+/// separately by the embedding host and must never come from the payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UiHostAction {
+    BackendCommand { command: String },
+    Theme,
+    Adjust { slot: String },
+    RenderSlot { slot: String },
+    OpenWindow { name: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CapabilitySet {
     #[serde(default)]
@@ -395,6 +407,10 @@ impl CapabilityGate {
     }
 
     pub fn require_ui_window(&self) -> Result<(), String> {
+        self.require_ui_window_named("window")
+    }
+
+    pub fn require_ui_window_named(&self, window: &str) -> Result<(), String> {
         let effective = self.effective.read().unwrap();
         let result = if effective.unrestricted || effective.capabilities.ui.windows {
             Ok(())
@@ -402,7 +418,7 @@ impl CapabilityGate {
             Err("permission denied: ui windows are not granted".to_string())
         };
         drop(effective);
-        self.audit_result("ui.windows", "window", &result);
+        self.audit_result("ui.windows", window, &result);
         result
     }
 
