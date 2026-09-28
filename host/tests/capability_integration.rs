@@ -291,6 +291,7 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         "ui": {
             "provides": [{ "name": "frontend.panel", "description": "panel" }],
             "injects": [{ "slot": "dashboard.cards", "component": "Card" }],
+            "adjusts": [{ "slot": "dashboard.*", "action": "hide" }],
             "windows": [{
                 "name": "main",
                 "component": "Main",
@@ -301,6 +302,7 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
             "ui": {
                 "theme": true,
                 "slots": ["frontend.panel", "dashboard.cards"],
+                "adjusts": ["dashboard.*"],
                 "windows": true,
                 "backend_commands": ["list_sessions"]
             }
@@ -314,6 +316,7 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
             ui: UiCapabilities {
                 theme: true,
                 slots: vec!["frontend.panel".into(), "dashboard.cards".into()],
+                adjusts: vec!["dashboard.*".into(), "other.*".into()],
                 windows: true,
                 backend_commands: vec!["list_sessions".into(), "run_shell".into()],
                 ..Default::default()
@@ -364,6 +367,13 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
     .expect("declared injected slot should be allowed at runtime");
     reg.authorize_ui_action(
         "cap",
+        &UiHostAction::Adjust {
+            slot: "dashboard.cards".into(),
+        },
+    )
+    .expect("declared adjustment pattern should authorize matching targets");
+    reg.authorize_ui_action(
+        "cap",
         &UiHostAction::OpenWindow {
             name: "main".into(),
         },
@@ -405,6 +415,15 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         )
         .expect_err("a provided slot must not be treated as an injected slot");
     assert!(err.to_string().contains("does not declare injected UI slot"));
+    let err = reg
+        .authorize_ui_action(
+            "cap",
+            &UiHostAction::Adjust {
+                slot: "other.panel".into(),
+            },
+        )
+        .expect_err("grant alone must not create an undeclared adjustment surface");
+    assert!(err.to_string().contains("does not declare UI adjustment"));
     reg.authorize_ui_action(
         "cap",
         &UiHostAction::CloseWindow {
@@ -437,6 +456,16 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         event.capability == "ui.slots"
             && event.target == "dashboard.cards"
             && event.decision == AuditDecision::Allow
+    }));
+    assert!(audit.iter().any(|event| {
+        event.capability == "ui.adjusts"
+            && event.target == "other.panel"
+            && event.decision == AuditDecision::Deny
+            && event
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("does not declare UI adjustment")
     }));
     assert!(audit.iter().any(|event| {
         event.capability == "ui.windows"

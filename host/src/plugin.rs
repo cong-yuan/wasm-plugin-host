@@ -396,6 +396,28 @@ impl Plugin {
     }
 
     pub fn authorize_ui_adjust(&self, slot: &str) -> Result<()> {
+        let declared = self.decl.ui.as_ref().is_some_and(|ui| {
+            ui.adjusts.iter().any(|adjust| {
+                adjust.slot == "*"
+                    || adjust.slot == slot
+                    || adjust
+                        .slot
+                        .strip_suffix('*')
+                        .is_some_and(|prefix| slot.starts_with(prefix))
+            })
+        });
+        if !declared {
+            return self
+                .store
+                .data()
+                .capability_gate
+                .deny_ui_manifest(
+                    "ui.adjusts",
+                    slot,
+                    format!("plugin `{}` does not declare UI adjustment for `{slot}`", self.name),
+                )
+                .map_err(anyhow::Error::msg);
+        }
         self.store
             .data()
             .capability_gate
