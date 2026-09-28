@@ -88,6 +88,17 @@ package without requiring a separate `wasm-tools` CLI.
 core guests still follow the unchanged module path. `Plugin::load` recognizes a
 Component and reports that lifecycle execution is not wired yet.
 
+## Host import binding status
+
+`host/src/component_backend.rs` now binds the generated WIT host interfaces directly to the existing `HostState`:
+
+- log/config reuse the live host state and log budget;
+- network reuses `CapabilityGate::require_http`, redirect policy and resolved-IP filtering;
+- filesystem reuses the same grant roots, cap-std handles and mutation implementation;
+- services reuse `services.consume` authorization and the existing service graph.
+
+The generated lifecycle exports are also wrapped as typed calls for `abi-version`, `init`, `configure`, `describe`, `invoke` and `shutdown`. The remaining step is structural: route a loaded Component through this `ComponentInstance` from `Plugin` without changing Registry/Supervisor APIs.
+
 ## Next implementation step
 
 Add a Component-backed plugin instance that implements the same internal

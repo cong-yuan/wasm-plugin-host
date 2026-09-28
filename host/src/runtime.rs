@@ -560,7 +560,7 @@ impl Runtime {
     }
 }
 
-fn prepare_store_budget(store: &mut Store<HostState>) -> Result<()> {
+pub(crate) fn prepare_store_budget(store: &mut Store<HostState>) -> Result<()> {
     store.data().reset_call_log_budget();
     let (trust, fuel, timeout_ms) = {
         let state = store.data();
@@ -727,7 +727,7 @@ fn host_fs_op(
     Ok(bytes.len() as i64)
 }
 
-fn fs_op_json(state: &HostState, req_json: &str) -> serde_json::Value {
+pub(crate) fn fs_op_json(state: &HostState, req_json: &str) -> serde_json::Value {
     use std::io::Write as _;
 
     let req: serde_json::Value = match serde_json::from_str(req_json) {
@@ -878,7 +878,7 @@ fn decode_fs_data(req: &serde_json::Value) -> std::result::Result<Vec<u8>, Strin
     Ok(data)
 }
 
-fn safe_relative_fs_path(raw: &str) -> std::result::Result<std::path::PathBuf, String> {
+pub(crate) fn safe_relative_fs_path(raw: &str) -> std::result::Result<std::path::PathBuf, String> {
     use std::path::Component;
 
     let path = std::path::Path::new(raw);
@@ -902,7 +902,7 @@ fn safe_relative_fs_path(raw: &str) -> std::result::Result<std::path::PathBuf, S
     Ok(path.to_path_buf())
 }
 
-fn with_fs_root<T>(
+pub(crate) fn with_fs_root<T>(
     state: &HostState,
     root: &str,
     f: impl FnOnce(&cap_std::fs::Dir) -> std::result::Result<T, String>,
@@ -1004,7 +1004,7 @@ fn host_http_fetch(
 /// `match`. The `http::Request` form is method-agnostic.
 ///
 /// The request is bounded by `timeout` on purpose; see [`HTTP_TIMEOUT`].
-fn http_fetch_json(
+pub(crate) fn http_fetch_json(
     req_json: &str,
     timeout: Duration,
     max_redirects: u32,

@@ -330,6 +330,18 @@ impl CapabilityGate {
         result
     }
 
+    pub fn require_filesystem_read(&self, root: &str, path: &str) -> Result<(), String> {
+        let effective = self.effective.read().unwrap();
+        let result = effective.allows_named(
+            "filesystem read root",
+            root,
+            &effective.capabilities.filesystem.read,
+        );
+        drop(effective);
+        self.audit_result("filesystem.read", &format!("{root}:{path}"), &result);
+        result
+    }
+
     pub fn require_filesystem_create(&self, root: &str, path: &str) -> Result<(), String> {
         let effective = self.effective.read().unwrap();
         let result = effective.allows_named(

@@ -364,8 +364,9 @@ impl HostState {
             for path in policy
                 .grant
                 .filesystem
-                .write
+                .read
                 .iter()
+                .chain(policy.grant.filesystem.write.iter())
                 .chain(policy.grant.filesystem.create.iter())
                 .chain(policy.grant.filesystem.delete.iter())
             {
