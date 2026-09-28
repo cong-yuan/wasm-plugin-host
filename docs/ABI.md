@@ -355,6 +355,12 @@ request/grant intersection; do not derive the browser API from `slot_policy()`
 alone. Trusted compatibility plugins are explicitly marked `unrestricted` in
 that snapshot.
 
+For untrusted browser messages, the preferred execution path is
+`Registry::parse_and_authorize_ui_action(authenticated_slot, payload)`. It
+performs strict JSON decoding and capability/manifest authorization in one step
+and returns the exact typed action that was approved. The host should execute
+that returned value, not reparse or consult the raw message afterward.
+
 `studio.renderSlot(slot, el)` is the missing half of opening a slot: a plugin
 that **provides** a slot must also render its children somewhere, or nothing it
 hosts will ever appear.

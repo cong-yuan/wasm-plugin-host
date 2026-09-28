@@ -567,6 +567,23 @@ impl Registry {
         }
     }
 
+    /// Strictly decode an untrusted frontend payload and authorize it against
+    /// the authenticated plugin slot supplied by the embedding host. The slot
+    /// is deliberately a separate argument and cannot be overridden by JSON.
+    ///
+    /// On success the exact parsed action is returned so the caller can execute
+    /// what was authorized instead of reparsing or consulting the raw payload.
+    pub fn parse_and_authorize_ui_action(
+        &self,
+        authenticated_slot: &str,
+        payload: serde_json::Value,
+    ) -> Result<crate::capability::UiHostAction> {
+        let action: crate::capability::UiHostAction = serde_json::from_value(payload)
+            .map_err(|e| anyhow::anyhow!("invalid UI host action: {e}"))?;
+        self.authorize_ui_action(authenticated_slot, &action)?;
+        Ok(action)
+    }
+
     pub fn slot_has_config_hook(&self, slot: &str) -> bool {
         self.shared
             .with_plugin(slot, |p| Ok(p.has_config_hook()))

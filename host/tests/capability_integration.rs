@@ -342,6 +342,32 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         },
     )
         .expect("requested and granted command should be allowed");
+    let parsed = reg
+        .parse_and_authorize_ui_action(
+            "cap",
+            serde_json::json!({
+                "kind": "backend_command",
+                "command": "list_sessions"
+            }),
+        )
+        .expect("strict JSON entrypoint should return the authorized typed action");
+    assert_eq!(
+        parsed,
+        UiHostAction::BackendCommand {
+            command: "list_sessions".into()
+        }
+    );
+    let err = reg
+        .parse_and_authorize_ui_action(
+            "cap",
+            serde_json::json!({
+                "kind": "backend_command",
+                "command": "list_sessions",
+                "plugin_id": "other-slot"
+            }),
+        )
+        .expect_err("payload identity must be rejected rather than overriding host identity");
+    assert!(err.to_string().contains("invalid UI host action"));
     reg.authorize_ui_action("cap", &UiHostAction::Theme)
         .expect("requested and granted theme should be allowed");
     reg.authorize_ui_action(
