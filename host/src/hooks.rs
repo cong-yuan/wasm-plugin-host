@@ -115,6 +115,33 @@ impl Event {
         })
     }
 
+    /// Whether this event may replace the payload flowing to the next stage.
+    pub fn allows_rewrite(self) -> bool {
+        matches!(
+            self,
+            Event::AgentPreStep
+                | Event::AgentRequest
+                | Event::LlmRequest
+                | Event::LlmChunk
+                | Event::ToolsPreExecute
+                | Event::ToolExecute
+                | Event::ToolResultPost
+                | Event::ToolResult
+        )
+    }
+
+    /// Whether this event may stop the operation entirely.
+    pub fn allows_veto(self) -> bool {
+        matches!(
+            self,
+            Event::AgentPreStep
+                | Event::AgentRequest
+                | Event::LlmRequest
+                | Event::ToolsPreExecute
+                | Event::ToolExecute
+        )
+    }
+
     /// The full vocabulary, for `describe` validation and error messages.
     pub const ALL: [Event; 12] = [
         Event::TurnStart,
@@ -139,9 +166,7 @@ pub enum Decision {
     /// Continue with the payload unchanged.
     Continue,
     /// Replace the payload with `value` and continue.
-    Rewrite {
-        value: serde_json::Value,
-    },
+    Rewrite { value: serde_json::Value },
     /// Stop the step. `reason` is surfaced to the caller/log.
     Veto {
         #[serde(default)]
@@ -188,6 +213,8 @@ pub struct Dispatch {
     pub value: serde_json::Value,
     /// The subscriber that vetoed, if any. Flow should stop.
     pub vetoed_by: Option<String>,
+    /// The guest-supplied reason for an accepted veto.
+    pub veto_reason: Option<String>,
     /// Number of subscribers that ran.
     pub ran: usize,
     /// Slots whose hook errored (they were skipped; flow continued).
@@ -286,18 +313,14 @@ impl Hooks {
     /// The value passed to each subscriber is the value **as rewritten so far**,
     /// so a rewrite by an earlier subscriber is visible to later ones. That is
     /// the semantics dsh's waterfall has.
-    pub fn dispatch<F>(
-        &self,
-        ev: Event,
-        mut value: serde_json::Value,
-        mut call: F,
-    ) -> Dispatch
+    pub fn dispatch<F>(&self, ev: Event, mut value: serde_json::Value, mut call: F) -> Dispatch
     where
         F: FnMut(&Subscription, &serde_json::Value) -> Result<serde_json::Value>,
     {
         let mut ran = 0usize;
         let mut errored = Vec::new();
         let mut vetoed_by = None;
+        let mut veto_reason = None;
 
         for sub in self.subscribers(ev) {
             ran += 1;
@@ -307,10 +330,14 @@ impl Hooks {
                     if sub.mode == crate::plugin::HookMode::Waterfall {
                         match Decision::parse(&reply) {
                             Decision::Continue => {}
-                            Decision::Rewrite { value: v } => value = v,
-                            Decision::Veto { .. } => {
-                                vetoed_by = Some(sub.slot.clone());
-                                break;
+                            Decision::Rewrite { value: v } if ev.allows_rewrite() => value = v,
+                            Decision::Rewrite { .. } => {}
+                            Decision::Veto { reason } => {
+                                if ev.allows_veto() {
+                                    vetoed_by = Some(sub.slot.clone());
+                                    veto_reason = Some(reason);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -326,6 +353,7 @@ impl Hooks {
         Dispatch {
             value,
             vetoed_by,
+            veto_reason,
             ran,
             errored,
         }
@@ -381,7 +409,11 @@ mod failopen_tests {
             Ok(serde_json::json!({"kind": "continue"}))
         });
 
-        assert_eq!(d.errored, vec!["bad".to_string()], "the failure is recorded");
+        assert_eq!(
+            d.errored,
+            vec!["bad".to_string()],
+            "the failure is recorded"
+        );
         assert!(d.vetoed_by.is_none(), "an error is not a veto");
         assert_eq!(d.ran, 2, "the failing hook's peer still ran");
     }
@@ -412,11 +444,43 @@ mod failopen_tests {
         assert_eq!(d.value, original, "observe cannot rewrite either");
     }
 
+    #[test]
+    fn event_spec_blocks_waterfall_actions_on_observe_only_events() {
+        let hooks = one("watcher", Event::ToolCall, HookMode::Waterfall);
+        let original = serde_json::json!({"n": 1});
+        let veto = hooks.dispatch(Event::ToolCall, original.clone(), |_s, _p| {
+            Ok(serde_json::json!({"kind": "veto", "reason": "ignored"}))
+        });
+        assert!(veto.vetoed_by.is_none());
+        assert!(veto.veto_reason.is_none());
+        assert_eq!(veto.value, original);
+
+        let rewrite = hooks.dispatch(Event::ToolCall, original.clone(), |_s, _p| {
+            Ok(serde_json::json!({"kind": "rewrite", "value": {"n": 2}}))
+        });
+        assert_eq!(rewrite.value, original);
+    }
+
+    #[test]
+    fn rewrite_only_event_ignores_veto_but_accepts_rewrite() {
+        let hooks = one("chunk", Event::LlmChunk, HookMode::Waterfall);
+        let original = serde_json::json!({"text": "a"});
+        let veto = hooks.dispatch(Event::LlmChunk, original.clone(), |_s, _p| {
+            Ok(serde_json::json!({"kind": "veto", "reason": "ignored"}))
+        });
+        assert!(veto.vetoed_by.is_none());
+
+        let rewrite = hooks.dispatch(Event::LlmChunk, original, |_s, _p| {
+            Ok(serde_json::json!({"kind": "rewrite", "value": {"text": "b"}}))
+        });
+        assert_eq!(rewrite.value, serde_json::json!({"text": "b"}));
+    }
+
     /// A veto stops the chain: subscribers after it do not run.
     #[test]
     fn a_veto_stops_the_chain() {
-        let hooks = two_waterfalls("first", "second", Event::ToolCall);
-        let d = hooks.dispatch(Event::ToolCall, serde_json::json!({}), |sub, _p| {
+        let hooks = two_waterfalls("first", "second", Event::ToolsPreExecute);
+        let d = hooks.dispatch(Event::ToolsPreExecute, serde_json::json!({}), |sub, _p| {
             Ok(if sub.slot == "first" {
                 serde_json::json!({"kind": "veto", "reason": "stop"})
             } else {
@@ -427,20 +491,34 @@ mod failopen_tests {
         assert_eq!(d.ran, 1, "the chain stopped at the veto");
     }
 
+    #[test]
+    fn an_accepted_veto_preserves_its_reason() {
+        let hooks = one("guard", Event::ToolsPreExecute, HookMode::Waterfall);
+        let d = hooks.dispatch(Event::ToolsPreExecute, serde_json::json!({}), |_sub, _p| {
+            Ok(serde_json::json!({"kind": "veto", "reason": "blocked by policy"}))
+        });
+        assert_eq!(d.vetoed_by.as_deref(), Some("guard"));
+        assert_eq!(d.veto_reason.as_deref(), Some("blocked by policy"));
+    }
+
     /// A `rewrite` replaces the payload and the **next** hook sees the new
     /// value — the waterfall contract.
     #[test]
     fn a_rewrite_is_seen_by_the_next_hook() {
-        let hooks = two_waterfalls("first", "second", Event::ToolCall);
+        let hooks = two_waterfalls("first", "second", Event::ToolsPreExecute);
         let seen = std::cell::RefCell::new(None);
-        let d = hooks.dispatch(Event::ToolCall, serde_json::json!({"n": 1}), |sub, payload| {
-            if sub.slot == "first" {
-                Ok(serde_json::json!({"kind": "rewrite", "value": {"n": 2}}))
-            } else {
-                *seen.borrow_mut() = Some(payload.get("value").cloned());
-                Ok(serde_json::json!({"kind": "continue"}))
-            }
-        });
+        let d = hooks.dispatch(
+            Event::ToolsPreExecute,
+            serde_json::json!({"n": 1}),
+            |sub, payload| {
+                if sub.slot == "first" {
+                    Ok(serde_json::json!({"kind": "rewrite", "value": {"n": 2}}))
+                } else {
+                    *seen.borrow_mut() = Some(payload.get("value").cloned());
+                    Ok(serde_json::json!({"kind": "continue"}))
+                }
+            },
+        );
         assert_eq!(d.value, serde_json::json!({"n": 2}));
         assert_eq!(
             seen.into_inner(),

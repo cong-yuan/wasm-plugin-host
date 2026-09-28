@@ -23,21 +23,49 @@ use notify::Watcher as _;
 /// A single line of reconciliation output, for logging/progress.
 #[derive(Debug)]
 pub enum Event {
-    Loaded { slot: String, tools: Vec<String> },
-    Unloaded { slot: String, tools: Vec<String> },
-    Reloaded { slot: String, old: Vec<String>, new: Vec<String> },
-    ReloadFailed { slot: String, error: String },
-    LoadFailed { slot: String, error: String },
+    Loaded {
+        slot: String,
+        tools: Vec<String>,
+    },
+    Unloaded {
+        slot: String,
+        tools: Vec<String>,
+    },
+    Reloaded {
+        slot: String,
+        old: Vec<String>,
+        new: Vec<String>,
+    },
+    ReloadFailed {
+        slot: String,
+        error: String,
+    },
+    LoadFailed {
+        slot: String,
+        error: String,
+    },
     /// A slot's config changed and was pushed live (no restart).
-    ConfigUpdated { slot: String },
+    ConfigUpdated {
+        slot: String,
+    },
     /// A slot's config changed and the plugin was restarted to pick it up.
-    ConfigRestarted { slot: String },
+    ConfigRestarted {
+        slot: String,
+    },
     /// A slot's config changed live but the plugin has no `plugin_on_config`
     /// hook — it will see the new value on its next `host.get_config` pull.
-    ConfigUpdatedPullOnly { slot: String },
-    ConfigUpdateFailed { slot: String, error: String },
+    ConfigUpdatedPullOnly {
+        slot: String,
+    },
+    ConfigUpdateFailed {
+        slot: String,
+        error: String,
+    },
     /// Config referenced a file that does not exist yet (waiting for a build).
-    Missing { slot: String, path: PathBuf },
+    Missing {
+        slot: String,
+        path: PathBuf,
+    },
 }
 
 pub struct Supervisor {
@@ -122,6 +150,7 @@ impl Supervisor {
             enabled: bool,
             config: serde_json::Value,
             restart_on_config: bool,
+            policy: crate::capability::PluginPolicy,
         }
         let desired: HashMap<String, Desired> = self
             .config
@@ -135,13 +164,18 @@ impl Supervisor {
                         enabled: e.enabled,
                         config: e.config.clone().unwrap_or(serde_json::Value::Null),
                         restart_on_config: e.restart_on_config,
+                        policy: e.policy(),
                     },
                 )
             })
             .collect();
 
         // Unload anything loaded but not desired-enabled.
-        let loaded: Vec<String> = reg.list_plugins().iter().map(|(s, ..)| s.to_string()).collect();
+        let loaded: Vec<String> = reg
+            .list_plugins()
+            .iter()
+            .map(|(s, ..)| s.to_string())
+            .collect();
         for slot in loaded {
             let keep = desired.get(&slot).map(|d| d.enabled).unwrap_or(false);
             if !keep {
@@ -150,7 +184,10 @@ impl Supervisor {
                         self.mtimes.remove(&slot);
                         events.push(Event::Unloaded { slot, tools });
                     }
-                    Err(e) => events.push(Event::LoadFailed { slot, error: e.to_string() }),
+                    Err(e) => events.push(Event::LoadFailed {
+                        slot,
+                        error: e.to_string(),
+                    }),
                 }
             }
         }
@@ -163,22 +200,50 @@ impl Supervisor {
             }
             if !reg.is_loaded(slot) {
                 if !d.path.exists() {
-                    events.push(Event::Missing { slot: slot.clone(), path: d.path.clone() });
+                    events.push(Event::Missing {
+                        slot: slot.clone(),
+                        path: d.path.clone(),
+                    });
                     continue;
                 }
-                match reg.load(slot, &d.path, d.config.clone()) {
+                match reg.load_with_policy(slot, &d.path, d.config.clone(), d.policy.clone()) {
                     Ok(r) => {
                         self.mtimes.insert(slot.clone(), mtime_ns(&d.path));
-                        events.push(Event::Loaded { slot: slot.clone(), tools: r.tools });
+                        events.push(Event::Loaded {
+                            slot: slot.clone(),
+                            tools: r.tools,
+                        });
                     }
-                    Err(e) => {
-                        events.push(Event::LoadFailed { slot: slot.clone(), error: e.to_string() })
-                    }
+                    Err(e) => events.push(Event::LoadFailed {
+                        slot: slot.clone(),
+                        error: e.to_string(),
+                    }),
                 }
-            } else if let Some(ev) =
-                self.apply_config_if_changed(reg, slot, &d.config, d.restart_on_config, &d.path)
-            {
-                events.push(ev);
+            } else {
+                if reg.slot_policy(slot) != Some(&d.policy) {
+                    match reg.reload_with_policy(
+                        slot,
+                        &d.path,
+                        Some(d.config.clone()),
+                        d.policy.clone(),
+                    ) {
+                        Ok(r) => events.push(Event::Reloaded {
+                            slot: r.slot,
+                            old: r.old_tools,
+                            new: r.new_tools,
+                        }),
+                        Err(e) => events.push(Event::ReloadFailed {
+                            slot: slot.clone(),
+                            error: e.to_string(),
+                        }),
+                    }
+                    continue;
+                }
+                if let Some(ev) =
+                    self.apply_config_if_changed(reg, slot, &d.config, d.restart_on_config, &d.path)
+                {
+                    events.push(ev);
+                }
             }
         }
 
@@ -225,6 +290,7 @@ impl Supervisor {
             config: serde_json::Value,
             restart_on_config: bool,
             watch: bool,
+            policy: crate::capability::PluginPolicy,
         }
         let wants: Vec<Want> = self
             .config
@@ -237,12 +303,32 @@ impl Supervisor {
                 config: e.config.clone().unwrap_or(serde_json::Value::Null),
                 restart_on_config: e.restart_on_config,
                 watch: e.watching(watch_global),
+                policy: e.policy(),
             })
             .collect();
 
         for w in wants {
             // --- config diff first: independent of whether the wasm changed ---
             if reg.is_loaded(&w.slot) {
+                if reg.slot_policy(&w.slot) != Some(&w.policy) {
+                    match reg.reload_with_policy(
+                        &w.slot,
+                        &w.path,
+                        Some(w.config.clone()),
+                        w.policy.clone(),
+                    ) {
+                        Ok(r) => events.push(Event::Reloaded {
+                            slot: r.slot,
+                            old: r.old_tools,
+                            new: r.new_tools,
+                        }),
+                        Err(e) => events.push(Event::ReloadFailed {
+                            slot: w.slot.clone(),
+                            error: e.to_string(),
+                        }),
+                    }
+                    continue;
+                }
                 if let Some(ev) = self.apply_config_if_changed(
                     reg,
                     &w.slot,
@@ -277,17 +363,23 @@ impl Supervisor {
             }
 
             if !reg.is_loaded(&w.slot) {
-                match reg.load(&w.slot, &w.path, w.config.clone()) {
+                match reg.load_with_policy(&w.slot, &w.path, w.config.clone(), w.policy.clone()) {
                     Ok(r) => {
                         self.mtimes.insert(w.slot.clone(), now);
-                        events.push(Event::Loaded { slot: w.slot, tools: r.tools });
+                        events.push(Event::Loaded {
+                            slot: w.slot,
+                            tools: r.tools,
+                        });
                     }
                     Err(e) => {
                         // Record the mtime even on failure so a bad build or a
                         // tool collision is not retried every tick; it will be
                         // retried once the file changes again.
                         self.mtimes.insert(w.slot.clone(), now);
-                        events.push(Event::LoadFailed { slot: w.slot, error: e.to_string() });
+                        events.push(Event::LoadFailed {
+                            slot: w.slot,
+                            error: e.to_string(),
+                        });
                     }
                 }
                 continue;
@@ -295,7 +387,8 @@ impl Supervisor {
 
             // Already loaded and mtime changed -> atomic reload (new wasm, and
             // re-apply the *current* config so a rebuild never loses it).
-            match reg.reload(&w.slot, &w.path, Some(w.config.clone())) {
+            match reg.reload_with_policy(&w.slot, &w.path, Some(w.config.clone()), w.policy.clone())
+            {
                 Ok(r) => {
                     self.mtimes.insert(w.slot.clone(), now);
                     events.push(Event::Reloaded {
@@ -308,7 +401,10 @@ impl Supervisor {
                     // Record the new mtime so we don't retry a broken build every
                     // tick; the old plugin stays live meanwhile.
                     self.mtimes.insert(w.slot.clone(), now);
-                    events.push(Event::ReloadFailed { slot: w.slot, error: e.to_string() });
+                    events.push(Event::ReloadFailed {
+                        slot: w.slot,
+                        error: e.to_string(),
+                    });
                 }
             }
         }
@@ -335,14 +431,26 @@ impl Supervisor {
         if restart_on_config {
             // Restart just this plugin so it re-reads the config from scratch.
             match reg.reload(slot, path, Some(desired.clone())) {
-                Ok(_) => Some(Event::ConfigRestarted { slot: slot.to_string() }),
-                Err(e) => Some(Event::ConfigUpdateFailed { slot: slot.to_string(), error: e.to_string() }),
+                Ok(_) => Some(Event::ConfigRestarted {
+                    slot: slot.to_string(),
+                }),
+                Err(e) => Some(Event::ConfigUpdateFailed {
+                    slot: slot.to_string(),
+                    error: e.to_string(),
+                }),
             }
         } else {
             match reg.apply_config(slot, desired.clone()) {
-                Ok(true) => Some(Event::ConfigUpdated { slot: slot.to_string() }),
-                Ok(false) => Some(Event::ConfigUpdatedPullOnly { slot: slot.to_string() }),
-                Err(e) => Some(Event::ConfigUpdateFailed { slot: slot.to_string(), error: e.to_string() }),
+                Ok(true) => Some(Event::ConfigUpdated {
+                    slot: slot.to_string(),
+                }),
+                Ok(false) => Some(Event::ConfigUpdatedPullOnly {
+                    slot: slot.to_string(),
+                }),
+                Err(e) => Some(Event::ConfigUpdateFailed {
+                    slot: slot.to_string(),
+                    error: e.to_string(),
+                }),
             }
         }
     }
@@ -357,9 +465,13 @@ impl Supervisor {
             .ok_or_else(|| anyhow::anyhow!("slot `{slot}` is not in the config"))?;
         let path = self.resolve(&entry.path);
         let cfg = entry.config.clone().unwrap_or(serde_json::Value::Null);
-        let r = reg.reload(slot, &path, Some(cfg))?;
+        let r = reg.reload_with_policy(slot, &path, Some(cfg), entry.policy())?;
         self.mtimes.insert(slot.to_string(), mtime_ns(&path));
-        Ok(Event::Reloaded { slot: r.slot, old: r.old_tools, new: r.new_tools })
+        Ok(Event::Reloaded {
+            slot: r.slot,
+            old: r.old_tools,
+            new: r.new_tools,
+        })
     }
 
     /// Enable/disable a slot and persist the change.
@@ -432,7 +544,11 @@ impl Supervisor {
 fn mtime_ns(path: &Path) -> u128 {
     std::fs::metadata(path)
         .and_then(|m| m.modified())
-        .map(|t| t.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_nanos())
+        .map(|t| {
+            t.duration_since(UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO)
+                .as_nanos()
+        })
         .unwrap_or(0)
 }
 
@@ -540,7 +656,9 @@ impl Watcher {
 
 /// Convenience: does the path exist and look like a wasm file?
 pub fn looks_like_wasm(path: &Path) -> bool {
-    std::fs::metadata(path).map(|m| m.is_file()).unwrap_or(false)
+    std::fs::metadata(path)
+        .map(|m| m.is_file())
+        .unwrap_or(false)
         && path.extension().map(|e| e == "wasm").unwrap_or(false)
 }
 
@@ -554,7 +672,11 @@ pub fn render(e: &Event) -> String {
             format!("unloaded `{slot}` (removed tools: {})", tools.join(", "))
         }
         Event::Reloaded { slot, old, new } => {
-            format!("reloaded `{slot}`: [{}] -> [{}]", old.join(", "), new.join(", "))
+            format!(
+                "reloaded `{slot}`: [{}] -> [{}]",
+                old.join(", "),
+                new.join(", ")
+            )
         }
         Event::ReloadFailed { slot, error } => {
             format!("reload FAILED for `{slot}` (kept old): {error}")
@@ -586,13 +708,16 @@ pub fn discover(dir: &Path, cfg: &mut Config) -> Result<usize> {
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
-            cfg.plugins.entry(slot).or_insert_with(|| crate::config::PluginEntry {
-                path: path.to_string_lossy().to_string(),
-                enabled: false,
-                watch: None,
-                config: None,
-                restart_on_config: false,
-            });
+            cfg.plugins
+                .entry(slot)
+                .or_insert_with(|| crate::config::PluginEntry {
+                    path: path.to_string_lossy().to_string(),
+                    enabled: false,
+                    watch: None,
+                    config: None,
+                    restart_on_config: false,
+                    ..Default::default()
+                });
             found += 1;
         }
     }

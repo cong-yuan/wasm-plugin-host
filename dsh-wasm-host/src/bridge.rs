@@ -294,10 +294,7 @@ async fn register_tool_execute(ctx: &Context, host: WasmHost) -> Result<()> {
             Box::pin(async move {
                 let dispatch = run_guest(&host, FlowEvent::ToolExecute, &payload);
                 if dispatch.vetoed_by.is_some() {
-                    return Ok(tool_error_result(
-                        "WASM_VETO",
-                        &veto_reason(&dispatch),
-                    ));
+                    return Ok(tool_error_result("WASM_VETO", &veto_reason(&dispatch)));
                 }
                 match rewritten_payload(&dispatch, &payload) {
                     Some(value) => {
@@ -426,16 +423,14 @@ fn session_event_to_flow(payload: &Value) -> Option<FlowEvent> {
 }
 
 /// The reason attached to a dsh decision when a guest vetoed.
-///
-/// The specific reason a guest supplied is **not recoverable here**: the
-/// host's `Registry::dispatch` breaks out of the subscriber loop on a veto
-/// without copying the guest's reply into the returned [`Dispatch`], which
-/// carries only `vetoed_by`. Propagating the real reason would need an
-/// additive field on the host's `Dispatch` (see docs/已知问题.md); until then
-/// we report a stable, generic denial so downstream logs are honest rather
-/// than fabricated.
-fn veto_reason(_dispatch: &Dispatch) -> String {
-    "denied by wasm plugin".to_string()
+/// The host preserves the guest reason in Dispatch; an empty or missing reason
+/// falls back to a stable generic denial.
+fn veto_reason(dispatch: &Dispatch) -> String {
+    dispatch
+        .veto_reason
+        .clone()
+        .filter(|reason| !reason.trim().is_empty())
+        .unwrap_or_else(|| "denied by wasm plugin".to_string())
 }
 
 #[cfg(test)]
@@ -446,16 +441,18 @@ mod tests {
         Dispatch {
             value,
             vetoed_by: vetoed.then(|| "slot".to_string()),
+            veto_reason: None,
             ran: 1,
             errored: Vec::new(),
         }
     }
 
     #[test]
-    fn veto_reason_is_generic_because_the_host_drops_it() {
-        // Even when the guest's reply carried a reason, `Dispatch` does not
-        // preserve it — so the bridge reports a stable fallback.
-        let d = dispatch(json!({ "reason": "nope" }), true);
+    fn veto_reason_preserves_guest_reason_and_has_a_fallback() {
+        let mut d = dispatch(json!({}), true);
+        d.veto_reason = Some("policy said no".to_string());
+        assert_eq!(veto_reason(&d), "policy said no");
+        d.veto_reason = None;
         assert_eq!(veto_reason(&d), "denied by wasm plugin");
     }
 

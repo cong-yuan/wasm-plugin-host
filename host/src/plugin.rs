@@ -64,6 +64,13 @@ pub struct PluginDecl {
     /// Frontend UI contributions. Optional — a backend-only plugin omits it.
     #[serde(default)]
     pub ui: Option<UiDecl>,
+    /// Requested host capabilities. The declaration is a request, not an
+    /// authorization; sandboxed plugins receive request intersect grant.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::capability::CapabilitySet::is_empty"
+    )]
+    pub capabilities: crate::capability::CapabilitySet,
 }
 
 /// A page a plugin contributes to the host UI.
@@ -382,21 +389,108 @@ impl Plugin {
         log: std::sync::Arc<crate::state::LogSink>,
         services: Option<std::sync::Arc<crate::service::Shared>>,
     ) -> Result<Plugin> {
+        Self::load_with_policy(
+            engine,
+            path,
+            runtime,
+            slot,
+            config,
+            log,
+            services,
+            crate::capability::PluginPolicy::trusted(),
+        )
+    }
+
+    pub fn load_with_policy(
+        engine: &Engine,
+        path: &Path,
+        runtime: &crate::runtime::Runtime,
+        slot: &str,
+        config: serde_json::Value,
+        log: std::sync::Arc<crate::state::LogSink>,
+        services: Option<std::sync::Arc<crate::service::Shared>>,
+        policy: crate::capability::PluginPolicy,
+    ) -> Result<Plugin> {
+        Self::load_with_policy_and_audit(
+            engine,
+            path,
+            runtime,
+            slot,
+            config,
+            log,
+            services,
+            policy,
+            None,
+        )
+    }
+
+    pub fn load_with_policy_and_audit(
+        engine: &Engine,
+        path: &Path,
+        runtime: &crate::runtime::Runtime,
+        slot: &str,
+        config: serde_json::Value,
+        log: std::sync::Arc<crate::state::LogSink>,
+        services: Option<std::sync::Arc<crate::service::Shared>>,
+        policy: crate::capability::PluginPolicy,
+        audit: Option<std::sync::Arc<crate::audit::AuditSink>>,
+    ) -> Result<Plugin> {
+        policy.validate_for_load().map_err(anyhow::Error::msg)?;
         let name = path
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "plugin".to_string());
 
         let module = runtime.compile(engine, path)?;
-        let mut state = HostState::new(slot, &name, config, log.clone(), services);
+        let mut state = HostState::new_with_policy_and_audit(
+            slot,
+            &name,
+            config,
+            log.clone(),
+            services,
+            policy,
+            audit,
+        );
+        if state.policy.trust == crate::capability::TrustMode::Sandboxed {
+            for root in state
+                .policy
+                .grant
+                .filesystem
+                .write
+                .iter()
+                .chain(state.policy.grant.filesystem.create.iter())
+                .chain(state.policy.grant.filesystem.delete.iter())
+            {
+                if !state.fs_roots.contains_key(root) {
+                    let reason = format!(
+                        "sandboxed filesystem capability root `{root}` could not be opened"
+                    );
+                    if let Some(audit) = &state.audit {
+                        audit.record(
+                            slot,
+                            &name,
+                            crate::audit::AuditDecision::Deny,
+                            "policy.load",
+                            root,
+                            Some(&reason),
+                        );
+                    }
+                    bail!("{reason}");
+                }
+            }
+        }
         // The fetch bound is a runtime-level policy; carry it into the instance
         // so `host.http_fetch` can read it without reaching back to `Runtime`.
-        state.http_timeout = runtime.http_timeout();
+        state.http_timeout = if state.policy.trust == crate::capability::TrustMode::Sandboxed {
+            runtime.http_timeout().min(std::time::Duration::from_millis(
+                state.policy.limits.call_timeout_ms,
+            ))
+        } else {
+            runtime.http_timeout()
+        };
         let config_handle = state.config.clone();
         let version_handle = state.config_version.clone();
         let mut store = Store::new(engine, state);
-
-        // Give each instance a fuel/limit budget would go here (see docs).
         let instance = runtime.instantiate(&mut store, &module)?;
 
         let memory = instance
@@ -405,6 +499,7 @@ impl Plugin {
 
         // ABI version gate.
         let abi: TypedFunc<(), i32> = get(instance, &mut store, &name, "plugin_abi_version")?;
+        prepare_guest_call(&mut store)?;
         let v = abi.call(&mut store, ())?;
         if v != 1 {
             bail!("plugin `{name}` speaks ABI v{v}, host expects v1");
@@ -436,6 +531,7 @@ impl Plugin {
                 injects: vec![],
                 provides: vec![],
                 ui: None,
+                capabilities: Default::default(),
             },
             logs: log,
             store,
@@ -454,7 +550,13 @@ impl Plugin {
 
         // Init.
         plugin.state = PluginState::Init;
-        let init: TypedFunc<(), i32> = get(plugin.instance, &mut plugin.store, &plugin.name, "plugin_init")?;
+        plugin.prepare_guest_call()?;
+        let init: TypedFunc<(), i32> = get(
+            plugin.instance,
+            &mut plugin.store,
+            &plugin.name,
+            "plugin_init",
+        )?;
         let rc = init.call(&mut plugin.store, ())?;
         if rc != 0 {
             plugin.state = PluginState::Failed;
@@ -480,7 +582,12 @@ impl Plugin {
             plugin.state = PluginState::Failed;
             bail!("plugin `{name}` declares abi {}, expected 1", decl.abi);
         }
+        plugin
+            .store
+            .data()
+            .resolve_declared_capabilities(&decl.capabilities);
         plugin.decl = decl;
+        plugin.validate_declared_capabilities()?;
         plugin.state = PluginState::Active;
         Ok(plugin)
     }
@@ -497,17 +604,21 @@ impl Plugin {
     /// the plugin can react immediately. Returns `false` if the plugin has no
     /// `plugin_on_config` hook (the config is still updated and readable via
     /// `host.get_config`).
-    /// Update how long `host.http_fetch` may run for this instance.
     pub fn set_config(&mut self, config: serde_json::Value) -> Result<bool> {
         // Update shared state first: the guest may read it during the hook.
         *self.config.lock().unwrap() = config;
         self.config_version
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-        if let Some(f) = &self.f_on_config {
+        if self.f_on_config.is_some() {
+            self.prepare_guest_call()?;
+            let f = self.f_on_config.as_ref().unwrap();
             let rc = f.call(&mut self.store, ())?;
             if rc != 0 {
-                bail!("plugin `{}` plugin_on_config failed with code {rc}", self.name);
+                bail!(
+                    "plugin `{}` plugin_on_config failed with code {rc}",
+                    self.name
+                );
             }
             Ok(true)
         } else {
@@ -521,6 +632,71 @@ impl Plugin {
 
     pub fn tools(&self) -> &[ToolDecl] {
         &self.decl.tools
+    }
+
+    fn validate_declared_capabilities(&self) -> Result<()> {
+        let gate = &self.store.data().capability_gate;
+        for service in &self.decl.injects {
+            gate.require_service_consume(service)
+                .map_err(anyhow::Error::msg)?;
+        }
+        for service in &self.decl.provides {
+            gate.require_service_provide(service)
+                .map_err(anyhow::Error::msg)?;
+        }
+        for hook in &self.decl.hooks {
+            let spec = crate::hooks::Event::parse(&hook.on).ok_or_else(|| {
+                anyhow!(
+                    "plugin `{}` declares unknown event `{}`",
+                    self.name,
+                    hook.on
+                )
+            })?;
+            let event = spec.as_str();
+            match hook.mode {
+                HookMode::Observe => gate
+                    .require_agent_observe(event)
+                    .map_err(anyhow::Error::msg)?,
+                HookMode::Waterfall => {
+                    if spec.allows_rewrite() {
+                        gate.require_agent_rewrite(event)
+                            .map_err(anyhow::Error::msg)?;
+                    }
+                    if spec.allows_veto() {
+                        gate.require_agent_veto(event).map_err(anyhow::Error::msg)?;
+                    }
+                    if !spec.allows_rewrite() && !spec.allows_veto() {
+                        gate.require_agent_observe(event)
+                            .map_err(anyhow::Error::msg)?;
+                    }
+                }
+            }
+        }
+        if let Some(ui) = &self.decl.ui {
+            for slot in &ui.provides {
+                gate.require_ui_slot(&slot.name)
+                    .map_err(anyhow::Error::msg)?;
+            }
+            for inject in &ui.injects {
+                gate.require_ui_slot(&inject.slot)
+                    .map_err(anyhow::Error::msg)?;
+            }
+            for route in &ui.routes {
+                gate.require_ui_route(&route.path)
+                    .map_err(anyhow::Error::msg)?;
+            }
+            if !ui.windows.is_empty() {
+                gate.require_ui_window().map_err(anyhow::Error::msg)?;
+            }
+            for adjust in &ui.adjusts {
+                gate.require_ui_adjust(&adjust.slot)
+                    .map_err(anyhow::Error::msg)?;
+            }
+            if !ui.assets.is_empty() {
+                gate.require_ui_assets().map_err(anyhow::Error::msg)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn is_active(&self) -> bool {
@@ -559,8 +735,11 @@ impl Plugin {
             return;
         }
         self.state = PluginState::ShuttingDown;
-        if let Some(f) = &self.f_shutdown {
-            let _ = f.call(&mut self.store, ());
+        if self.f_shutdown.is_some() {
+            let _ = self.prepare_guest_call();
+            if let Some(f) = &self.f_shutdown {
+                let _ = f.call(&mut self.store, ());
+            }
         }
         self.state = PluginState::Disposed;
     }
@@ -568,6 +747,7 @@ impl Plugin {
     // ---- internals: ABI plumbing ----
 
     fn call_describe(&mut self) -> Result<String> {
+        self.prepare_guest_call()?;
         self.with_growable_buf(|plugin, ptr, cap| {
             let n = plugin.f_describe.call(&mut plugin.store, (ptr, cap))?;
             Ok(n)
@@ -578,6 +758,7 @@ impl Plugin {
     /// reads its config via `host.get_config`; `out`/`cap` are scratch space it
     /// may use to echo back a summary (ignored by the host here).
     fn call_configure(&mut self) -> Result<i32> {
+        self.prepare_guest_call()?;
         let cap = 64 * 1024;
         let ptr = self.guest_alloc(cap)?;
         // Split borrows: `f` borrows `f_configure`, `store` is disjoint.
@@ -591,12 +772,14 @@ impl Plugin {
     }
 
     fn call_op(&mut self, op: &str, args_json: &str) -> Result<String> {
+        self.prepare_guest_call()?;
         // Allocate guest memory for the op + args, per call.
         let op_bytes = op.as_bytes();
         let args_bytes = args_json.as_bytes();
         let op_ptr = self.guest_alloc(op_bytes.len() as i32)?;
         let args_ptr = self.guest_alloc(args_bytes.len() as i32)?;
-        self.memory.write(&mut self.store, op_ptr as usize, op_bytes)?;
+        self.memory
+            .write(&mut self.store, op_ptr as usize, op_bytes)?;
         self.memory
             .write(&mut self.store, args_ptr as usize, args_bytes)?;
 
@@ -616,9 +799,16 @@ impl Plugin {
         });
 
         // Best-effort free of the input buffers.
-        let _ = self.f_free.call(&mut self.store, (op_ptr, op_bytes.len() as i32));
-        let _ = self.f_free.call(&mut self.store, (args_ptr, args_bytes.len() as i32));
+        let _ = self
+            .f_free
+            .call(&mut self.store, (op_ptr, op_bytes.len() as i32));
+        let _ = self
+            .f_free
+            .call(&mut self.store, (args_ptr, args_bytes.len() as i32));
 
+        if let Err(err) = &out {
+            self.audit_execution_error(err);
+        }
         out
     }
 
@@ -636,26 +826,119 @@ impl Plugin {
     where
         F: FnMut(&mut Plugin, i32, i32) -> Result<i64>,
     {
-        let mut cap = INITIAL_BUF;
+        let max_buf = self.output_limit();
+        let mut cap = INITIAL_BUF.min(max_buf).max(1);
         loop {
             let out_ptr = self.guest_alloc(cap as i32)?;
             let n = call(self, out_ptr, cap as i32)?;
             if n >= 0 {
                 let len = n as usize;
+                if len > max_buf || len > cap {
+                    let _ = self.f_free.call(&mut self.store, (out_ptr, cap as i32));
+                    let reason = format!(
+                        "plugin `{}` returned {len} output bytes beyond allowed buffer {cap} / policy cap {max_buf}",
+                        self.name
+                    );
+                    self.store.data().audit_resource_limit(
+                        "limits.max_output_bytes",
+                        &format!("{len} bytes"),
+                        &reason,
+                    );
+                    bail!("{reason}");
+                }
                 let mut buf = vec![0u8; len];
                 self.memory.read(&self.store, out_ptr as usize, &mut buf)?;
                 let _ = self.f_free.call(&mut self.store, (out_ptr, cap as i32));
-                return String::from_utf8(buf).map_err(|e| anyhow!("plugin returned non-UTF8: {e}"));
+                return String::from_utf8(buf)
+                    .map_err(|e| anyhow!("plugin returned non-UTF8: {e}"));
             }
-            // n < 0 → guest needs |n| bytes.
-            let needed = (-n) as usize;
+            // n < 0 → guest needs |n| bytes. Use unsigned_abs so a malicious
+            // i64::MIN cannot overflow the host while reporting its size.
+            let needed_u64 = n.unsigned_abs();
             let _ = self.f_free.call(&mut self.store, (out_ptr, cap as i32));
-            if needed > MAX_BUF {
-                bail!("plugin `{}` requested {needed} bytes (> cap {MAX_BUF})", self.name);
+            if needed_u64 > max_buf as u64 {
+                let reason = format!(
+                    "plugin `{}` requested {needed_u64} bytes (> cap {max_buf})",
+                    self.name
+                );
+                self.store.data().audit_resource_limit(
+                    "limits.max_output_bytes",
+                    &format!("{needed_u64} bytes"),
+                    &reason,
+                );
+                bail!("{reason}");
             }
-            cap = needed.max(cap * 2);
+            let needed = needed_u64 as usize;
+            cap = needed.max(cap.saturating_mul(2)).min(max_buf);
         }
     }
+
+    fn output_limit(&self) -> usize {
+        let state = self.store.data();
+        if state.policy.trust == crate::capability::TrustMode::Sandboxed {
+            state.policy.limits.max_output_bytes.min(MAX_BUF as u64) as usize
+        } else {
+            MAX_BUF
+        }
+    }
+
+    fn audit_execution_error(&self, err: &anyhow::Error) {
+        if self.store.data().policy.trust != crate::capability::TrustMode::Sandboxed {
+            return;
+        }
+        let detail = err
+            .chain()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let lower = detail.to_ascii_lowercase();
+        if lower.contains("output bytes") || lower.contains("requested") && lower.contains("cap") {
+            return;
+        }
+        let capability = if lower.contains("fuel") {
+            "limits.fuel"
+        } else if lower.contains("epoch")
+            || lower.contains("interrupt")
+            || lower.contains("deadline")
+        {
+            "limits.call_timeout_ms"
+        } else if lower.contains("memory") || lower.contains("grow") {
+            "limits.memory_mb"
+        } else {
+            return;
+        };
+        self.store
+            .data()
+            .audit_resource_limit(capability, "guest-call", &detail);
+    }
+
+    fn prepare_guest_call(&mut self) -> Result<()> {
+        prepare_guest_call(&mut self.store)
+    }
+}
+
+fn prepare_guest_call(store: &mut Store<HostState>) -> Result<()> {
+    store.data().reset_call_log_budget();
+    let (trust, fuel, timeout_ms) = {
+        let state = store.data();
+        (
+            state.policy.trust,
+            state.policy.limits.fuel,
+            state.policy.limits.call_timeout_ms,
+        )
+    };
+    match trust {
+        crate::capability::TrustMode::Trusted => {
+            store.set_fuel(u64::MAX)?;
+            store.set_epoch_deadline(u64::MAX / 2);
+        }
+        crate::capability::TrustMode::Sandboxed => {
+            store.set_fuel(fuel)?;
+            let ticks = timeout_ms.saturating_add(9) / 10;
+            store.set_epoch_deadline(ticks.max(1));
+        }
+    }
+    Ok(())
 }
 
 impl Drop for Plugin {
@@ -753,7 +1036,10 @@ mod tests {
         assert_eq!(ui.routes.len(), 2);
         assert_eq!(ui.routes[0].path, "usage");
         assert_eq!(ui.routes[0].component, "UsagePage");
-        assert!(ui.routes[0].nav, "nav defaults to true: a page nobody can reach is rarely wanted");
+        assert!(
+            ui.routes[0].nav,
+            "nav defaults to true: a page nobody can reach is rarely wanted"
+        );
         assert!(!ui.routes[1].nav, "and can be turned off explicitly");
     }
 

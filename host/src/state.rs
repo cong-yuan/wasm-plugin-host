@@ -5,13 +5,13 @@
 //! cannot grow memory without bound) and can also forward each record to a host
 //! callback (for a UI/Tauri layer).
 
-use wasmtime_wasi::p1::WasiP1Ctx;
-use wasmtime_wasi::WasiCtxBuilder;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicI64, AtomicU8};
 use std::sync::{Arc, Mutex};
+use wasmtime_wasi::p1::WasiP1Ctx;
+use wasmtime_wasi::WasiCtxBuilder;
 
 /// Severity of a log line, mirroring the integer levels the ABI uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -203,9 +203,7 @@ impl LogSink {
         let threshold = level_to_u8(level);
         let mut inner = self.inner.lock().unwrap();
         let before = inner.buf.len();
-        inner
-            .buf
-            .retain(|r| level_to_u8(r.level) >= threshold);
+        inner.buf.retain(|r| level_to_u8(r.level) >= threshold);
         before - inner.buf.len()
     }
 }
@@ -213,6 +211,9 @@ impl LogSink {
 /// Per-`Store` host state. `T` in `Store<T>` is this type.
 pub struct HostState {
     pub wasi: WasiP1Ctx,
+    /// Wasmtime's per-store resource limiter. Sandboxed plugins receive a
+    /// finite linear-memory ceiling; trusted mode leaves it unrestricted.
+    pub store_limits: wasmtime::StoreLimits,
     /// Bounded log sink; shared with `Plugin` so the host can read it back.
     pub log: Arc<LogSink>,
     /// The slot this instance is loaded under (used for log prefixes).
@@ -234,6 +235,16 @@ pub struct HostState {
     /// cross-plugin service calls; `host.call_service` uses it. `None` disables
     /// that import (the guest gets a clear error instead of a crash).
     pub services: Option<Arc<crate::service::Shared>>,
+    /// Deployment policy plus the instance's single capability enforcement gate.
+    pub policy: crate::capability::PluginPolicy,
+    pub capability_gate: crate::capability::CapabilityGate,
+    /// Capability-safe directory handles for host-mediated sandbox mutations.
+    /// Keys are the exact configured grant roots visible to plugin declarations.
+    pub fs_roots: std::collections::HashMap<String, cap_std::fs::Dir>,
+    /// Host-owned security audit stream, separate from guest-controlled logs.
+    pub audit: Option<Arc<crate::audit::AuditSink>>,
+    /// Aggregate guest log bytes charged during the current top-level call.
+    pub log_bytes_this_call: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl HostState {
@@ -245,33 +256,164 @@ impl HostState {
         log: Arc<LogSink>,
         services: Option<Arc<crate::service::Shared>>,
     ) -> Self {
+        Self::new_with_policy(
+            slot,
+            plugin_name,
+            config,
+            log,
+            services,
+            crate::capability::PluginPolicy::trusted(),
+        )
+    }
+
+    pub fn new_with_policy(
+        slot: impl Into<String>,
+        plugin_name: impl Into<String>,
+        config: Value,
+        log: Arc<LogSink>,
+        services: Option<Arc<crate::service::Shared>>,
+        policy: crate::capability::PluginPolicy,
+    ) -> Self {
+        Self::new_with_policy_and_audit(
+            slot,
+            plugin_name,
+            config,
+            log,
+            services,
+            policy,
+            None,
+        )
+    }
+
+    pub fn new_with_policy_and_audit(
+        slot: impl Into<String>,
+        plugin_name: impl Into<String>,
+        config: Value,
+        log: Arc<LogSink>,
+        services: Option<Arc<crate::service::Shared>>,
+        policy: crate::capability::PluginPolicy,
+        audit: Option<Arc<crate::audit::AuditSink>>,
+    ) -> Self {
         let slot = slot.into();
         let plugin_name = plugin_name.into();
+        let log_bytes_this_call = Arc::new(std::sync::atomic::AtomicU64::new(0));
         // Route guest stdout/stderr into the log sink. This is the language-
         // agnostic channel: `println!`, `fmt.Println`, `printf`, `console.log`,
         // `print()` all land here with no per-language glue.
-        let (out_pipe, err_pipe) =
-            crate::pipe::log_pipes(log.clone(), &slot, &plugin_name);
-        // Capability model: plugins are **trusted**, so they get full filesystem
-        // access — the whole host root is preopened read/write. This is a
-        // deliberate product decision (see docs/已知问题.md); it means a plugin
-        // can read and write any file the app can. Narrow this to a sandbox
-        // directory when untrusted plugins must be supported.
+        let (out_pipe, err_pipe) = if policy.trust == crate::capability::TrustMode::Sandboxed {
+            match audit.clone() {
+                Some(audit_sink) => crate::pipe::log_pipes_with_budget_and_audit(
+                    log.clone(),
+                    &slot,
+                    &plugin_name,
+                    policy.limits.max_log_bytes_per_call,
+                    log_bytes_this_call.clone(),
+                    audit_sink,
+                ),
+                None => crate::pipe::log_pipes_with_budget(
+                    log.clone(),
+                    &slot,
+                    &plugin_name,
+                    policy.limits.max_log_bytes_per_call,
+                    log_bytes_this_call.clone(),
+                ),
+            }
+        } else {
+            crate::pipe::log_pipes(log.clone(), &slot, &plugin_name)
+        };
         let mut builder = WasiCtxBuilder::new();
         builder.stdout(out_pipe).stderr(err_pipe);
-        if let Err(e) = builder.preopened_dir(
-            "/",
-            "/",
-            wasmtime_wasi::DirPerms::all(),
-            wasmtime_wasi::FilePerms::all(),
-        ) {
-            // Never fatal: a host that cannot preopen (e.g. an unusual root)
-            // still runs, just without filesystem access.
-            eprintln!("[host] could not preopen `/` for plugin `{plugin_name}`: {e}");
+        if policy.trust == crate::capability::TrustMode::Trusted {
+            if let Err(e) = builder.preopened_dir(
+                "/",
+                "/",
+                wasmtime_wasi::DirPerms::all(),
+                wasmtime_wasi::FilePerms::all(),
+            ) {
+                eprintln!("[host] could not preopen / for plugin {plugin_name}: {e}");
+            }
+        } else {
+            // WASI preopens must exist before instantiation, while ABI-v1's
+            // plugin_describe runs afterwards. Therefore direct WASI filesystem
+            // access is bounded by the host grant itself. The late plugin
+            // request still gates host-mediated capabilities, but is not a
+            // security boundary for these preopens.
+            let mut paths: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
+            for path in &policy.grant.filesystem.read {
+                paths.insert(path.clone());
+            }
+            for path in paths {
+                let dir_perms = wasmtime_wasi::DirPerms::READ;
+                let file_perms = wasmtime_wasi::FilePerms::READ;
+                // load_with_policy validates/canonicalizes the authority first;
+                // resolve again here so the preopen is rooted at the stable real
+                // directory while preserving the configured guest-visible alias.
+                let canonical = std::fs::canonicalize(&path)
+                    .unwrap_or_else(|_| std::path::PathBuf::from(path.clone()));
+                if let Err(e) = builder.preopened_dir(&canonical, &path, dir_perms, file_perms) {
+                    eprintln!(
+                        "[host] could not preopen sandbox grant {path} for plugin {plugin_name}: {e}"
+                    );
+                }
+            }
         }
         let ctx = builder.build_p1();
+        let mut fs_roots = std::collections::HashMap::new();
+        if policy.trust == crate::capability::TrustMode::Sandboxed {
+            for path in policy
+                .grant
+                .filesystem
+                .write
+                .iter()
+                .chain(policy.grant.filesystem.create.iter())
+                .chain(policy.grant.filesystem.delete.iter())
+            {
+                if fs_roots.contains_key(path) {
+                    continue;
+                }
+                let canonical = std::fs::canonicalize(path)
+                    .unwrap_or_else(|_| std::path::PathBuf::from(path));
+                match cap_std::fs::Dir::open_ambient_dir(
+                    &canonical,
+                    cap_std::ambient_authority(),
+                ) {
+                    Ok(dir) => {
+                        fs_roots.insert(path.clone(), dir);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[host] could not open sandbox fs capability {path} for plugin {plugin_name}: {e}"
+                        );
+                    }
+                }
+            }
+        }
+        let store_limits = if policy.trust == crate::capability::TrustMode::Sandboxed {
+            let bytes = policy
+                .limits
+                .memory_mb
+                .saturating_mul(1024 * 1024)
+                .min(usize::MAX as u64) as usize;
+            wasmtime::StoreLimitsBuilder::new()
+                .memory_size(bytes)
+                .trap_on_grow_failure(true)
+                .build()
+        } else {
+            wasmtime::StoreLimitsBuilder::new().build()
+        };
+        let capability_gate = match audit.clone() {
+            Some(sink) => crate::capability::CapabilityGate::with_audit(
+                &policy,
+                sink,
+                slot.clone(),
+                plugin_name.clone(),
+            ),
+            None => crate::capability::CapabilityGate::new(&policy),
+        };
         Self {
             wasi: ctx,
+            store_limits,
             log,
             slot,
             http_timeout: crate::runtime::HTTP_TIMEOUT,
@@ -279,7 +421,60 @@ impl HostState {
             config: Arc::new(Mutex::new(config)),
             config_version: Arc::new(AtomicI64::new(1)),
             services,
+            policy,
+            capability_gate,
+            fs_roots,
+            audit,
+            log_bytes_this_call,
         }
+    }
+
+    pub fn reset_call_log_budget(&self) {
+        self.log_bytes_this_call
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn charge_log_bytes(&self, bytes: u64) -> Result<(), String> {
+        if self.policy.trust == crate::capability::TrustMode::Trusted {
+            return Ok(());
+        }
+        let max = self.policy.limits.max_log_bytes_per_call;
+        let result = self
+            .log_bytes_this_call
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |used| used.checked_add(bytes).filter(|next| *next <= max),
+            )
+            .map(|_| ())
+            .map_err(|used| {
+                format!("permission denied: plugin log budget exceeded ({used}+{bytes} > {max})")
+            });
+        if let Err(reason) = &result {
+            self.audit_resource_limit(
+                "limits.max_log_bytes_per_call",
+                &format!("{bytes} bytes"),
+                reason,
+            );
+        }
+        result
+    }
+
+    pub fn audit_resource_limit(&self, capability: &str, target: &str, reason: &str) {
+        if let Some(audit) = &self.audit {
+            audit.record(
+                &self.slot,
+                &self.plugin_name,
+                crate::audit::AuditDecision::Limit,
+                capability,
+                target,
+                Some(reason),
+            );
+        }
+    }
+
+    pub fn resolve_declared_capabilities(&self, requested: &crate::capability::CapabilitySet) {
+        self.capability_gate.resolve(&self.policy, requested);
     }
 }
 

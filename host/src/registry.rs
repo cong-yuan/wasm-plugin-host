@@ -49,6 +49,7 @@ struct SlotMeta {
     active: bool,
     /// Tools registered while active (so deactivation can unwind precisely).
     owned_tools: Vec<String>,
+    policy: crate::capability::PluginPolicy,
 }
 
 pub struct Registry {
@@ -60,6 +61,9 @@ pub struct Registry {
     hooks: crate::hooks::Hooks,
     /// Shared, bounded log sink.
     log: Arc<crate::state::LogSink>,
+    /// Host-owned security audit stream. Kept separate from plugin logs so a
+    /// guest cannot forge or suppress capability decisions.
+    audit: Arc<crate::audit::AuditSink>,
 }
 
 /// Result of a load or reload.
@@ -106,6 +110,7 @@ impl Registry {
             tools: HashMap::new(),
             hooks: crate::hooks::Hooks::new(),
             log: Arc::new(crate::state::LogSink::new(capacity, echo_stderr, hook)),
+            audit: Arc::new(crate::audit::AuditSink::default()),
         }
     }
 
@@ -120,6 +125,22 @@ impl Registry {
 
     pub fn log_sink(&self) -> Arc<crate::state::LogSink> {
         self.log.clone()
+    }
+
+    pub fn audit_sink(&self) -> Arc<crate::audit::AuditSink> {
+        self.audit.clone()
+    }
+
+    pub fn audit_events(&self) -> Vec<crate::audit::AuditEvent> {
+        self.audit.snapshot()
+    }
+
+    pub fn audit_events_for(&self, slot: &str) -> Vec<crate::audit::AuditEvent> {
+        self.audit.for_slot(slot)
+    }
+
+    pub fn audit_events_since(&self, seq: u64) -> Vec<crate::audit::AuditEvent> {
+        self.audit.since(seq)
     }
 
     pub fn logs(&self) -> Vec<crate::state::LogRecord> {
@@ -240,10 +261,25 @@ impl Registry {
         path: &Path,
         config: serde_json::Value,
     ) -> Result<LoadedReport> {
+        self.load_with_policy(
+            slot,
+            path,
+            config,
+            crate::capability::PluginPolicy::trusted(),
+        )
+    }
+
+    pub fn load_with_policy(
+        &mut self,
+        slot: &str,
+        path: &Path,
+        config: serde_json::Value,
+        policy: crate::capability::PluginPolicy,
+    ) -> Result<LoadedReport> {
         if self.meta.contains_key(slot) {
             anyhow::bail!("slot `{slot}` is already occupied");
         }
-        let plugin = self.build_plugin(slot, path, config.clone())?;
+        let plugin = self.build_plugin(slot, path, config.clone(), policy.clone())?;
         let plugin_name = plugin.decl.name.clone();
         let injects = plugin.decl.injects.clone();
         let provides = plugin.decl.provides.clone();
@@ -282,6 +318,7 @@ impl Registry {
                 provides,
                 active: false,
                 owned_tools: Vec::new(),
+                policy,
             },
         );
 
@@ -345,6 +382,21 @@ impl Registry {
         path: &Path,
         config: Option<serde_json::Value>,
     ) -> Result<ReloadReport> {
+        let policy = self
+            .meta
+            .get(slot)
+            .map(|m| m.policy.clone())
+            .ok_or_else(|| anyhow::anyhow!("no such slot `{slot}`"))?;
+        self.reload_with_policy(slot, path, config, policy)
+    }
+
+    pub fn reload_with_policy(
+        &mut self,
+        slot: &str,
+        path: &Path,
+        config: Option<serde_json::Value>,
+        policy: crate::capability::PluginPolicy,
+    ) -> Result<ReloadReport> {
         let old = self
             .meta
             .get(slot)
@@ -355,9 +407,10 @@ impl Registry {
         let old_tools: Vec<String> = old.owned_tools.clone();
 
         // ---- Stage 1: build & validate the replacement, untouched ----
-        let new_plugin = self.build_plugin(slot, path, effective_config.clone())?;
+        let new_plugin = self.build_plugin(slot, path, effective_config.clone(), policy.clone())?;
         let new_plugin_name = new_plugin.decl.name.clone();
-        let new_tool_names: Vec<String> = new_plugin.tools().iter().map(|t| t.name.clone()).collect();
+        let new_tool_names: Vec<String> =
+            new_plugin.tools().iter().map(|t| t.name.clone()).collect();
 
         for name in &new_tool_names {
             if let Some(owner) = self.tools.get(name) {
@@ -402,6 +455,7 @@ impl Registry {
                 .shared
                 .with_plugin(slot, |p| Ok(p.decl.provides.clone()))
                 .unwrap_or_default();
+            m.policy = policy;
             m.active = false;
             m.owned_tools.clear();
         }
@@ -435,7 +489,9 @@ impl Registry {
         if !current_differs {
             return Ok(false);
         }
-        let consumed = self.shared.with_plugin(slot, |p| p.set_config(config.clone()))?;
+        let consumed = self
+            .shared
+            .with_plugin(slot, |p| p.set_config(config.clone()))?;
         if let Some(m) = self.meta.get_mut(slot) {
             m.config = config;
         }
@@ -444,6 +500,10 @@ impl Registry {
 
     pub fn slot_config(&self, slot: &str) -> Option<&serde_json::Value> {
         self.meta.get(slot).map(|m| &m.config)
+    }
+
+    pub fn slot_policy(&self, slot: &str) -> Option<&crate::capability::PluginPolicy> {
+        self.meta.get(slot).map(|m| &m.policy)
     }
 
     pub fn slot_has_config_hook(&self, slot: &str) -> bool {
@@ -501,7 +561,12 @@ impl Registry {
 
     /// Validate a build without loading it.
     pub fn validate(&self, path: &Path) -> Result<(String, Vec<String>)> {
-        let p = self.build_plugin("<validate>", path, serde_json::Value::Null)?;
+        let p = self.build_plugin(
+            "<validate>",
+            path,
+            serde_json::Value::Null,
+            crate::capability::PluginPolicy::trusted(),
+        )?;
         Ok((
             p.decl.name.clone(),
             p.tools().iter().map(|t| t.name.clone()).collect(),
@@ -531,6 +596,7 @@ impl Registry {
             return crate::hooks::Dispatch {
                 value,
                 vetoed_by: None,
+                veto_reason: None,
                 ran: 0,
                 errored: Vec::new(),
             };
@@ -539,21 +605,30 @@ impl Registry {
         let mut ran = 0usize;
         let mut errored = Vec::new();
         let mut vetoed_by = None;
+        let mut veto_reason = None;
         let mut current = value;
 
         for sub in subs {
             ran += 1;
             let payload = serde_json::json!({ "event": ev.as_str(), "value": current });
-            let reply = self.shared.with_plugin(&sub.slot, |p| p.invoke_raw(&sub.exec, &payload));
+            let reply = self
+                .shared
+                .with_plugin(&sub.slot, |p| p.invoke_raw(&sub.exec, &payload));
             match reply {
                 Ok(r) => {
                     if sub.mode == crate::plugin::HookMode::Waterfall {
                         match crate::hooks::Decision::parse(&r) {
                             crate::hooks::Decision::Continue => {}
-                            crate::hooks::Decision::Rewrite { value: v } => current = v,
-                            crate::hooks::Decision::Veto { .. } => {
-                                vetoed_by = Some(sub.slot.clone());
-                                break;
+                            crate::hooks::Decision::Rewrite { value: v } if ev.allows_rewrite() => {
+                                current = v
+                            }
+                            crate::hooks::Decision::Rewrite { .. } => {}
+                            crate::hooks::Decision::Veto { reason } => {
+                                if ev.allows_veto() {
+                                    vetoed_by = Some(sub.slot.clone());
+                                    veto_reason = Some(reason);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -565,6 +640,7 @@ impl Registry {
         crate::hooks::Dispatch {
             value: current,
             vetoed_by,
+            veto_reason,
             ran,
             errored,
         }
@@ -666,9 +742,25 @@ impl Registry {
         slot: &str,
         path: &Path,
         config: serde_json::Value,
+        policy: crate::capability::PluginPolicy,
     ) -> Result<Plugin> {
+        if let Err(reason) = policy.validate_for_load() {
+            let plugin = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "plugin".to_string());
+            self.audit.record(
+                slot,
+                &plugin,
+                crate::audit::AuditDecision::Deny,
+                "policy.load",
+                &path.display().to_string(),
+                Some(&reason),
+            );
+            anyhow::bail!("{reason}");
+        }
         let engine = self.runtime.engine().clone();
-        Plugin::load(
+        Plugin::load_with_policy_and_audit(
             &engine,
             path,
             &self.runtime,
@@ -676,6 +768,8 @@ impl Registry {
             config,
             self.log.clone(),
             Some(self.shared.clone()),
+            policy,
+            Some(self.audit.clone()),
         )
     }
 
@@ -717,7 +811,9 @@ impl Registry {
                 .iter()
                 .filter(|(_, m)| !m.active)
                 .filter(|(slot, m)| {
-                    m.injects.iter().all(|svc| self.service_available(slot, svc))
+                    m.injects
+                        .iter()
+                        .all(|svc| self.service_available(slot, svc))
                 })
                 .map(|(s, _)| s.clone())
                 .collect();
@@ -739,7 +835,12 @@ impl Registry {
     /// Is `service` available to `slot`? It is if any active slot provides it,
     /// if the embedding host declares it external, or if `slot` itself provides it.
     fn service_available(&self, slot: &str, service: &str) -> bool {
-        if self.meta.get(slot).map(|m| m.provides.iter().any(|s| s == service)).unwrap_or(false) {
+        if self
+            .meta
+            .get(slot)
+            .map(|m| m.provides.iter().any(|s| s == service))
+            .unwrap_or(false)
+        {
             return true;
         }
         if self.shared.is_external(service) {
@@ -789,7 +890,9 @@ impl Registry {
             owned.push(t.name.clone());
         }
         // Register hooks.
-        let _ = self.hooks.add_slot(slot, &self.meta[slot].plugin_name, &hooks);
+        let _ = self
+            .hooks
+            .add_slot(slot, &self.meta[slot].plugin_name, &hooks);
         // Register services.
         for svc in &provides {
             self.shared.add_provider(svc, slot);
@@ -830,5 +933,9 @@ fn tool_names(decls: &[ToolDecl]) -> Vec<String> {
 /// Set difference helper used in reports.
 #[allow(dead_code)]
 fn missing<'a>(needed: &'a [String], have: &HashSet<String>) -> Vec<String> {
-    needed.iter().filter(|s| !have.contains(*s)).cloned().collect()
+    needed
+        .iter()
+        .filter(|s| !have.contains(*s))
+        .cloned()
+        .collect()
 }

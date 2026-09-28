@@ -9,6 +9,8 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
+cap-std = "3.4.6"
 wasmtime = { version = "44", features = ["cranelift", "pooling-allocator", "cache"] }
 wasmtime-wasi = "44"
 serde = { version = "1", features = ["derive"] }

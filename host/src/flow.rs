@@ -55,6 +55,8 @@ pub struct TurnOutcome {
     pub executed: Vec<(String, Value, Value)>,
     /// Set if a hook vetoed the step.
     pub vetoed: Option<String>,
+    /// Guest-supplied reason for the veto, when present.
+    pub veto_reason: Option<String>,
 }
 
 /// Run one turn: `turn/start → agent/pre-step → model → tools → turn/end`.
@@ -68,17 +70,28 @@ pub fn run_turn(
     user_input: &str,
 ) -> Result<TurnOutcome> {
     // --- turn/start (observe) ---
-    let _ = reg.dispatch(Event::TurnStart, json!({ "turn": turn, "input": user_input }));
+    let _ = reg.dispatch(
+        Event::TurnStart,
+        json!({ "turn": turn, "input": user_input }),
+    );
 
     // --- agent/pre-step (waterfall: may rewrite the input or veto the step) ---
-    let pre = reg.dispatch(Event::AgentPreStep, json!({ "turn": turn, "input": user_input }));
-    if let Some(by) = pre.vetoed_by {
-        let _ = reg.dispatch(Event::TurnEnd, json!({ "turn": turn, "vetoed_by": by }));
+    let pre = reg.dispatch(
+        Event::AgentPreStep,
+        json!({ "turn": turn, "input": user_input }),
+    );
+    if let Some(by) = pre.vetoed_by.clone() {
+        let reason = pre.veto_reason.clone();
+        let _ = reg.dispatch(
+            Event::TurnEnd,
+            json!({ "turn": turn, "vetoed_by": by, "veto_reason": reason.clone() }),
+        );
         return Ok(TurnOutcome {
             turn,
             reply: String::new(),
             executed: Vec::new(),
             vetoed: Some(by),
+            veto_reason: reason,
         });
     }
     // A rewrite may replace the input (e.g. redaction, injection of context).
@@ -106,7 +119,10 @@ pub fn run_turn(
 
     // --- assistant/chunk (waterfall: transform the streamed text) ---
     // We emit the reply as a single chunk here; a streaming model would emit many.
-    let chunk = reg.dispatch(Event::LlmChunk, json!({ "turn": turn, "index": 0, "text": raw_reply }));
+    let chunk = reg.dispatch(
+        Event::LlmChunk,
+        json!({ "turn": turn, "index": 0, "text": raw_reply }),
+    );
     let reply = chunk
         .value
         .get("text")
@@ -115,7 +131,10 @@ pub fn run_turn(
         .to_string();
 
     // --- assistant/message (observe) ---
-    let _ = reg.dispatch(Event::AssistantMessage, json!({ "turn": turn, "text": reply }));
+    let _ = reg.dispatch(
+        Event::AssistantMessage,
+        json!({ "turn": turn, "text": reply }),
+    );
 
     // --- tool calls: parse `TOOL <name> <json>` lines from the reply ---
     let mut executed = Vec::new();
@@ -132,20 +151,28 @@ pub fn run_turn(
             .unwrap_or_else(|| json!({}));
 
         // --- tool/call (observe) ---
-        let _ = reg.dispatch(Event::ToolCall, json!({ "turn": turn, "name": name, "args": args }));
+        let _ = reg.dispatch(
+            Event::ToolCall,
+            json!({ "turn": turn, "name": name, "args": args }),
+        );
 
         // --- tools/pre-execute (waterfall: may rewrite args or veto) ---
         let pre_exec = reg.dispatch(
             Event::ToolsPreExecute,
             json!({ "turn": turn, "name": name, "args": args }),
         );
-        if let Some(by) = pre_exec.vetoed_by {
-            let _ = reg.dispatch(Event::TurnEnd, json!({ "turn": turn, "vetoed_by": by }));
+        if let Some(by) = pre_exec.vetoed_by.clone() {
+            let reason = pre_exec.veto_reason.clone();
+            let _ = reg.dispatch(
+                Event::TurnEnd,
+                json!({ "turn": turn, "vetoed_by": by, "veto_reason": reason.clone() }),
+            );
             return Ok(TurnOutcome {
                 turn,
                 reply,
                 executed,
                 vetoed: Some(by),
+                veto_reason: reason,
             });
         }
         let args = pre_exec
@@ -184,5 +211,6 @@ pub fn run_turn(
         reply,
         executed,
         vetoed: None,
+        veto_reason: None,
     })
 }

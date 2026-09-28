@@ -27,7 +27,8 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use wasmtime::PoolingAllocationConfig;
 use wasmtime::{Engine, Instance, Linker, Module, Store};
@@ -206,6 +207,10 @@ pub struct Runtime {
     disk_cache: Option<DiskCache>,
     /// Bound applied to every `host.http_fetch`. See [`HTTP_TIMEOUT`].
     http_timeout: Duration,
+    /// Advances Wasmtime's engine epoch every 10ms so sandbox call deadlines
+    /// can interrupt CPU-bound guest execution.
+    epoch_stop: Arc<AtomicBool>,
+    epoch_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Runtime {
@@ -218,6 +223,8 @@ impl Runtime {
     pub fn with_strategy(strategy: AllocationStrategy) -> Result<Self> {
         let mut config = wasmtime::Config::new();
         config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+        config.consume_fuel(true);
+        config.epoch_interruption(true);
 
         if let AllocationStrategy::Pooled {
             max_instances,
@@ -242,7 +249,6 @@ impl Runtime {
         }
 
         let engine = Engine::new(&config)?;
-
         let mut linker: Linker<HostState> = Linker::new(&engine);
         wasmtime_wasi::p1::add_to_linker_sync(&mut linker, |s: &mut HostState| &mut s.wasi)
             .map_err(|e| anyhow::anyhow!("adding WASI p1 to linker: {e}"))?;
@@ -272,6 +278,24 @@ impl Runtime {
         // this import is the *only* way a plugin reaches the network. The host
         // performs the request and hands back status/headers/body as JSON.
         linker.func_wrap("host", "http_fetch", host_http_fetch)?;
+        // Fine-grained filesystem mutation. Direct WASI preopens remain read-only
+        // in sandboxed mode; write/create/delete go through this capability API.
+        linker.func_wrap("host", "fs_op", host_fs_op)?;
+
+        // Start the epoch driver only after every fallible linker setup step has
+        // succeeded, so construction errors cannot leak a background thread.
+        let epoch_stop = Arc::new(AtomicBool::new(false));
+        let epoch_engine = engine.clone();
+        let epoch_stop_thread = epoch_stop.clone();
+        let epoch_thread = std::thread::Builder::new()
+            .name("wasm-epoch-ticker".to_string())
+            .spawn(move || {
+                while !epoch_stop_thread.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(10));
+                    epoch_engine.increment_epoch();
+                }
+            })
+            .map_err(|e| anyhow::anyhow!("starting wasm epoch ticker: {e}"))?;
 
         Ok(Self {
             engine,
@@ -280,6 +304,8 @@ impl Runtime {
             modules: Mutex::new(HashMap::new()),
             disk_cache: None,
             http_timeout: HTTP_TIMEOUT,
+            epoch_stop,
+            epoch_thread: Some(epoch_thread),
         })
     }
 
@@ -431,6 +457,11 @@ impl Runtime {
 
     /// Instantiate under the shared linker (WASI + `host.*` imports).
     pub fn instantiate(&self, store: &mut Store<HostState>, module: &Module) -> Result<Instance> {
+        // Engine fuel/epoch instrumentation is global, so every public
+        // instantiation path must initialize the Store before any guest code
+        // (including constant expressions / `_initialize`) executes.
+        store.limiter(|state| &mut state.store_limits);
+        prepare_store_budget(store)?;
         let instance = self
             .linker
             .instantiate(&mut *store, module)
@@ -448,12 +479,49 @@ impl Runtime {
     }
 }
 
+fn prepare_store_budget(store: &mut Store<HostState>) -> Result<()> {
+    store.data().reset_call_log_budget();
+    let (trust, fuel, timeout_ms) = {
+        let state = store.data();
+        (
+            state.policy.trust,
+            state.policy.limits.fuel,
+            state.policy.limits.call_timeout_ms,
+        )
+    };
+    match trust {
+        crate::capability::TrustMode::Trusted => {
+            store.set_fuel(u64::MAX)?;
+            store.set_epoch_deadline(u64::MAX / 2);
+        }
+        crate::capability::TrustMode::Sandboxed => {
+            store.set_fuel(fuel)?;
+            let ticks = timeout_ms.saturating_add(9) / 10;
+            store.set_epoch_deadline(ticks.max(1));
+        }
+    }
+    Ok(())
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        self.epoch_stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.epoch_thread.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 fn host_log(
     mut caller: wasmtime::Caller<'_, HostState>,
     level: i32,
     ptr: i32,
     len: i32,
 ) -> wasmtime::Result<()> {
+    caller
+        .data()
+        .charge_log_bytes(len.max(0) as u64)
+        .map_err(wasmtime::Error::msg)?;
     let mem = caller
         .get_export("memory")
         .and_then(|e| e.into_memory())
@@ -530,6 +598,246 @@ fn host_get_config(
 /// hold the host for minutes.
 pub(crate) const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
+
+const MAX_FS_DATA_BYTES: usize = 16 * 1024 * 1024;
+
+/// `host.fs_op(req_ptr, req_len, out_ptr, out_cap) -> i64`
+///
+/// Fine-grained mutation API for sandboxed plugins. Request examples:
+/// `{"op":"write_file","root":"/granted","path":"a.txt","data_b64":"..."}`
+/// `{"op":"create_file",...}`, `create_dir`, `delete_file`, `delete_dir`.
+///
+/// `path` is always relative to the capability root. Absolute paths, parent
+/// traversal, and an operation on the root itself are rejected before touching
+/// the filesystem.
+fn host_fs_op(
+    mut caller: wasmtime::Caller<'_, HostState>,
+    req_ptr: i32,
+    req_len: i32,
+    out_ptr: i32,
+    out_cap: i32,
+) -> wasmtime::Result<i64> {
+    const MAX_REQ: usize = 24 * 1024 * 1024;
+    let reply = if req_len < 0 || req_len as usize > MAX_REQ {
+        serde_json::json!({ "error": "fs request exceeds host size limit" })
+    } else {
+        let req_json = {
+            let mem = caller
+                .get_export("memory")
+                .and_then(|e| e.into_memory())
+                .ok_or_else(|| wasmtime::Error::msg("`host.fs_op` needs a `memory` export"))?;
+            let mut buf = vec![0u8; req_len as usize];
+            mem.read(&caller, req_ptr as usize, &mut buf)?;
+            String::from_utf8_lossy(&buf).into_owned()
+        };
+        fs_op_json(caller.data(), &req_json)
+    };
+
+    let bytes = serde_json::to_vec(&reply)
+        .map_err(|e| wasmtime::Error::msg(format!("serializing fs reply: {e}")))?;
+    if out_ptr == 0 || bytes.len() > out_cap.max(0) as usize {
+        return Ok(-(bytes.len() as i64));
+    }
+    let mem = caller
+        .get_export("memory")
+        .and_then(|e| e.into_memory())
+        .ok_or_else(|| wasmtime::Error::msg("`host.fs_op` needs a `memory` export"))?;
+    mem.write(&mut caller, out_ptr as usize, &bytes)?;
+    Ok(bytes.len() as i64)
+}
+
+fn fs_op_json(state: &HostState, req_json: &str) -> serde_json::Value {
+    use std::io::Write as _;
+
+    let req: serde_json::Value = match serde_json::from_str(req_json) {
+        Ok(v) => v,
+        Err(e) => return serde_json::json!({ "error": format!("bad fs request JSON: {e}") }),
+    };
+    let Some(op) = req.get("op").and_then(|v| v.as_str()) else {
+        return serde_json::json!({ "error": "fs request is missing `op`" });
+    };
+    let Some(root) = req.get("root").and_then(|v| v.as_str()) else {
+        return serde_json::json!({ "error": "fs request is missing `root`" });
+    };
+    let Some(raw_path) = req.get("path").and_then(|v| v.as_str()) else {
+        return serde_json::json!({ "error": "fs request is missing `path`" });
+    };
+    let path = match safe_relative_fs_path(raw_path) {
+        Ok(p) => p,
+        Err(e) => {
+            if let Some(audit) = &state.audit {
+                audit.record(
+                    &state.slot,
+                    &state.plugin_name,
+                    crate::audit::AuditDecision::Deny,
+                    "filesystem.path",
+                    raw_path,
+                    Some(&e),
+                );
+            }
+            return serde_json::json!({ "error": e });
+        }
+    };
+
+    let result: std::result::Result<(), String> = match op {
+        "write_file" => {
+            if let Err(e) = state
+                .capability_gate
+                .require_filesystem_write(root, raw_path)
+            {
+                Err(e)
+            } else {
+                let data = match decode_fs_data(&req) {
+                    Ok(data) => data,
+                    Err(e) => return serde_json::json!({ "error": e }),
+                };
+                with_fs_root(state, root, |dir| {
+                    let mut options = cap_std::fs::OpenOptions::new();
+                    options.write(true).truncate(true);
+                    let mut file = dir
+                        .open_with(&path, &options)
+                        .map_err(|e| format!("fs write_file open failed: {e}"))?;
+                    file.write_all(&data)
+                        .map_err(|e| format!("fs write_file failed: {e}"))
+                })
+            }
+        }
+        "create_file" => {
+            if let Err(e) = state
+                .capability_gate
+                .require_filesystem_create(root, raw_path)
+            {
+                Err(e)
+            } else {
+                let data = match decode_fs_data(&req) {
+                    Ok(data) => data,
+                    Err(e) => return serde_json::json!({ "error": e }),
+                };
+                with_fs_root(state, root, |dir| {
+                    let mut options = cap_std::fs::OpenOptions::new();
+                    options.write(true).create_new(true);
+                    let mut file = dir
+                        .open_with(&path, &options)
+                        .map_err(|e| format!("fs create_file open failed: {e}"))?;
+                    file.write_all(&data)
+                        .map_err(|e| format!("fs create_file failed: {e}"))
+                })
+            }
+        }
+        "create_dir" => {
+            if let Err(e) = state
+                .capability_gate
+                .require_filesystem_create(root, raw_path)
+            {
+                Err(e)
+            } else {
+                with_fs_root(state, root, |dir| {
+                    dir.create_dir(&path)
+                        .map_err(|e| format!("fs create_dir failed: {e}"))
+                })
+            }
+        }
+        "delete_file" => {
+            if let Err(e) = state
+                .capability_gate
+                .require_filesystem_delete(root, raw_path)
+            {
+                Err(e)
+            } else {
+                with_fs_root(state, root, |dir| {
+                    dir.remove_file(&path)
+                        .map_err(|e| format!("fs delete_file failed: {e}"))
+                })
+            }
+        }
+        "delete_dir" => {
+            if let Err(e) = state
+                .capability_gate
+                .require_filesystem_delete(root, raw_path)
+            {
+                Err(e)
+            } else {
+                with_fs_root(state, root, |dir| {
+                    dir.remove_dir(&path)
+                        .map_err(|e| format!("fs delete_dir failed: {e}"))
+                })
+            }
+        }
+        _ => Err(format!("unknown fs op `{op}`")),
+    };
+
+    match result {
+        Ok(()) => serde_json::json!({ "ok": true }),
+        Err(e) => serde_json::json!({ "error": e }),
+    }
+}
+
+fn decode_fs_data(req: &serde_json::Value) -> std::result::Result<Vec<u8>, String> {
+    use base64::Engine as _;
+
+    let data_b64 = req
+        .get("data_b64")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "fs file operation is missing `data_b64`".to_string())?;
+    // Base64 expands by roughly 4/3. Reject before decoding so a malicious
+    // guest cannot force an unbounded host allocation.
+    let max_encoded = MAX_FS_DATA_BYTES
+        .saturating_mul(4)
+        .saturating_div(3)
+        .saturating_add(8);
+    if data_b64.len() > max_encoded {
+        return Err("fs data exceeds host size limit".to_string());
+    }
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(data_b64)
+        .map_err(|e| format!("invalid data_b64: {e}"))?;
+    if data.len() > MAX_FS_DATA_BYTES {
+        return Err("fs data exceeds host size limit".to_string());
+    }
+    Ok(data)
+}
+
+fn safe_relative_fs_path(raw: &str) -> std::result::Result<std::path::PathBuf, String> {
+    use std::path::Component;
+
+    let path = std::path::Path::new(raw);
+    if raw.is_empty() || path.is_absolute() {
+        return Err("fs path must be a non-empty relative path".to_string());
+    }
+    let mut has_normal = false;
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => has_normal = true,
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err("fs path must not contain parent traversal or an absolute prefix"
+                    .to_string())
+            }
+        }
+    }
+    if !has_normal {
+        return Err("fs path must name an entry below the granted root".to_string());
+    }
+    Ok(path.to_path_buf())
+}
+
+fn with_fs_root<T>(
+    state: &HostState,
+    root: &str,
+    f: impl FnOnce(&cap_std::fs::Dir) -> std::result::Result<T, String>,
+) -> std::result::Result<T, String> {
+    if state.policy.trust == crate::capability::TrustMode::Trusted {
+        let dir = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())
+            .map_err(|e| format!("opening trusted fs root failed: {e}"))?;
+        return f(&dir);
+    }
+    let dir = state
+        .fs_roots
+        .get(root)
+        .ok_or_else(|| "permission denied: filesystem root has no active capability handle".to_string())?;
+    f(dir)
+}
+
 /// `host.http_fetch(req_ptr, req_len, out_ptr, out_cap) -> i64`
 ///
 /// The request is a JSON object:
@@ -545,9 +853,8 @@ pub(crate) const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 /// or `{ "error": "…" }` if the request could not be made at all. A non-2xx
 /// status is **not** an error — the guest sees the status and decides.
 ///
-/// This is a deliberate capability decision: plugins are trusted, so they get
-/// unrestricted network access. It runs **blocking** on the guest's thread,
-/// because wasmtime host functions are synchronous.
+/// Network access is checked against the instance's effective capabilities
+/// before the blocking request is issued.
 ///
 /// Every request is subject to [`HTTP_TIMEOUT`] — see that constant for why an
 /// unbounded call would freeze the whole host, not just this plugin.
@@ -569,7 +876,25 @@ fn host_http_fetch(
         String::from_utf8_lossy(&buf).into_owned()
     };
 
-    let reply = http_fetch_json(&req_json, caller.data().http_timeout);
+    let gate = serde_json::from_str::<serde_json::Value>(&req_json)
+        .ok()
+        .and_then(|req| {
+            let url = req.get("url")?.as_str()?;
+            let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("GET");
+            Some(caller.data().capability_gate.require_http(url, method))
+        });
+    let reply = match gate {
+        Some(Err(reason)) => serde_json::json!({ "error": reason }),
+        _ => {
+            let state = caller.data();
+            let max_redirects = if state.policy.trust == crate::capability::TrustMode::Sandboxed {
+                0
+            } else {
+                10
+            };
+            http_fetch_json(&req_json, state.http_timeout, max_redirects)
+        }
+    };
     let bytes = serde_json::to_vec(&reply)
         .map_err(|e| wasmtime::Error::msg(format!("serializing http reply: {e}")))?;
 
@@ -593,7 +918,7 @@ fn host_http_fetch(
 /// `match`. The `http::Request` form is method-agnostic.
 ///
 /// The request is bounded by `timeout` on purpose; see [`HTTP_TIMEOUT`].
-fn http_fetch_json(req_json: &str, timeout: Duration) -> serde_json::Value {
+fn http_fetch_json(req_json: &str, timeout: Duration, max_redirects: u32) -> serde_json::Value {
     use serde_json::json;
     use ureq::http;
 
@@ -627,6 +952,10 @@ fn http_fetch_json(req_json: &str, timeout: Duration) -> serde_json::Value {
         Ok(r) => r
             .with_default_agent()
             .configure()
+            // Sandboxed callers use zero automatic redirects: every next-hop URL
+            // must return through host.http_fetch and CapabilityGate. Trusted
+            // compatibility mode keeps ureq's historical/default redirect count.
+            .max_redirects(max_redirects)
             .timeout_global(Some(timeout))
             .build()
             .run(),
@@ -676,6 +1005,11 @@ fn host_has_service(
         mem.read(&caller, name_ptr as usize, &mut buf)?;
         String::from_utf8_lossy(&buf).into_owned()
     };
+    caller
+        .data()
+        .capability_gate
+        .require_service_consume(&name)
+        .map_err(wasmtime::Error::msg)?;
     let has = caller
         .data()
         .services
@@ -721,6 +1055,21 @@ fn host_call_service(
         )
     };
 
+    if let Err(reason) = caller.data().capability_gate.require_service_consume(&svc) {
+        let result = serde_json::json!({ "kind": "error", "message": reason });
+        let bytes = serde_json::to_vec(&result)
+            .map_err(|e| wasmtime::Error::msg(format!("serializing service denial: {e}")))?;
+        if out_ptr == 0 || bytes.len() > out_cap.max(0) as usize {
+            return Ok(-(bytes.len() as i64));
+        }
+        let mem = caller
+            .get_export("memory")
+            .and_then(|e| e.into_memory())
+            .ok_or_else(|| wasmtime::Error::msg("`host.call_service` needs a `memory` export"))?;
+        mem.write(&mut caller, out_ptr as usize, &bytes)?;
+        return Ok(bytes.len() as i64);
+    }
+
     // Call OUTSIDE any store borrow: the callee is a different instance.
     let result: serde_json::Value = {
         let services = caller.data().services.clone();
@@ -749,4 +1098,22 @@ fn host_call_service(
         .ok_or_else(|| wasmtime::Error::msg("`host.call_service` needs a `memory` export"))?;
     mem.write(&mut caller, out_ptr as usize, &bytes)?;
     Ok(bytes.len() as i64)
+}
+
+#[cfg(test)]
+mod fs_path_tests {
+    use super::safe_relative_fs_path;
+
+    #[test]
+    fn fs_paths_are_relative_and_cannot_traverse_parents() {
+        assert_eq!(
+            safe_relative_fs_path("dir/file.txt").unwrap(),
+            std::path::PathBuf::from("dir/file.txt")
+        );
+        assert!(safe_relative_fs_path("../escape").is_err());
+        assert!(safe_relative_fs_path("a/../escape").is_err());
+        assert!(safe_relative_fs_path("/absolute").is_err());
+        assert!(safe_relative_fs_path("").is_err());
+        assert!(safe_relative_fs_path(".").is_err());
+    }
 }

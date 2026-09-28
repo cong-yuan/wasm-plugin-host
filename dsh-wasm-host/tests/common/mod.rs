@@ -20,9 +20,7 @@ pub fn wasm_tool(slot: &str, action: &str) -> Vec<u8> {
         r#"{{"name":"{slot}","abi":1,"tools":[{{"name":"{slot}_tool","description":"tool {slot}","exec":"go"}}]}}"#
     );
     let reply = if action == "success" {
-        format!(
-            r#"{{"kind":"success","content":"{slot} ran","value":{{"slot":"{slot}","n":1}}}}"#
-        )
+        format!(r#"{{"kind":"success","content":"{slot} ran","value":{{"slot":"{slot}","n":1}}}}"#)
     } else {
         action.to_string()
     };
@@ -66,11 +64,11 @@ pub fn wasm_provider(slot: &str, services: &[&str]) -> Vec<u8> {
         .map(|s| format!("\"{s}\""))
         .collect::<Vec<_>>()
         .join(",");
-    let decl = format!(
-        r#"{{"name":"{slot}","abi":1,"tools":[],"provides":[{provides}]}}"#
-    );
+    let decl = format!(r#"{{"name":"{slot}","abi":1,"tools":[],"provides":[{provides}]}}"#);
     // Any op returns the same payload, tagged with the slot name.
-    let reply = format!(r#"{{"kind":"success","content":"served by {slot}","value":{{"provider":"{slot}"}}}}"#);
+    let reply = format!(
+        r#"{{"kind":"success","content":"served by {slot}","value":{{"provider":"{slot}"}}}}"#
+    );
     build(&decl, &reply)
 }
 
@@ -169,7 +167,7 @@ pub async fn boot_dsh(ctx: &Context) {
 
 /// Swap in a mock adapter that echoes the last user message.
 pub async fn script_echo(ctx: &Context) {
-    use dsh_rs::api::services::{LlmService, LlmAdapterApi};
+    use dsh_rs::api::services::{LlmAdapterApi, LlmService};
     let runtime = ctx
         .require::<LlmService>(dsh_rs::api::LLM_SERVICE)
         .expect("llm service live");
@@ -180,12 +178,7 @@ pub async fn script_echo(ctx: &Context) {
 }
 
 /// Script the mock adapter to call one tool, then finish.
-pub async fn script_tool_call(
-    ctx: &Context,
-    id: &str,
-    tool: &str,
-    args: serde_json::Value,
-) {
+pub async fn script_tool_call(ctx: &Context, id: &str, tool: &str, args: serde_json::Value) {
     use dsh_rs::api::services::{LlmAdapterApi, LlmService};
     let runtime = ctx
         .require::<LlmService>(dsh_rs::api::LLM_SERVICE)

@@ -190,7 +190,6 @@ fn validate_compiles_without_swapping() {
     assert!(reg.is_loaded("slot"));
 }
 
-
 // ---------- config diffing ----------
 //
 // These tests use a plugin that exports `plugin_configure` and
@@ -282,15 +281,23 @@ fn apply_config_reports_consumed_and_is_idempotent() {
     write(&wasm, &wasm_with_config_hooks("alpha"));
 
     let mut reg = registry();
-    reg.load("slot", &wasm, serde_json::json!({ "n": 1 })).unwrap();
+    reg.load("slot", &wasm, serde_json::json!({ "n": 1 }))
+        .unwrap();
 
     // Different config -> consumed by the on_config hook.
-    let consumed = reg.apply_config("slot", serde_json::json!({ "n": 2 })).unwrap();
+    let consumed = reg
+        .apply_config("slot", serde_json::json!({ "n": 2 }))
+        .unwrap();
     assert!(consumed, "plugin has an on_config hook");
-    assert_eq!(reg.slot_config("slot"), Some(&serde_json::json!({ "n": 2 })));
+    assert_eq!(
+        reg.slot_config("slot"),
+        Some(&serde_json::json!({ "n": 2 }))
+    );
 
     // Same config again -> no-op (no touch).
-    let consumed = reg.apply_config("slot", serde_json::json!({ "n": 2 })).unwrap();
+    let consumed = reg
+        .apply_config("slot", serde_json::json!({ "n": 2 }))
+        .unwrap();
     assert!(!consumed, "unchanged config must be a no-op");
 }
 
@@ -303,17 +310,27 @@ fn config_change_to_one_slot_leaves_the_other_untouched() {
     write(&b, &wasm_with_config_hooks("beta"));
 
     let mut reg = registry();
-    reg.load("one", &a, serde_json::json!({ "v": "A" })).unwrap();
-    reg.load("two", &b, serde_json::json!({ "v": "B" })).unwrap();
+    reg.load("one", &a, serde_json::json!({ "v": "A" }))
+        .unwrap();
+    reg.load("two", &b, serde_json::json!({ "v": "B" }))
+        .unwrap();
 
     let before_one = reg.slot_config("one").cloned();
     let before_two = reg.slot_config("two").cloned();
 
     // Only "two" changes.
-    reg.apply_config("two", serde_json::json!({ "v": "B2" })).unwrap();
+    reg.apply_config("two", serde_json::json!({ "v": "B2" }))
+        .unwrap();
 
-    assert_eq!(reg.slot_config("two"), Some(&serde_json::json!({ "v": "B2" })));
-    assert_eq!(reg.slot_config("one").cloned(), before_one, "slot one must be untouched");
+    assert_eq!(
+        reg.slot_config("two"),
+        Some(&serde_json::json!({ "v": "B2" }))
+    );
+    assert_eq!(
+        reg.slot_config("one").cloned(),
+        before_one,
+        "slot one must be untouched"
+    );
     assert_ne!(before_two, reg.slot_config("two").cloned());
 }
 
@@ -324,15 +341,21 @@ fn reload_can_carry_a_new_config_atomically() {
     write(&wasm, &wasm_with_config_hooks("alpha"));
 
     let mut reg = registry();
-    reg.load("slot", &wasm, serde_json::json!({ "v": 1 })).unwrap();
+    reg.load("slot", &wasm, serde_json::json!({ "v": 1 }))
+        .unwrap();
 
-    let r = reg.reload("slot", &wasm, Some(serde_json::json!({ "v": 2 }))).unwrap();
+    let r = reg
+        .reload("slot", &wasm, Some(serde_json::json!({ "v": 2 })))
+        .unwrap();
     assert_eq!(r.slot, "slot");
-    assert_eq!(reg.slot_config("slot"), Some(&serde_json::json!({ "v": 2 })));
+    assert_eq!(
+        reg.slot_config("slot"),
+        Some(&serde_json::json!({ "v": 2 }))
+    );
 }
 
 #[test]
-fn supervisor_updates_only_changed_slot_via_reconcile()  {
+fn supervisor_updates_only_changed_slot_via_reconcile() {
     use wasm_plugin_host::config::{Config, PluginEntry};
     use wasm_plugin_host::Supervisor;
 
@@ -353,6 +376,7 @@ fn supervisor_updates_only_changed_slot_via_reconcile()  {
             watch: Some(false),
             config: Some(serde_json::json!({ "v": "A" })),
             restart_on_config: false,
+            ..Default::default()
         },
     );
     cfg.plugins.insert(
@@ -363,6 +387,7 @@ fn supervisor_updates_only_changed_slot_via_reconcile()  {
             watch: Some(false),
             config: Some(serde_json::json!({ "v": "B" })),
             restart_on_config: false,
+            ..Default::default()
         },
     );
     cfg.save(&cfg_path).unwrap();
@@ -371,12 +396,14 @@ fn supervisor_updates_only_changed_slot_via_reconcile()  {
     let mut reg = registry();
     let ev = sup.reconcile(&mut reg);
     // Two loads, nothing else.
-    let loaded = ev.iter().filter(|e| matches!(e, wasm_plugin_host::Event::Loaded { .. })).count();
+    let loaded = ev
+        .iter()
+        .filter(|e| matches!(e, wasm_plugin_host::Event::Loaded { .. }))
+        .count();
     assert_eq!(loaded, 2, "expected two loads, got {ev:?}");
 
     // Change ONLY slot two in the config and reconcile again.
-    sup.config.plugins.get_mut("two").unwrap().config =
-        Some(serde_json::json!({ "v": "B2" }));
+    sup.config.plugins.get_mut("two").unwrap().config = Some(serde_json::json!({ "v": "B2" }));
     let ev = sup.reconcile(&mut reg);
     let touched: Vec<String> = ev
         .iter()
@@ -390,8 +417,55 @@ fn supervisor_updates_only_changed_slot_via_reconcile()  {
     assert_eq!(touched, vec!["two"], "only slot two should be touched");
 
     // And the applied values reflect exactly that.
-    assert_eq!(reg.slot_config("one"), Some(&serde_json::json!({ "v": "A" })));
-    assert_eq!(reg.slot_config("two"), Some(&serde_json::json!({ "v": "B2" })));
+    assert_eq!(
+        reg.slot_config("one"),
+        Some(&serde_json::json!({ "v": "A" }))
+    );
+    assert_eq!(
+        reg.slot_config("two"),
+        Some(&serde_json::json!({ "v": "B2" }))
+    );
+}
+
+#[test]
+fn supervisor_policy_change_reloads_the_affected_slot() {
+    use wasm_plugin_host::config::{Config, PluginEntry};
+    use wasm_plugin_host::{Supervisor, TrustMode};
+
+    let dir = tmpdir("sup-policy");
+    let wasm = dir.join("p.wasm");
+    write(&wasm, &wasm_with_config_hooks("alpha"));
+
+    let cfg_path = dir.join("plugins.json");
+    let mut cfg = Config::default();
+    cfg.plugins.insert(
+        "one".into(),
+        PluginEntry {
+            path: wasm.to_string_lossy().into(),
+            enabled: true,
+            watch: Some(false),
+            ..Default::default()
+        },
+    );
+    cfg.save(&cfg_path).unwrap();
+
+    let mut sup = Supervisor::new(&cfg_path).unwrap();
+    let mut reg = registry();
+    let first = sup.reconcile(&mut reg);
+    assert!(first
+        .iter()
+        .any(|e| matches!(e, wasm_plugin_host::Event::Loaded { slot, .. } if slot == "one")));
+    assert_eq!(reg.slot_policy("one").unwrap().trust, TrustMode::Trusted);
+
+    sup.config.plugins.get_mut("one").unwrap().trust = TrustMode::Sandboxed;
+    let changed = sup.reconcile(&mut reg);
+    assert!(
+        changed
+            .iter()
+            .any(|e| matches!(e, wasm_plugin_host::Event::Reloaded { slot, .. } if slot == "one")),
+        "policy changes must atomically reload that slot: {changed:?}"
+    );
+    assert_eq!(reg.slot_policy("one").unwrap().trust, TrustMode::Sandboxed);
 }
 
 // ---------- logging ----------
@@ -468,7 +542,7 @@ fn plugin_logs_are_captured_with_slot_prefix() {
     let logs = reg.logs();
     assert_eq!(logs.len(), 3);
     for r in &logs {
-        assert_eq!(r.slot, "greet");       // slot, not file stem
+        assert_eq!(r.slot, "greet"); // slot, not file stem
         assert_eq!(r.level, LogLevel::Info);
         assert_eq!(r.message, "logline");
     }
@@ -588,8 +662,14 @@ fn guest_stdout_and_stderr_are_captured_as_logs() {
 
     let logs = reg.logs();
     let msgs: Vec<&str> = logs.iter().map(|r| r.message.as_str()).collect();
-    assert!(msgs.contains(&"out"), "stdout must be captured, got {msgs:?}");
-    assert!(msgs.contains(&"err"), "stderr must be captured, got {msgs:?}");
+    assert!(
+        msgs.contains(&"out"),
+        "stdout must be captured, got {msgs:?}"
+    );
+    assert!(
+        msgs.contains(&"err"),
+        "stderr must be captured, got {msgs:?}"
+    );
 
     let out = logs.iter().find(|r| r.message == "out").unwrap();
     let err = logs.iter().find(|r| r.message == "err").unwrap();
@@ -675,8 +755,8 @@ fn parallel_calls_with_unknown_tool_return_errors_in_place() {
 
 #[test]
 fn notify_watcher_fires_on_file_change() {
-    use wasm_plugin_host::config::{Config, PluginEntry};
     use std::time::Duration;
+    use wasm_plugin_host::config::{Config, PluginEntry};
 
     let dir = tmpdir("notify");
     let wasm = dir.join("p.wasm");
@@ -691,6 +771,7 @@ fn notify_watcher_fires_on_file_change() {
             watch: Some(true),
             config: None,
             restart_on_config: false,
+            ..Default::default()
         },
     );
     cfg.save(&cfg_path).unwrap();
@@ -716,7 +797,10 @@ fn notify_watcher_fires_on_file_change() {
     let got = w.wait(Duration::from_secs(5));
     let elapsed = t.elapsed();
     assert!(got, "watcher should observe the change");
-    assert!(elapsed < Duration::from_secs(3), "should be event-driven, took {elapsed:?}");
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "should be event-driven, took {elapsed:?}"
+    );
 }
 
 // ---------- flow intervention (dsh-style hooks) ----------
@@ -846,7 +930,13 @@ fn plugin_can_veto_the_flow() {
     // A waterfall hook on tools/pre-execute that always vetoes.
     write(
         &hook,
-        &wasm_hook_plugin("guard", "tools/pre-execute", "waterfall", "check", r#"{"kind":"veto","reason":"blocked"}"#),
+        &wasm_hook_plugin(
+            "guard",
+            "tools/pre-execute",
+            "waterfall",
+            "check",
+            r#"{"kind":"veto","reason":"blocked"}"#,
+        ),
     );
 
     let mut reg = registry();
@@ -870,7 +960,13 @@ fn observe_hook_cannot_change_flow() {
     // An OBSERVE hook that returns a veto — which must be ignored.
     write(
         &hook,
-        &wasm_hook_plugin("watcher", "tools/pre-execute", "observe", "watch", r#"{"kind":"veto","reason":"nope"}"#),
+        &wasm_hook_plugin(
+            "watcher",
+            "tools/pre-execute",
+            "observe",
+            "watch",
+            r#"{"kind":"veto","reason":"nope"}"#,
+        ),
     );
 
     let mut reg = registry();
@@ -890,7 +986,13 @@ fn unload_removes_hooks_and_services() {
     let hook = dir.join("hook.wasm");
     write(
         &hook,
-        &wasm_hook_plugin("guard", "turn/start", "observe", "watch", r#"{"kind":"continue"}"#),
+        &wasm_hook_plugin(
+            "guard",
+            "turn/start",
+            "observe",
+            "watch",
+            r#"{"kind":"continue"}"#,
+        ),
     );
     let mut reg = registry();
     let r = reg.load("guard", &hook, serde_json::Value::Null).unwrap();
@@ -898,7 +1000,10 @@ fn unload_removes_hooks_and_services() {
     assert!(!reg.hooks().is_empty());
 
     reg.unload("guard").unwrap();
-    assert!(reg.hooks().is_empty(), "unload must unwind hook subscriptions");
+    assert!(
+        reg.hooks().is_empty(),
+        "unload must unwind hook subscriptions"
+    );
 }
 
 #[test]
@@ -907,7 +1012,13 @@ fn unknown_event_is_rejected_at_load() {
     let hook = dir.join("hook.wasm");
     write(
         &hook,
-        &wasm_hook_plugin("bad", "not/a/real/event", "observe", "x", r#"{"kind":"continue"}"#),
+        &wasm_hook_plugin(
+            "bad",
+            "not/a/real/event",
+            "observe",
+            "x",
+            r#"{"kind":"continue"}"#,
+        ),
     );
     let mut reg = registry();
     let err = reg.load("bad", &hook, serde_json::Value::Null).unwrap_err();
@@ -918,7 +1029,10 @@ fn unknown_event_is_rejected_at_load() {
 fn chunk_event_is_named_assistant_chunk_but_accepts_the_legacy_alias() {
     // The canonical name matches dsh's `SessionEventData::event_type()`.
     assert_eq!(FlowEvent::LlmChunk.as_str(), "assistant/chunk");
-    assert_eq!(FlowEvent::parse("assistant/chunk"), Some(FlowEvent::LlmChunk));
+    assert_eq!(
+        FlowEvent::parse("assistant/chunk"),
+        Some(FlowEvent::LlmChunk)
+    );
     // The pre-alignment name still resolves, so older plugins keep loading.
     assert_eq!(FlowEvent::parse("llm/chunk"), Some(FlowEvent::LlmChunk));
 }
@@ -988,15 +1102,21 @@ fn wasm_service_plugin(
           (func (export "plugin_invoke") (param i32 i32 i32 i32) (param $o i32) (param $c i32) (result i64)
             (call $blit (i32.const {res_off}) (i32.const {rlen}) (local.get $o) (local.get $c)))
         )"#,
-        decl_off = decl_off, res_off = res_off, decl = decl, reply = reply,
-        dlen = decl.len(), rlen = reply.len(),
+        decl_off = decl_off,
+        res_off = res_off,
+        decl = decl,
+        reply = reply,
+        dlen = decl.len(),
+        rlen = reply.len(),
     );
     wat::parse_str(&wat).expect("service wat")
 }
 
 /// A plugin that calls a service via `host.call_service` and returns the reply.
 fn wasm_service_caller(slot: &str, service: &str, op: &str) -> Vec<u8> {
-    let decl = format!(r#"{{"name":"{slot}","abi":1,"tools":[{{"name":"{slot}_tool","description":"c","exec":"go"}}]}}"#);
+    let decl = format!(
+        r#"{{"name":"{slot}","abi":1,"tools":[{{"name":"{slot}_tool","description":"c","exec":"go"}}]}}"#
+    );
     let svc_bytes = service.as_bytes();
     let op_bytes = op.as_bytes();
     let svc_off = 64usize;
@@ -1043,9 +1163,15 @@ fn wasm_service_caller(slot: &str, service: &str, op: &str) -> Vec<u8> {
                 (local.get $o) (local.get $c)))
             (local.get $n))
         )"#,
-        svc_off = svc_off, op_off = op_off, decl_off = decl_off,
-        svc = service, op = op, decl = decl,
-        svclen = svc_bytes.len(), oplen = op_bytes.len(), dlen = decl.len(),
+        svc_off = svc_off,
+        op_off = op_off,
+        decl_off = decl_off,
+        svc = service,
+        op = op,
+        decl = decl,
+        svclen = svc_bytes.len(),
+        oplen = op_bytes.len(),
+        dlen = decl.len(),
     );
     wat::parse_str(&wat).expect("service caller wat")
 }
@@ -1056,25 +1182,54 @@ fn consumer_stays_quiescent_until_provider_appears_then_converges() {
     let provider = dir.join("prov.wasm");
     let consumer = dir.join("cons.wasm");
     // Provider offers "kv" and has a tool.
-    write(&provider, &wasm_service_plugin("provider", "[]", r#"["kv"]"#, true, r#"{"kind":"success","content":"p","value":{}}"#));
+    write(
+        &provider,
+        &wasm_service_plugin(
+            "provider",
+            "[]",
+            r#"["kv"]"#,
+            true,
+            r#"{"kind":"success","content":"p","value":{}}"#,
+        ),
+    );
     // Consumer injects "kv" and has its own tool.
-    write(&consumer, &wasm_service_plugin("consumer", r#"["kv"]"#, "[]", true, r#"{"kind":"success","content":"c","value":{}}"#));
+    write(
+        &consumer,
+        &wasm_service_plugin(
+            "consumer",
+            r#"["kv"]"#,
+            "[]",
+            true,
+            r#"{"kind":"success","content":"c","value":{}}"#,
+        ),
+    );
 
     let mut reg = registry();
 
     // Load the consumer FIRST: its inject is unmet, so it must be quiescent.
-    let r = reg.load("cons", &consumer, serde_json::Value::Null).unwrap();
-    assert_eq!(r.missing_services, vec!["kv"], "inject should be reported missing");
+    let r = reg
+        .load("cons", &consumer, serde_json::Value::Null)
+        .unwrap();
+    assert_eq!(
+        r.missing_services,
+        vec!["kv"],
+        "inject should be reported missing"
+    );
     assert!(!r.active, "consumer must be quiescent without its provider");
     assert!(!reg.is_active("cons"));
     // Its tool must NOT be registered while quiescent.
     assert!(reg.tool_owner("consumer_tool").is_none());
 
     // Now load the provider: this should cascade-activate the consumer.
-    let r = reg.load("prov", &provider, serde_json::Value::Null).unwrap();
+    let r = reg
+        .load("prov", &provider, serde_json::Value::Null)
+        .unwrap();
     assert!(r.active);
     assert!(reg.is_active("prov"));
-    assert!(reg.is_active("cons"), "consumer must activate once provider appears");
+    assert!(
+        reg.is_active("cons"),
+        "consumer must activate once provider appears"
+    );
 
     // Both tools are now registered, reachable.
     assert_eq!(reg.tool_owner("provider_tool").as_deref(), Some("prov"));
@@ -1082,8 +1237,14 @@ fn consumer_stays_quiescent_until_provider_appears_then_converges() {
 
     // ---- unload the provider: consumer must deactivate again ----
     reg.unload("prov").unwrap();
-    assert!(!reg.is_active("cons"), "consumer must deactivate when provider leaves");
-    assert!(reg.tool_owner("consumer_tool").is_none(), "its tool must be unregistered");
+    assert!(
+        !reg.is_active("cons"),
+        "consumer must deactivate when provider leaves"
+    );
+    assert!(
+        reg.tool_owner("consumer_tool").is_none(),
+        "its tool must be unregistered"
+    );
     assert_eq!(reg.provider_of("kv"), None);
 }
 
@@ -1092,7 +1253,16 @@ fn self_provided_service_activates_immediately() {
     let dir = tmpdir("self-svc");
     let p = dir.join("p.wasm");
     // Provides "kv" and injects "kv" — its own provide satisfies itself.
-    write(&p, &wasm_service_plugin("solo", r#"["kv"]"#, r#"["kv"]"#, true, r#"{"kind":"success","content":"s","value":{}}"#));
+    write(
+        &p,
+        &wasm_service_plugin(
+            "solo",
+            r#"["kv"]"#,
+            r#"["kv"]"#,
+            true,
+            r#"{"kind":"success","content":"s","value":{}}"#,
+        ),
+    );
     let mut reg = registry();
     let r = reg.load("solo", &p, serde_json::Value::Null).unwrap();
     assert!(r.active, "self-provided inject should activate immediately");
@@ -1107,22 +1277,34 @@ fn plugin_can_call_another_plugin_by_service_name() {
     // Provider offers "greeter"; its invoke returns a distinctive reply.
     write(
         &provider,
-        &wasm_service_plugin("greeter", "[]", r#"["greeter"]"#, false, r#"{"kind":"success","content":"hi-from-provider","value":{"who":"x"}}"#),
+        &wasm_service_plugin(
+            "greeter",
+            "[]",
+            r#"["greeter"]"#,
+            false,
+            r#"{"kind":"success","content":"hi-from-provider","value":{"who":"x"}}"#,
+        ),
     );
     // Caller's tool invokes the "greeter" service via host.call_service.
     write(&caller, &wasm_service_caller("caller", "greeter", "say_hi"));
 
     let mut reg = registry();
-    reg.load("prov", &provider, serde_json::Value::Null).unwrap();
-    reg.load("caller", &caller, serde_json::Value::Null).unwrap();
+    reg.load("prov", &provider, serde_json::Value::Null)
+        .unwrap();
+    reg.load("caller", &caller, serde_json::Value::Null)
+        .unwrap();
 
     // Calling the caller's tool must return the provider's reply, verbatim.
-    let out = reg.call_tool("caller_tool", &serde_json::json!({})).unwrap();
+    let out = reg
+        .call_tool("caller_tool", &serde_json::json!({}))
+        .unwrap();
     assert_eq!(out["kind"], "success");
     assert_eq!(out["content"], "hi-from-provider");
 
     // And the registry is still usable (plugins were put back).
-    let direct = reg.call_tool("caller_tool", &serde_json::json!({})).unwrap();
+    let direct = reg
+        .call_tool("caller_tool", &serde_json::json!({}))
+        .unwrap();
     assert_eq!(direct["content"], "hi-from-provider");
 }
 
@@ -1132,10 +1314,13 @@ fn service_call_without_provider_returns_error_not_trap() {
     let caller = dir.join("caller.wasm");
     write(&caller, &wasm_service_caller("caller", "nobody", "op"));
     let mut reg = registry();
-    reg.load("caller", &caller, serde_json::Value::Null).unwrap();
+    reg.load("caller", &caller, serde_json::Value::Null)
+        .unwrap();
 
     // No provider registered -> the call must return an error object, not trap.
-    let out = reg.call_tool("caller_tool", &serde_json::json!({})).unwrap();
+    let out = reg
+        .call_tool("caller_tool", &serde_json::json!({}))
+        .unwrap();
     assert_eq!(out["kind"], "error");
     assert!(
         out["message"].as_str().unwrap().contains("no provider"),
@@ -1148,8 +1333,14 @@ fn two_plugins_cannot_provide_the_same_service() {
     let dir = tmpdir("svc-conflict");
     let a = dir.join("a.wasm");
     let b = dir.join("b.wasm");
-    write(&a, &wasm_service_plugin("one", "[]", r#"["kv"]"#, false, r#"{"kind":"success"}"#));
-    write(&b, &wasm_service_plugin("two", "[]", r#"["kv"]"#, false, r#"{"kind":"success"}"#));
+    write(
+        &a,
+        &wasm_service_plugin("one", "[]", r#"["kv"]"#, false, r#"{"kind":"success"}"#),
+    );
+    write(
+        &b,
+        &wasm_service_plugin("two", "[]", r#"["kv"]"#, false, r#"{"kind":"success"}"#),
+    );
 
     let mut reg = registry();
     reg.load("one", &a, serde_json::Value::Null).unwrap();
@@ -1167,9 +1358,18 @@ fn deeper_chain_converges_in_one_pass() {
     let a = dir.join("a.wasm");
     let b = dir.join("b.wasm");
     let c = dir.join("c.wasm");
-    write(&a, &wasm_service_plugin("a", "[]", r#"["a"]"#, false, r#"{"kind":"success"}"#));
-    write(&b, &wasm_service_plugin("b", r#"["a"]"#, r#"["b"]"#, false, r#"{"kind":"success"}"#));
-    write(&c, &wasm_service_plugin("c", r#"["b"]"#, "[]", false, r#"{"kind":"success"}"#));
+    write(
+        &a,
+        &wasm_service_plugin("a", "[]", r#"["a"]"#, false, r#"{"kind":"success"}"#),
+    );
+    write(
+        &b,
+        &wasm_service_plugin("b", r#"["a"]"#, r#"["b"]"#, false, r#"{"kind":"success"}"#),
+    );
+    write(
+        &c,
+        &wasm_service_plugin("c", r#"["b"]"#, "[]", false, r#"{"kind":"success"}"#),
+    );
 
     let mut reg = registry();
     reg.load("c", &c, serde_json::Value::Null).unwrap();
@@ -1195,10 +1395,7 @@ fn recursive_service_call_is_refused_not_deadlocked() {
     // fail with a clear error rather than hang.
     let dir = tmpdir("recursive");
     let p = dir.join("loop.wasm");
-    write(
-        &p,
-        &wasm_service_caller_providing("loop", "loop", "spin"),
-    );
+    write(&p, &wasm_service_caller_providing("loop", "loop", "spin"));
     let mut reg = registry();
     // Providing + injecting its own service would self-activate.
     reg.load("loop", &p, serde_json::Value::Null).unwrap();
@@ -1206,7 +1403,10 @@ fn recursive_service_call_is_refused_not_deadlocked() {
     let out = reg.call_tool("loop_tool", &serde_json::json!({})).unwrap();
     assert_eq!(out["kind"], "error", "recursion must be refused: {out}");
     let msg = out["message"].as_str().unwrap_or("");
-    assert!(msg.contains("busy") || msg.contains("not available"), "got: {msg}");
+    assert!(
+        msg.contains("busy") || msg.contains("not available"),
+        "got: {msg}"
+    );
 }
 
 /// Like `wasm_service_caller` but the plugin also *provides* the service it calls.
@@ -1247,9 +1447,15 @@ fn wasm_service_caller_providing(slot: &str, service: &str, op: &str) -> Vec<u8>
             (call $call (i32.const {svc_off}) (i32.const {svclen}) (i32.const {op_off}) (i32.const {oplen})
                         (i32.const 0) (i32.const 0) (local.get $o) (local.get $c)))
         )"#,
-        svc_off = svc_off, op_off = op_off, decl_off = decl_off,
-        svc = service, opb = op, decl = decl,
-        svclen = svc.len(), oplen = opb.len(), dlen = decl.len(),
+        svc_off = svc_off,
+        op_off = op_off,
+        decl_off = decl_off,
+        svc = service,
+        opb = op,
+        decl = decl,
+        svclen = svc.len(),
+        oplen = opb.len(),
+        dlen = decl.len(),
     );
     wat::parse_str(&wat).expect("recursive wat")
 }
@@ -1261,8 +1467,14 @@ fn reload_respects_service_graph() {
     let dir = tmpdir("reload-svc");
     let prov = dir.join("prov.wasm");
     let cons = dir.join("cons.wasm");
-    write(&prov, &wasm_service_plugin("prov", "[]", r#"["a"]"#, false, r#"{"kind":"success"}"#));
-    write(&cons, &wasm_service_plugin("cons", r#"["a"]"#, "[]", true, r#"{"kind":"success"}"#));
+    write(
+        &prov,
+        &wasm_service_plugin("prov", "[]", r#"["a"]"#, false, r#"{"kind":"success"}"#),
+    );
+    write(
+        &cons,
+        &wasm_service_plugin("cons", r#"["a"]"#, "[]", true, r#"{"kind":"success"}"#),
+    );
 
     let mut reg = registry();
     reg.load("prov", &prov, serde_json::Value::Null).unwrap();
@@ -1270,11 +1482,17 @@ fn reload_respects_service_graph() {
     assert!(reg.is_active("cons"));
 
     // Overwrite the provider's wasm with one that offers "b" instead.
-    write(&prov, &wasm_service_plugin("prov", "[]", r#"["b"]"#, false, r#"{"kind":"success"}"#));
+    write(
+        &prov,
+        &wasm_service_plugin("prov", "[]", r#"["b"]"#, false, r#"{"kind":"success"}"#),
+    );
     reg.reload("prov", &prov, None).unwrap();
 
     assert_eq!(reg.provider_of("a"), None);
     assert_eq!(reg.provider_of("b").as_deref(), Some("prov"));
-    assert!(!reg.is_active("cons"), "consumer must deactivate when its provider drops 'a'");
+    assert!(
+        !reg.is_active("cons"),
+        "consumer must deactivate when its provider drops 'a'"
+    );
     assert!(reg.tool_owner("cons_tool").is_none());
 }

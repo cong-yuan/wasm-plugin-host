@@ -94,13 +94,9 @@ impl Shared {
     /// loaded, or because it is **currently executing** (it was taken out for
     /// the duration of a call) — which is how recursion is refused.
     pub fn take(&self, slot: &str) -> Result<Plugin> {
-        self.slots
-            .lock()
-            .unwrap()
-            .remove(slot)
-            .ok_or_else(|| {
-                anyhow::anyhow!("slot `{slot}` is not available (not loaded, or busy executing)")
-            })
+        self.slots.lock().unwrap().remove(slot).ok_or_else(|| {
+            anyhow::anyhow!("slot `{slot}` is not available (not loaded, or busy executing)")
+        })
     }
 
     /// Put a taken plugin back.
@@ -114,7 +110,11 @@ impl Shared {
 
     /// Run `f` against the plugin in `slot`, taking it out for the call. The
     /// plugin is put back even if `f` returns an error.
-    pub fn with_plugin<R>(&self, slot: &str, f: impl FnOnce(&mut Plugin) -> Result<R>) -> Result<R> {
+    pub fn with_plugin<R>(
+        &self,
+        slot: &str,
+        f: impl FnOnce(&mut Plugin) -> Result<R>,
+    ) -> Result<R> {
         let mut plugin = self.take(slot)?;
         let r = f(&mut plugin);
         self.put(slot, plugin);
@@ -131,7 +131,10 @@ impl Shared {
 
     /// Drop every service provided by `slot`.
     pub fn remove_providers_of(&self, slot: &str) {
-        self.providers.lock().unwrap().retain(|_, owner| owner != slot);
+        self.providers
+            .lock()
+            .unwrap()
+            .retain(|_, owner| owner != slot);
     }
 
     /// Which slot provides `service`.

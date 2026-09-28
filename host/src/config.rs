@@ -27,6 +27,15 @@ fn yes() -> bool {
 fn default_interval() -> u64 {
     400
 }
+fn trust_is_default(v: &crate::capability::TrustMode) -> bool {
+    *v == crate::capability::TrustMode::Trusted
+}
+fn grant_is_empty(v: &crate::capability::CapabilitySet) -> bool {
+    v.is_empty()
+}
+fn limits_are_default(v: &crate::capability::ResourceLimits) -> bool {
+    v == &crate::capability::ResourceLimits::default()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -91,6 +100,31 @@ pub struct PluginEntry {
     /// * `true` — reload the plugin so it re-reads the config from scratch.
     #[serde(default)]
     pub restart_on_config: bool,
+    /// Compatibility/security mode. Missing means trusted so old config files
+    /// retain their current behavior.
+    #[serde(default, skip_serializing_if = "trust_is_default")]
+    pub trust: crate::capability::TrustMode,
+    /// Host-side grants for sandboxed plugins.
+    #[serde(default, skip_serializing_if = "grant_is_empty")]
+    pub grant: crate::capability::CapabilitySet,
+    /// Parsed in Phase A; CPU/memory/output enforcement lands in Phase B.
+    #[serde(default, skip_serializing_if = "limits_are_default")]
+    pub limits: crate::capability::ResourceLimits,
+}
+
+impl Default for PluginEntry {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            enabled: true,
+            watch: None,
+            config: None,
+            restart_on_config: false,
+            trust: crate::capability::TrustMode::Trusted,
+            grant: crate::capability::CapabilitySet::default(),
+            limits: crate::capability::ResourceLimits::default(),
+        }
+    }
 }
 
 impl PluginEntry {
@@ -102,6 +136,14 @@ impl PluginEntry {
     pub fn config_or_null(&self) -> &serde_json::Value {
         static NULL: serde_json::Value = serde_json::Value::Null;
         self.config.as_ref().unwrap_or(&NULL)
+    }
+
+    pub fn policy(&self) -> crate::capability::PluginPolicy {
+        crate::capability::PluginPolicy {
+            trust: self.trust,
+            grant: self.grant.clone(),
+            limits: self.limits.clone(),
+        }
     }
 }
 
@@ -146,7 +188,12 @@ impl Config {
                 .map(|i| i.to_string())
                 .collect::<Vec<_>>()
                 .join("\n  - ");
-            anyhow::bail!("config {} has {} problem(s):\n  - {}", path.display(), issues.len(), joined);
+            anyhow::bail!(
+                "config {} has {} problem(s):\n  - {}",
+                path.display(),
+                issues.len(),
+                joined
+            );
         }
         Ok(cfg)
     }
@@ -163,9 +210,7 @@ impl Config {
             if crate::state::LogLevel::parse(level).is_none() {
                 issues.push(ValidationIssue::new(
                     "log_level",
-                    format!(
-                        "unknown level `{level}` (expected debug | info | warn | error)"
-                    ),
+                    format!("unknown level `{level}` (expected debug | info | warn | error)"),
                 ));
             }
         }
@@ -174,7 +219,10 @@ impl Config {
         // check it is not empty, since it is created on demand.
         if let Some(cache) = &self.cache {
             if cache.enabled && cache.dir.trim().is_empty() {
-                issues.push(ValidationIssue::new("cache.dir", "must not be empty when enabled"));
+                issues.push(ValidationIssue::new(
+                    "cache.dir",
+                    "must not be empty when enabled",
+                ));
             }
         }
 
@@ -188,7 +236,10 @@ impl Config {
         // Per-plugin checks.
         for (slot, entry) in &self.plugins {
             if slot.trim().is_empty() {
-                issues.push(ValidationIssue::new("plugins.<empty>", "slot name must not be empty"));
+                issues.push(ValidationIssue::new(
+                    "plugins.<empty>",
+                    "slot name must not be empty",
+                ));
             }
             let field = format!("plugins.{slot}");
             if entry.path.trim().is_empty() {
@@ -197,6 +248,62 @@ impl Config {
                     "must not be empty",
                 ));
                 continue;
+            }
+            if entry.limits.memory_mb == 0 {
+                issues.push(ValidationIssue::new(
+                    format!("{field}.limits.memory_mb"),
+                    "must be greater than 0",
+                ));
+            }
+            if entry.limits.fuel == 0 {
+                issues.push(ValidationIssue::new(
+                    format!("{field}.limits.fuel"),
+                    "must be greater than 0",
+                ));
+            }
+            if entry.limits.call_timeout_ms == 0 {
+                issues.push(ValidationIssue::new(
+                    format!("{field}.limits.call_timeout_ms"),
+                    "must be greater than 0",
+                ));
+            }
+            if entry.limits.max_concurrent_calls == 0 {
+                issues.push(ValidationIssue::new(
+                    format!("{field}.limits.max_concurrent_calls"),
+                    "must be greater than 0",
+                ));
+            }
+            if entry.trust == crate::capability::TrustMode::Sandboxed
+                && entry.limits.max_concurrent_calls > 0
+                && entry.limits.max_concurrent_calls != 1
+            {
+                issues.push(ValidationIssue::new(
+                    format!("{field}.limits.max_concurrent_calls"),
+                    "must be 1 with the current single-instance-per-slot runtime",
+                ));
+            }
+            if entry.limits.max_output_bytes == 0 {
+                issues.push(ValidationIssue::new(
+                    format!("{field}.limits.max_output_bytes"),
+                    "must be greater than 0",
+                ));
+            }
+            if entry.limits.max_log_bytes_per_call == 0 {
+                issues.push(ValidationIssue::new(
+                    format!("{field}.limits.max_log_bytes_per_call"),
+                    "must be greater than 0",
+                ));
+            }
+            if entry.enabled
+                && (entry.trust != crate::capability::TrustMode::Sandboxed
+                    || entry.limits.max_concurrent_calls == 1)
+            {
+                if let Err(message) = entry.policy().validate_for_load() {
+                    issues.push(ValidationIssue::new(
+                        format!("{field}.grant.filesystem"),
+                        message,
+                    ));
+                }
             }
             // Only check existence for *enabled* plugins: a disabled entry is
             // allowed to point at a not-yet-built artifact.

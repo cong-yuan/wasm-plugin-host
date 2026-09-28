@@ -8,6 +8,11 @@ The contract is deliberately tiny — **JSON strings over linear memory** — so
 is implementable in Rust, Go, C, Zig today, and via the Component Model for
 JS/Python later.
 
+> **权限说明**：ABI v1 与权限模型解耦。当前 ABI 编码无需升级即可引入
+> `trusted` / `sandboxed`、Capability Gate、资源预算和审计；插件声明只是能力请求，
+> 最终授权由宿主策略决定。详见 [能力与权限模型.md](能力与权限模型.md) 与
+> [插件扩展协议.md](插件扩展协议.md)。
+
 ## Threading: one call at a time **per plugin instance**
 
 **This is a normative part of the ABI, not an implementation detail.**
@@ -228,12 +233,35 @@ reg.log_sink().clear();        // drop the buffer
     { "on": "tools/pre-execute", "exec": "check", "mode": "waterfall", "priority": 0 }
   ],
   "injects": ["sessions"],
-  "provides": ["policy"]
+  "provides": ["policy"],
+  "capabilities": {
+    "network": { "allow": ["api.example.com"], "methods": ["GET"] },
+    "services": { "consume": ["sessions"], "provide": ["policy"] },
+    "agent": { "rewrite": ["tools/pre-execute"], "veto": ["tools/pre-execute"] }
+  }
 }
 ```
 
 `exec` is the `op` string the host passes to `plugin_invoke`.
 `tools[].name` is how the agent-loop sees the tool.
+
+### Capability declaration
+
+`capabilities` is a **request**, never an authorization. In `sandboxed` mode the host computes effective Host-mediated capabilities from the plugin request and the host-side grant. Missing capability entries mean “do not request”.
+
+Current categories are `filesystem.read/write/create/delete`, `network.allow/methods`, `agent.observe/rewrite/veto`, `services.consume/provide`, and `ui.slots/routes/windows/theme/adjusts/backend_commands`.
+
+ABI v1 describes capabilities only after instantiation. Because WASI preopens must exist before instantiation, direct WASI exposes only validated `filesystem.read` roots; sandboxed mode has no ambient root preopen. `filesystem.write/create/delete` are host-mediated through `host.fs_op`: the request names an effective capability root plus a relative path, and the host executes from a pre-opened `cap_std::fs::Dir` capability handle. This avoids mapping distinct mutation capabilities onto WASI's coarse directory `MUTATE` permission.
+
+For `sandboxed` plugins, `plugin_init` / `plugin_configure` execute before `plugin_describe`, so Host-mediated privileged imports remain default-deny until the declaration has been parsed and the effective capability set resolved.
+
+### `host.fs_op`
+
+```text
+host.fs_op(req_ptr, req_len, out_ptr, out_cap) -> i64
+```
+
+Request JSON supports `write_file`, `create_file`, `create_dir`, `delete_file`, and `delete_dir`. `root` must exactly match an effective filesystem capability root and `path` must be relative, non-empty, and contain no `..` or absolute prefix. File payloads use `data_b64` and are capped at 16 MiB decoded. `write_file` never creates a missing file; `create_file` uses create-new semantics. The reply is `{ "ok": true }` or `{ "error": "..." }`.
 
 ## Frontend contribution (`ui`)
 

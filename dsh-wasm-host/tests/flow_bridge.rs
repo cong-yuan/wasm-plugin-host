@@ -12,7 +12,9 @@ use dsh_wasm_host::bridge::{install_observe, install_waterfalls};
 use dsh_wasm_host::{install, LoadSpec};
 use serde_json::{json, Value};
 
-use common::{boot_dsh, host, script_tool_call, tmpdir, wasm_hook, wasm_tool, wasm_tool_with_veto, write_wasm};
+use common::{
+    boot_dsh, host, script_tool_call, tmpdir, wasm_hook, wasm_tool, wasm_tool_with_veto, write_wasm,
+};
 
 #[tokio::test]
 async fn guest_veto_blocks_a_tool_call_through_the_real_agent_loop() {
@@ -31,17 +33,22 @@ async fn guest_veto_blocks_a_tool_call_through_the_real_agent_loop() {
     .unwrap();
 
     // Direct dispatcher sanity: the guest veto really denies the call.
-    let tools = ctx.require::<ToolsService>(dsh_rs::api::TOOLS_SERVICE).unwrap();
+    let tools = ctx
+        .require::<ToolsService>(dsh_rs::api::TOOLS_SERVICE)
+        .unwrap();
     let denied = tools
         .execute("c1".into(), "guarded_tool".into(), json!({}), run_ctx(&ctx))
         .await;
-    assert!(denied.is_error(), "guest veto must deny the call: {denied:?}");
+    assert!(
+        denied.is_error(),
+        "guest veto must deny the call: {denied:?}"
+    );
     match &denied {
         dsh_rs::types::ToolExecutionResult::Error { code, message, .. } => {
             assert_eq!(code, "DENIED", "pre-execute deny maps to DENIED");
             assert!(
-                message.contains("wasm plugin"),
-                "reason should be present: {message}"
+                message.contains("blocked by guest"),
+                "guest veto reason should be preserved: {message}"
             );
         }
         other => panic!("expected DENIED, got {other:?}"),
@@ -50,9 +57,16 @@ async fn guest_veto_blocks_a_tool_call_through_the_real_agent_loop() {
     // And the same veto applies inside a real agent turn: the model asks for
     // the guarded tool and receives a DENIED tool result, not a success.
     script_tool_call(&ctx, "call-1", "guarded_tool", json!({})).await;
-    let agents = ctx.require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE).unwrap();
+    let agents = ctx
+        .require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE)
+        .unwrap();
     let agent = agents
-        .create(None, AgentOptions::mock("mock-1"), Some("/tmp".to_string()), None)
+        .create(
+            None,
+            AgentOptions::mock("mock-1"),
+            Some("/tmp".to_string()),
+            None,
+        )
         .unwrap();
     agent.followup(Message::user(
         "u-1",
@@ -110,7 +124,12 @@ async fn observe_fanout_does_not_alter_the_session_log() {
     let wasm = write_wasm(
         &dir,
         "noisy",
-        &wasm_hook("noisy", "tools/pre-execute", "observe", r#"{"kind":"veto"}"#),
+        &wasm_hook(
+            "noisy",
+            "tools/pre-execute",
+            "observe",
+            r#"{"kind":"veto"}"#,
+        ),
     );
     let toolwasm = write_wasm(&dir, "echo", &wasm_tool("echo", "success"));
 
@@ -129,7 +148,9 @@ async fn observe_fanout_does_not_alter_the_session_log() {
     .unwrap();
 
     // The observe-only hook cannot veto, so the tool still runs.
-    let tools = ctx.require::<ToolsService>(dsh_rs::api::TOOLS_SERVICE).unwrap();
+    let tools = ctx
+        .require::<ToolsService>(dsh_rs::api::TOOLS_SERVICE)
+        .unwrap();
     let result = tools
         .execute("c1".into(), "echo_tool".into(), json!({}), run_ctx(&ctx))
         .await;
@@ -155,9 +176,16 @@ async fn pre_step_veto_rejects_the_turn() {
     // Boot a scripted adapter so a turn can actually run.
     script_echo(&ctx).await;
 
-    let agents = ctx.require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE).unwrap();
+    let agents = ctx
+        .require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE)
+        .unwrap();
     let agent = agents
-        .create(None, AgentOptions::mock("mock-1"), Some("/tmp".to_string()), None)
+        .create(
+            None,
+            AgentOptions::mock("mock-1"),
+            Some("/tmp".to_string()),
+            None,
+        )
         .unwrap();
     agent.followup(Message::user("u-1", vec![ContentBlock::text("go")]));
     agent.when_idle().await;
@@ -180,9 +208,16 @@ async fn observe_listener_alone_mounts_and_continues() {
 
     // A full turn with no guests must be a no-op for the bridge.
     script_echo(&ctx).await;
-    let agents = ctx.require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE).unwrap();
+    let agents = ctx
+        .require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE)
+        .unwrap();
     let agent = agents
-        .create(None, AgentOptions::mock("mock-1"), Some("/tmp".to_string()), None)
+        .create(
+            None,
+            AgentOptions::mock("mock-1"),
+            Some("/tmp".to_string()),
+            None,
+        )
         .unwrap();
     agent.followup(Message::user("u-1", vec![ContentBlock::text("hi")]));
     agent.when_idle().await;
@@ -229,7 +264,11 @@ async fn llm_stream_rewrite_changes_what_the_model_receives() {
         }]
     });
     let decision = json!({ "kind": "rewrite", "value": rewritten }).to_string();
-    let wasm = write_wasm(&dir, "rewriter", &wasm_hook("rewriter", "llm/stream", "waterfall", &decision));
+    let wasm = write_wasm(
+        &dir,
+        "rewriter",
+        &wasm_hook("rewriter", "llm/stream", "waterfall", &decision),
+    );
 
     let ctx = Context::new();
     boot_dsh(&ctx).await;
@@ -237,14 +276,24 @@ async fn llm_stream_rewrite_changes_what_the_model_receives() {
     install(
         &ctx,
         host(),
-        vec![LoadSpec::new("rewriter", wasm.to_string_lossy().to_string())],
+        vec![LoadSpec::new(
+            "rewriter",
+            wasm.to_string_lossy().to_string(),
+        )],
     )
     .await
     .unwrap();
 
-    let agents = ctx.require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE).unwrap();
+    let agents = ctx
+        .require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE)
+        .unwrap();
     let agent = agents
-        .create(None, AgentOptions::mock("mock-1"), Some("/tmp".to_string()), None)
+        .create(
+            None,
+            AgentOptions::mock("mock-1"),
+            Some("/tmp".to_string()),
+            None,
+        )
         .unwrap();
     agent.followup(Message::user(
         "u-1",
@@ -291,7 +340,11 @@ async fn a_malformed_llm_rewrite_falls_back_to_the_original_request() {
         "value": { "provider": "mock", "model": "mock-1" }
     })
     .to_string();
-    let wasm = write_wasm(&dir, "bad", &wasm_hook("bad", "llm/stream", "waterfall", &bad));
+    let wasm = write_wasm(
+        &dir,
+        "bad",
+        &wasm_hook("bad", "llm/stream", "waterfall", &bad),
+    );
 
     let ctx = Context::new();
     boot_dsh(&ctx).await;
@@ -304,9 +357,16 @@ async fn a_malformed_llm_rewrite_falls_back_to_the_original_request() {
     .await
     .unwrap();
 
-    let agents = ctx.require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE).unwrap();
+    let agents = ctx
+        .require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE)
+        .unwrap();
     let agent = agents
-        .create(None, AgentOptions::mock("mock-1"), Some("/tmp".to_string()), None)
+        .create(
+            None,
+            AgentOptions::mock("mock-1"),
+            Some("/tmp".to_string()),
+            None,
+        )
         .unwrap();
     agent.followup(Message::user("u-2", vec![ContentBlock::text("STILL HERE")]));
     agent.when_idle().await;
@@ -360,7 +420,9 @@ async fn tool_execute_rewrite_changes_the_arguments_the_tool_receives() {
 
     let seen: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
     let seen_in_tool = seen.clone();
-    let tools = ctx.require::<ToolsService>(dsh_rs::api::TOOLS_SERVICE).unwrap();
+    let tools = ctx
+        .require::<ToolsService>(dsh_rs::api::TOOLS_SERVICE)
+        .unwrap();
     tools.register_dynamic_tool(DynamicToolSpec {
         name: "spy".into(),
         description: "records its arguments".into(),
@@ -383,7 +445,12 @@ async fn tool_execute_rewrite_changes_the_arguments_the_tool_receives() {
     .unwrap();
 
     let result = tools
-        .execute("c-exec".into(), "spy".into(), json!({ "original": 1 }), run_ctx(&ctx))
+        .execute(
+            "c-exec".into(),
+            "spy".into(),
+            json!({ "original": 1 }),
+            run_ctx(&ctx),
+        )
         .await;
     assert!(!result.is_error(), "the tool should have run: {result:?}");
 
@@ -404,7 +471,12 @@ async fn tool_execute_veto_returns_a_tool_error_not_a_broken_turn() {
     let wasm = write_wasm(
         &dir,
         "blocker",
-        &wasm_hook("blocker", "tools/execute", "waterfall", r#"{"kind":"veto","reason":"nope"}"#),
+        &wasm_hook(
+            "blocker",
+            "tools/execute",
+            "waterfall",
+            r#"{"kind":"veto","reason":"nope"}"#,
+        ),
     );
 
     let ctx = Context::new();
@@ -421,9 +493,16 @@ async fn tool_execute_veto_returns_a_tool_error_not_a_broken_turn() {
     .await
     .unwrap();
 
-    let tools = ctx.require::<ToolsService>(dsh_rs::api::TOOLS_SERVICE).unwrap();
+    let tools = ctx
+        .require::<ToolsService>(dsh_rs::api::TOOLS_SERVICE)
+        .unwrap();
     let result = tools
-        .execute("c-veto".into(), "echo_tool".into(), json!({}), run_ctx(&ctx))
+        .execute(
+            "c-veto".into(),
+            "echo_tool".into(),
+            json!({}),
+            run_ctx(&ctx),
+        )
         .await;
     match &result {
         dsh_rs::types::ToolExecutionResult::Error { code, .. } => {
@@ -465,9 +544,16 @@ async fn tool_post_execute_rewrites_the_result_the_model_sees() {
     .await
     .unwrap();
 
-    let tools = ctx.require::<ToolsService>(dsh_rs::api::TOOLS_SERVICE).unwrap();
+    let tools = ctx
+        .require::<ToolsService>(dsh_rs::api::TOOLS_SERVICE)
+        .unwrap();
     let result = tools
-        .execute("c-post".into(), "echo_tool".into(), json!({ "secret": "sauce" }), run_ctx(&ctx))
+        .execute(
+            "c-post".into(),
+            "echo_tool".into(),
+            json!({ "secret": "sauce" }),
+            run_ctx(&ctx),
+        )
         .await;
     let text = match &result {
         dsh_rs::types::ToolExecutionResult::Success { content, .. }
@@ -567,7 +653,12 @@ async fn llm_stream_veto_prevents_the_provider_call() {
     let wasm = write_wasm(
         &dir,
         "blocker",
-        &wasm_hook("blocker", "llm/stream", "waterfall", r#"{"kind":"veto","reason":"no"}"#),
+        &wasm_hook(
+            "blocker",
+            "llm/stream",
+            "waterfall",
+            r#"{"kind":"veto","reason":"no"}"#,
+        ),
     );
 
     let ctx = Context::new();
@@ -581,11 +672,18 @@ async fn llm_stream_veto_prevents_the_provider_call() {
     llm.register_adapter(&["mock"], Arc::new(CountingAdapter(calls.clone())))
         .unwrap();
 
-    let agents = ctx.require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE).unwrap();
+    let agents = ctx
+        .require::<AgentRegistryService>(dsh_rs::api::AGENTS_SERVICE)
+        .unwrap();
 
     // --- Phase 1: no plugin. The provider MUST be reached. ---
     let agent = agents
-        .create(None, AgentOptions::mock("mock-1"), Some("/tmp".to_string()), None)
+        .create(
+            None,
+            AgentOptions::mock("mock-1"),
+            Some("/tmp".to_string()),
+            None,
+        )
         .unwrap();
     agent.followup(Message::user("u-1", vec![ContentBlock::text("hi")]));
     agent.when_idle().await;
@@ -606,7 +704,12 @@ async fn llm_stream_veto_prevents_the_provider_call() {
     .unwrap();
 
     let agent2 = agents
-        .create(None, AgentOptions::mock("mock-1"), Some("/tmp".to_string()), None)
+        .create(
+            None,
+            AgentOptions::mock("mock-1"),
+            Some("/tmp".to_string()),
+            None,
+        )
         .unwrap();
     agent2.followup(Message::user("u-2", vec![ContentBlock::text("hi again")]));
     agent2.when_idle().await;
