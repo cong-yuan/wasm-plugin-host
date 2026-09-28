@@ -458,6 +458,20 @@ impl CapabilityGate {
         result
     }
 
+    /// Record a denial caused by the plugin's own UI manifest, before the
+    /// capability set is consulted. This keeps declaration-boundary failures in
+    /// the same host-owned security audit stream as grant failures.
+    pub fn deny_ui_manifest(
+        &self,
+        capability: &str,
+        target: &str,
+        reason: impl Into<String>,
+    ) -> Result<(), String> {
+        let result = Err(reason.into());
+        self.audit_result(capability, target, &result);
+        result
+    }
+
     pub fn require_ui_assets(&self) -> Result<(), String> {
         let effective = self.effective.read().unwrap();
         let result = if effective.unrestricted || effective.has_any_ui_capability() {

@@ -406,10 +406,16 @@ impl Plugin {
             .as_ref()
             .is_some_and(|ui| ui.provides.iter().any(|provided| provided.name == slot));
         if !declared {
-            return Err(anyhow!(
-                "plugin `{}` does not declare provided UI slot `{slot}`",
-                self.name
-            ));
+            return self
+                .store
+                .data()
+                .capability_gate
+                .deny_ui_manifest(
+                    "ui.slots",
+                    slot,
+                    format!("plugin `{}` does not declare provided UI slot `{slot}`", self.name),
+                )
+                .map_err(anyhow::Error::msg);
         }
         self.store
             .data()
@@ -425,10 +431,16 @@ impl Plugin {
             .as_ref()
             .is_some_and(|ui| ui.injects.iter().any(|inject| inject.slot == slot));
         if !declared {
-            return Err(anyhow!(
-                "plugin `{}` does not declare injected UI slot `{slot}`",
-                self.name
-            ));
+            return self
+                .store
+                .data()
+                .capability_gate
+                .deny_ui_manifest(
+                    "ui.slots",
+                    slot,
+                    format!("plugin `{}` does not declare injected UI slot `{slot}`", self.name),
+                )
+                .map_err(anyhow::Error::msg);
         }
         self.store
             .data()
@@ -444,10 +456,16 @@ impl Plugin {
             .as_ref()
             .is_some_and(|ui| ui.windows.iter().any(|window| window.name == name));
         if !declared {
-            return Err(anyhow!(
-                "plugin `{}` does not declare UI window `{name}`",
-                self.name
-            ));
+            return self
+                .store
+                .data()
+                .capability_gate
+                .deny_ui_manifest(
+                    "ui.windows",
+                    name,
+                    format!("plugin `{}` does not declare UI window `{name}`", self.name),
+                )
+                .map_err(anyhow::Error::msg);
         }
         self.store
             .data()

@@ -434,4 +434,24 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
             && event.target == "main"
             && event.decision == AuditDecision::Allow
     }));
+    assert!(audit.iter().any(|event| {
+        event.capability == "ui.windows"
+            && event.target == "undeclared"
+            && event.decision == AuditDecision::Deny
+            && event
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("does not declare UI window")
+    }));
+    assert!(audit.iter().any(|event| {
+        event.capability == "ui.slots"
+            && event.target == "dashboard.cards"
+            && event.decision == AuditDecision::Deny
+            && event
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("does not declare provided UI slot")
+    }));
 }
