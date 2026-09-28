@@ -97,11 +97,41 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
         .iter()
         .map(|(name, description)| serde_json::json!({ "name": name, "description": description }))
         .collect();
+    let slot_capabilities: Vec<&str> = SLOTS.iter().map(|(name, _)| *name).collect();
+    let backend_commands = [
+        "list_sessions",
+        "list_agents",
+        "transcript",
+        "chat_partial",
+        "send_message",
+        "studio_status",
+        "list_plugins",
+        "list_tools",
+        "resume_session",
+        "get_llm_config",
+        "create_agent",
+        "cancel_agent",
+        "steer_agent",
+        "dispose_agent",
+        "soft_unbind_agent",
+        "rebind_agent_model",
+        "list_models",
+        "set_llm_config",
+        "fetch_llm_models",
+        "sync_llm_adapters",
+    ];
 
     let decl = serde_json::json!({
         "name": "openhanako-shell",
         "abi": 1,
         "tools": [],
+        "capabilities": {
+            "ui": {
+                "slots": slot_capabilities,
+                "windows": true,
+                "backend_commands": backend_commands
+            }
+        },
         "ui": {
             "assets": assets,
             "provides": provides,

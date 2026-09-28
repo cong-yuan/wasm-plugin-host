@@ -108,7 +108,7 @@ const fn default_memory_mb() -> u64 {
     64
 }
 const fn default_fuel() -> u64 {
-    100_000_000
+    200_000_000
 }
 const fn default_call_timeout_ms() -> u64 {
     5_000
@@ -776,6 +776,11 @@ fn intersect_hosts(requested: &[String], granted: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sandbox_default_fuel_supports_large_ui_describe_payloads() {
+        assert_eq!(ResourceLimits::default().fuel, 200_000_000);
+    }
 
     #[test]
     fn sandbox_network_is_request_intersection_grant() {

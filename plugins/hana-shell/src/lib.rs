@@ -137,11 +137,34 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
         .iter()
         .map(|(name, description)| serde_json::json!({ "name": name, "description": description }))
         .collect();
+    let slot_capabilities: Vec<&str> = SLOTS.iter().map(|(name, _)| *name).collect();
+    let backend_commands = [
+        "studio_status",
+        "list_sessions",
+        "list_agents",
+        "resume_session",
+        "list_plugins",
+        "list_tools",
+        "list_services",
+        "create_agent",
+        "send_message",
+        "transcript",
+        "cancel_agent",
+        "dispose_agent",
+        "plugin_windows",
+    ];
 
     let decl = serde_json::json!({
         "name": "hana-shell",
         "abi": 1,
         "tools": [],
+        "capabilities": {
+            "ui": {
+                "slots": slot_capabilities,
+                "windows": true,
+                "backend_commands": backend_commands
+            }
+        },
         "ui": {
             "assets": assets,
             "provides": provides,
