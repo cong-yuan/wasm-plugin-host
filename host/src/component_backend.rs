@@ -283,6 +283,10 @@ impl ComponentInstance {
             .call_describe(&mut self.store)?)
     }
 
+    pub(crate) fn describe_internal(&mut self) -> Result<crate::plugin::PluginDecl> {
+        component_decl_to_internal(self.describe()?)
+    }
+
     pub(crate) fn invoke(
         &mut self,
         op: &str,
@@ -294,10 +298,140 @@ impl ComponentInstance {
             .call_invoke(&mut self.store, op, &args_json)?)
     }
 
+    pub(crate) fn invoke_internal(
+        &mut self,
+        op: &str,
+        args_json: &str,
+    ) -> Result<crate::plugin::InvokeResult> {
+        match self.invoke(op, args_json)? {
+            wasm_plugin_host::plugin::types::InvokeResult::Success(success) => {
+                Ok(crate::plugin::InvokeResult::Success {
+                    content: success.content,
+                    value: parse_json_value(&success.value_json, "component invoke value")?,
+                })
+            }
+            wasm_plugin_host::plugin::types::InvokeResult::Error(error) => {
+                Ok(crate::plugin::InvokeResult::Error {
+                    message: error.message,
+                    code: error.code,
+                })
+            }
+        }
+    }
+
+    pub(crate) fn invoke_raw_json(
+        &mut self,
+        op: &str,
+        args_json: &str,
+    ) -> Result<serde_json::Value> {
+        match self.invoke(op, args_json)? {
+            wasm_plugin_host::plugin::types::InvokeResult::Success(success) => {
+                parse_json_value(&success.value_json, "component raw invoke value")
+            }
+            wasm_plugin_host::plugin::types::InvokeResult::Error(error) => Ok(serde_json::json!({
+                "kind": "error",
+                "message": error.message,
+                "code": error.code,
+            })),
+        }
+    }
+
     pub(crate) fn shutdown(&mut self) -> Result<()> {
         Ok(self.bindings
             .wasm_plugin_host_plugin_lifecycle()
             .call_shutdown(&mut self.store)?)
+    }
+}
+
+fn parse_json_value(raw: &str, label: &str) -> Result<serde_json::Value> {
+    serde_json::from_str(raw).map_err(|e| anyhow::anyhow!("invalid {label} JSON ({e}): {raw}"))
+}
+
+fn component_decl_to_internal(
+    decl: wasm_plugin_host::plugin::types::PluginDecl,
+) -> Result<crate::plugin::PluginDecl> {
+    use self::wasm_plugin_host::plugin::types as wit;
+
+    let tools = decl
+        .tools
+        .into_iter()
+        .map(|tool| {
+            Ok(crate::plugin::ToolDecl {
+                name: tool.name,
+                description: tool.description,
+                parameters: parse_json_value(&tool.parameters_json, "tool parameters")?,
+                exec: tool.exec,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let hooks = decl
+        .hooks
+        .into_iter()
+        .map(|hook| crate::plugin::HookDecl {
+            on: hook.on,
+            exec: hook.exec,
+            mode: match hook.mode {
+                wit::HookMode::Observe => crate::plugin::HookMode::Observe,
+                wit::HookMode::Waterfall => crate::plugin::HookMode::Waterfall,
+            },
+            priority: hook.priority,
+        })
+        .collect();
+
+    let ui = match decl.ui_json {
+        Some(raw) => Some(
+            serde_json::from_str(&raw)
+                .map_err(|e| anyhow::anyhow!("invalid component ui-json ({e}): {raw}"))?,
+        ),
+        None => None,
+    };
+
+    Ok(crate::plugin::PluginDecl {
+        name: decl.name,
+        abi: i32::try_from(decl.abi)
+            .map_err(|_| anyhow::anyhow!("component ABI value does not fit i32"))?,
+        tools,
+        hooks,
+        injects: decl.injects,
+        provides: decl.provides,
+        ui,
+        capabilities: component_capabilities_to_internal(decl.capabilities),
+    })
+}
+
+fn component_capabilities_to_internal(
+    caps: wasm_plugin_host::plugin::types::CapabilityRequest,
+) -> crate::capability::CapabilitySet {
+    crate::capability::CapabilitySet {
+        filesystem: crate::capability::FilesystemCapabilities {
+            read: caps.filesystem.read,
+            write: caps.filesystem.write,
+            create: caps.filesystem.create,
+            delete: caps.filesystem.delete,
+        },
+        network: crate::capability::NetworkCapabilities {
+            allow: caps.network.allow,
+            methods: caps.network.methods,
+        },
+        agent: crate::capability::AgentCapabilities {
+            observe: caps.agent.observe,
+            rewrite: caps.agent.rewrite,
+            veto: caps.agent.veto,
+        },
+        services: crate::capability::ServiceCapabilities {
+            consume: caps.services.consume,
+            provide: caps.services.provide,
+        },
+        ui: crate::capability::UiCapabilities {
+            slots: caps.ui.slots,
+            routes: caps.ui.routes,
+            windows: caps.ui.windows,
+            theme: caps.ui.theme,
+            adjusts: caps.ui.adjusts,
+            backend_commands: caps.ui.backend_commands,
+            host_events: caps.ui.host_events,
+        },
     }
 }
 
