@@ -528,6 +528,12 @@ impl Registry {
             .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e))
     }
 
+    pub fn authorize_ui_host_event(&self, slot: &str, event: &str) -> Result<()> {
+        self.shared
+            .with_plugin(slot, |plugin| plugin.authorize_ui_host_event(event))
+            .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e))
+    }
+
     pub fn authorize_ui_theme(&self, slot: &str) -> Result<()> {
         self.shared
             .with_plugin(slot, |plugin| plugin.authorize_ui_theme())
@@ -550,6 +556,7 @@ impl Registry {
             UiHostAction::BackendCommand { command, .. } => {
                 self.authorize_ui_backend_command(slot, command)
             }
+            UiHostAction::ListenEvent { event } => self.authorize_ui_host_event(slot, event),
             UiHostAction::Theme => self.authorize_ui_theme(slot),
             UiHostAction::Adjust { slot: target } => self.authorize_ui_adjust(slot, target),
             UiHostAction::ProvideSlot { slot: target } | UiHostAction::RenderSlot { slot: target } => self

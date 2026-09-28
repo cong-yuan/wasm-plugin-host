@@ -129,7 +129,8 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
             "ui": {
                 "slots": slot_capabilities,
                 "windows": true,
-                "backend_commands": backend_commands
+                "backend_commands": backend_commands,
+                "host_events": ["studio://chat-partial"]
             }
         },
         "ui": {

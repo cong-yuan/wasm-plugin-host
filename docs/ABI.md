@@ -376,7 +376,7 @@ studio.hostAction({
 
 `hana-shell` and `openhanako-shell` prefer this method when present. The native host, not the plugin, supplies the authenticated slot identity. Compatibility hosts without `studio.hostAction` retain the historical raw Tauri invoke path for trusted deployments.
 
-When `studio.hostAction` exists, OpenHanako also refuses to silently fall back to raw Tauri event subscription. A host may expose controlled `studio.listenHostEvent(event, handler)`; otherwise streaming falls back to the capability-gated `chat_partial` backend command.
+When `studio.hostAction` exists, OpenHanako also refuses to silently fall back to raw Tauri event subscription. A host may expose controlled `studio.listenHostEvent(event, handler)`; before subscribing, that host must authorize `{ "kind": "listen_event", "event": event }` with the same authenticated slot via `Registry::parse_and_authorize_ui_action()`. The effective `ui.host_events[]` capability therefore gates event names independently from backend commands. If no controlled event bridge exists, streaming falls back to the capability-gated `chat_partial` backend command.
 
 `studio.renderSlot(slot, el)` is the missing half of opening a slot: a plugin
 that **provides** a slot must also render its children somewhere, or nothing it

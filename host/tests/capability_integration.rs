@@ -304,7 +304,8 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
                 "slots": ["frontend.panel", "dashboard.cards"],
                 "adjusts": ["dashboard.*"],
                 "windows": true,
-                "backend_commands": ["list_sessions"]
+                "backend_commands": ["list_sessions"],
+                "host_events": ["studio://chat-partial"]
             }
         }
     });
@@ -319,6 +320,7 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
                 adjusts: vec!["dashboard.*".into(), "other.*".into()],
                 windows: true,
                 backend_commands: vec!["list_sessions".into(), "run_shell".into()],
+                host_events: vec!["studio://chat-partial".into(), "studio://secret".into()],
                 ..Default::default()
             },
             ..Default::default()
@@ -333,6 +335,11 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         effective.capabilities.ui.backend_commands,
         vec!["list_sessions"],
         "a host grant that the plugin did not request must not leak into effective capabilities"
+    );
+    assert_eq!(
+        effective.capabilities.ui.host_events,
+        vec!["studio://chat-partial"],
+        "event grants are narrowed by the plugin request just like commands"
     );
 
     reg.authorize_ui_action(
@@ -358,6 +365,21 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
         UiHostAction::BackendCommand {
             command: "list_sessions".into(),
             args: serde_json::json!({ "limit": 20 }),
+        }
+    );
+    let parsed_event = reg
+        .parse_and_authorize_ui_action(
+            "cap",
+            serde_json::json!({
+                "kind": "listen_event",
+                "event": "studio://chat-partial"
+            }),
+        )
+        .expect("declared and granted host event should authorize");
+    assert_eq!(
+        parsed_event,
+        UiHostAction::ListenEvent {
+            event: "studio://chat-partial".into(),
         }
     );
     let err = reg
@@ -422,6 +444,15 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
     let err = reg
         .authorize_ui_action(
             "cap",
+            &UiHostAction::ListenEvent {
+                event: "studio://secret".into(),
+            },
+        )
+        .expect_err("host grant alone must not authorize an event the plugin did not request");
+    assert!(err.to_string().contains("studio://secret"));
+    let err = reg
+        .authorize_ui_action(
+            "cap",
             &UiHostAction::OpenWindow {
                 name: "undeclared".into(),
                 params: serde_json::Value::Null,
@@ -473,6 +504,16 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
     assert!(audit.iter().any(|event| {
         event.capability == "ui.backend_commands"
             && event.target == "run_shell"
+            && event.decision == AuditDecision::Deny
+    }));
+    assert!(audit.iter().any(|event| {
+        event.capability == "ui.host_events"
+            && event.target == "studio://chat-partial"
+            && event.decision == AuditDecision::Allow
+    }));
+    assert!(audit.iter().any(|event| {
+        event.capability == "ui.host_events"
+            && event.target == "studio://secret"
             && event.decision == AuditDecision::Deny
     }));
     assert!(audit.iter().any(|event| {

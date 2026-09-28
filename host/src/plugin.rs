@@ -387,6 +387,14 @@ impl Plugin {
             .map_err(anyhow::Error::msg)
     }
 
+    pub fn authorize_ui_host_event(&self, event: &str) -> Result<()> {
+        self.store
+            .data()
+            .capability_gate
+            .require_ui_host_event(event)
+            .map_err(anyhow::Error::msg)
+    }
+
     pub fn authorize_ui_theme(&self) -> Result<()> {
         self.store
             .data()

@@ -66,6 +66,8 @@ pub struct UiCapabilities {
     pub adjusts: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub backend_commands: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_events: Vec<String>,
 }
 
 /// Typed frontend-host operation. The authenticated plugin identity is supplied
@@ -78,6 +80,7 @@ pub enum UiHostAction {
         #[serde(default)]
         args: serde_json::Value,
     },
+    ListenEvent { event: String },
     Theme,
     Adjust { slot: String },
     ProvideSlot { slot: String },
@@ -472,6 +475,18 @@ impl CapabilityGate {
         result
     }
 
+    pub fn require_ui_host_event(&self, event: &str) -> Result<(), String> {
+        let effective = self.effective.read().unwrap();
+        let result = effective.allows_named(
+            "ui host event",
+            event,
+            &effective.capabilities.ui.host_events,
+        );
+        drop(effective);
+        self.audit_result("ui.host_events", event, &result);
+        result
+    }
+
     /// Record a denial caused by the plugin's own UI manifest, before the
     /// capability set is consulted. This keeps declaration-boundary failures in
     /// the same host-owned security audit stream as grant failures.
@@ -594,6 +609,7 @@ impl EffectiveCapabilities {
             || ui.theme
             || !ui.adjusts.is_empty()
             || !ui.backend_commands.is_empty()
+            || !ui.host_events.is_empty()
     }
 
     pub fn allows_http(&self, url: &str, method: &str) -> Result<(), String> {
@@ -742,6 +758,7 @@ fn intersect_set(requested: &CapabilitySet, granted: &CapabilitySet) -> Capabili
                 &requested.ui.backend_commands,
                 &granted.ui.backend_commands,
             ),
+            host_events: intersect_list(&requested.ui.host_events, &granted.ui.host_events),
         },
     }
 }
