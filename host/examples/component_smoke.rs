@@ -3,9 +3,11 @@ use std::path::Path;
 use wasm_plugin_host::{Registry, Runtime};
 
 fn main() -> Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .context("usage: cargo run -p wasm-plugin-host --example component_smoke -- <component.wasm>")?;
+    let mut args = std::env::args().skip(1);
+    let path = args.next().context(
+        "usage: cargo run -p wasm-plugin-host --example component_smoke -- <component.wasm> [tool-name]",
+    )?;
+    let tool = args.next().unwrap_or_else(|| "component_echo".to_string());
 
     let runtime = Runtime::new()?;
     let mut registry = Registry::new(runtime);
@@ -21,7 +23,7 @@ fn main() -> Result<()> {
     );
 
     let result = registry.call_tool(
-        "component_echo",
+        &tool,
         &serde_json::json!({"hello":"component","n":42}),
     )?;
     println!("{}", serde_json::to_string_pretty(&result)?);
