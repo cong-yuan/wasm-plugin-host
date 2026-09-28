@@ -71,7 +71,7 @@ pub struct UiCapabilities {
 /// Typed frontend-host operation. The authenticated plugin identity is supplied
 /// separately by the embedding host and must never come from the payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum UiHostAction {
     BackendCommand { command: String },
     Theme,
@@ -815,6 +815,29 @@ fn intersect_hosts(requested: &[String], granted: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ui_host_action_json_is_typed_and_rejects_self_reported_identity() {
+        let action: UiHostAction = serde_json::from_value(serde_json::json!({
+            "kind": "backend_command",
+            "command": "list_sessions"
+        }))
+        .unwrap();
+        assert_eq!(
+            action,
+            UiHostAction::BackendCommand {
+                command: "list_sessions".into()
+            }
+        );
+
+        let err = serde_json::from_value::<UiHostAction>(serde_json::json!({
+            "kind": "backend_command",
+            "command": "list_sessions",
+            "plugin_id": "victim"
+        }))
+        .expect_err("plugin identity is host context, never part of the action payload");
+        assert!(err.to_string().contains("unknown field"), "got: {err}");
+    }
 
     #[test]
     fn sandbox_default_fuel_supports_large_ui_describe_payloads() {

@@ -344,6 +344,10 @@ Likewise `provide_slot` / `render_slot` must name one of the plugin's declared
 The capability grant may narrow those declarations but may not expand them.
 The browser-side `source` string or `postMessage` payload must never be treated
 as the authenticated plugin identity.
+`UiHostAction` uses a strict JSON schema (`deny_unknown_fields`): adding
+`plugin_id`, `slot_id`, or any other undeclared field causes decoding to fail
+rather than being silently ignored. Identity is intentionally impossible to
+smuggle through the action object.
 
 An embedding host may use `Registry::slot_effective_capabilities(slot)` while
 constructing the `studio` object. The returned snapshot represents the actual
