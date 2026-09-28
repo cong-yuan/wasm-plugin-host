@@ -506,6 +506,18 @@ impl Registry {
         self.meta.get(slot).map(|m| &m.policy)
     }
 
+    /// The actual capability snapshot enforced for a loaded plugin instance.
+    /// For sandboxed plugins this is request intersect grant; trusted compatibility
+    /// mode is explicitly marked unrestricted on the returned value.
+    pub fn slot_effective_capabilities(
+        &self,
+        slot: &str,
+    ) -> Result<crate::capability::EffectiveCapabilities> {
+        self.shared
+            .with_plugin(slot, |plugin| Ok(plugin.effective_capabilities()))
+            .map_err(|e| anyhow::anyhow!("plugin slot `{}`: {}", slot, e))
+    }
+
     /// Authorization seam for the external Studio/Tauri frontend host.
     ///
     /// The caller supplies the authenticated plugin slot; command names coming

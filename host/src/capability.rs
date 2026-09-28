@@ -231,11 +231,17 @@ impl PluginPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EffectiveCapabilities {
     pub trust: TrustMode,
     pub capabilities: CapabilitySet,
     unrestricted: bool,
+}
+
+impl EffectiveCapabilities {
+    pub fn is_unrestricted(&self) -> bool {
+        self.unrestricted
+    }
 }
 
 /// Single enforcement point carried by each plugin instance.

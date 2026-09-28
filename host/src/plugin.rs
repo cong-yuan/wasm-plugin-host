@@ -375,6 +375,10 @@ const INITIAL_BUF: usize = 64 * 1024;
 const MAX_BUF: usize = 16 * 1024 * 1024;
 
 impl Plugin {
+    pub fn effective_capabilities(&self) -> crate::capability::EffectiveCapabilities {
+        self.store.data().capability_gate.snapshot()
+    }
+
     pub fn authorize_ui_backend_command(&self, command: &str) -> Result<()> {
         self.store
             .data()

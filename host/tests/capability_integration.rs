@@ -315,13 +315,22 @@ fn registry_frontend_authorization_uses_slot_effective_capabilities_and_audits()
                 theme: true,
                 slots: vec!["frontend.panel".into(), "dashboard.cards".into()],
                 windows: true,
-                backend_commands: vec!["list_sessions".into()],
+                backend_commands: vec!["list_sessions".into(), "run_shell".into()],
                 ..Default::default()
             },
             ..Default::default()
         },
     )
     .unwrap();
+
+    let effective = reg.slot_effective_capabilities("cap").unwrap();
+    assert_eq!(effective.trust, TrustMode::Sandboxed);
+    assert!(!effective.is_unrestricted());
+    assert_eq!(
+        effective.capabilities.ui.backend_commands,
+        vec!["list_sessions"],
+        "a host grant that the plugin did not request must not leak into effective capabilities"
+    );
 
     reg.authorize_ui_action(
         "cap",

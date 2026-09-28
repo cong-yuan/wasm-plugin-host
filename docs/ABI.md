@@ -345,6 +345,12 @@ The capability grant may narrow those declarations but may not expand them.
 The browser-side `source` string or `postMessage` payload must never be treated
 as the authenticated plugin identity.
 
+An embedding host may use `Registry::slot_effective_capabilities(slot)` while
+constructing the `studio` object. The returned snapshot represents the actual
+request/grant intersection; do not derive the browser API from `slot_policy()`
+alone. Trusted compatibility plugins are explicitly marked `unrestricted` in
+that snapshot.
+
 `studio.renderSlot(slot, el)` is the missing half of opening a slot: a plugin
 that **provides** a slot must also render its children somewhere, or nothing it
 hosts will ever appear.
