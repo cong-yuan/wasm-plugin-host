@@ -241,6 +241,9 @@ pub(crate) struct ComponentInstance {
 
 #[allow(dead_code)]
 impl ComponentInstance {
+    fn prepare_guest_call(&mut self) -> Result<()> {
+        crate::runtime::prepare_store_budget(&mut self.store)
+    }
     pub(crate) fn instantiate(
         engine: &Engine,
         component: &wasmtime::component::Component,
@@ -255,12 +258,14 @@ impl ComponentInstance {
     }
 
     pub(crate) fn abi_version(&mut self) -> Result<u32> {
+        self.prepare_guest_call()?;
         Ok(self.bindings
             .wasm_plugin_host_plugin_lifecycle()
             .call_abi_version(&mut self.store)?)
     }
 
     pub(crate) fn init(&mut self) -> Result<()> {
+        self.prepare_guest_call()?;
         self.bindings
             .wasm_plugin_host_plugin_lifecycle()
             .call_init(&mut self.store)?
@@ -268,6 +273,7 @@ impl ComponentInstance {
     }
 
     pub(crate) fn configure(&mut self, config_json: &str) -> Result<()> {
+        self.prepare_guest_call()?;
         let config_json = config_json.to_string();
         self.bindings
             .wasm_plugin_host_plugin_lifecycle()
@@ -278,6 +284,7 @@ impl ComponentInstance {
     pub(crate) fn describe(
         &mut self,
     ) -> Result<wasm_plugin_host::plugin::types::PluginDecl> {
+        self.prepare_guest_call()?;
         Ok(self.bindings
             .wasm_plugin_host_plugin_lifecycle()
             .call_describe(&mut self.store)?)
@@ -292,6 +299,7 @@ impl ComponentInstance {
         op: &str,
         args_json: &str,
     ) -> Result<wasm_plugin_host::plugin::types::InvokeResult> {
+        self.prepare_guest_call()?;
         let args_json = args_json.to_string();
         Ok(self.bindings
             .wasm_plugin_host_plugin_lifecycle()
@@ -337,6 +345,7 @@ impl ComponentInstance {
     }
 
     pub(crate) fn shutdown(&mut self) -> Result<()> {
+        self.prepare_guest_call()?;
         Ok(self.bindings
             .wasm_plugin_host_plugin_lifecycle()
             .call_shutdown(&mut self.store)?)

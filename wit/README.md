@@ -97,7 +97,7 @@ Component and reports that lifecycle execution is not wired yet.
 - filesystem reuses the same grant roots, cap-std handles and mutation implementation;
 - services reuse `services.consume` authorization and the existing service graph.
 
-The generated lifecycle exports are also wrapped as typed calls for `abi-version`, `init`, `configure`, `describe`, `invoke` and `shutdown`. The remaining step is structural: route a loaded Component through this `ComponentInstance` from `Plugin` without changing Registry/Supervisor APIs.
+The generated lifecycle exports are wrapped as typed calls for `abi-version`, `init`, `configure`, `describe`, `invoke` and `shutdown`. `Plugin` now has a `Core | Component` backend split and routes Component artifacts through this instance without changing Registry/Supervisor APIs. Component declarations/results are converted back into the existing internal `PluginDecl` / `InvokeResult` model, so hooks, services and UI remain transport-agnostic. The remaining validation gap is a real successful guest fixture (for example a JS component produced by `jco`) that exercises load → invoke → unload end to end.
 
 ## Next implementation step
 

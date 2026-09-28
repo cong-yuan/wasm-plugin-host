@@ -70,17 +70,19 @@ fn core_module_is_not_accepted_by_component_compiler() {
 }
 
 #[test]
-fn registry_reports_component_backend_status_explicitly() {
+fn registry_routes_component_artifacts_into_the_component_backend() {
     let dir = tmpdir("registry-component");
     let component = dir.join("component.wasm");
     std::fs::write(&component, wat::parse_str("(component)").unwrap()).unwrap();
 
     let mut registry = Registry::new(Runtime::new().unwrap());
     let err = match registry.load("component", &component, serde_json::Value::Null) {
-        Ok(_) => panic!("Component lifecycle execution should not be silently accepted yet"),
+        Ok(_) => panic!("an empty Component must fail because it exports no lifecycle interface"),
         Err(err) => err,
     };
     let message = err.to_string();
-    assert!(message.contains("WebAssembly Component"), "got: {message}");
-    assert!(message.contains("Phase E WIT contract"), "got: {message}");
+    assert!(
+        message.contains("wasm-plugin-host:plugin/lifecycle@0.1.0"),
+        "Component should reach the generated lifecycle backend; got: {message}"
+    );
 }

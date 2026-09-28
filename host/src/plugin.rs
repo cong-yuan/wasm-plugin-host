@@ -779,14 +779,7 @@ impl Plugin {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "plugin".to_string());
 
-        let module = match runtime.compile_artifact(engine, path)? {
-            crate::runtime::CompiledArtifact::CoreModule(module) => module,
-            crate::runtime::CompiledArtifact::Component(_) => {
-                bail!(
-                    "plugin `{name}` is a WebAssembly Component; the Phase E WIT contract is available but Component lifecycle execution is not wired yet"
-                )
-            }
-        };
+        let artifact = runtime.compile_artifact(engine, path)?;
         let mut state = HostState::new_with_policy_and_audit(
             slot,
             &name,
@@ -801,8 +794,9 @@ impl Plugin {
                 .policy
                 .grant
                 .filesystem
-                .write
+                .read
                 .iter()
+                .chain(state.policy.grant.filesystem.write.iter())
                 .chain(state.policy.grant.filesystem.create.iter())
                 .chain(state.policy.grant.filesystem.delete.iter())
             {
@@ -824,8 +818,6 @@ impl Plugin {
                 }
             }
         }
-        // The fetch bound is a runtime-level policy; carry it into the instance
-        // so `host.http_fetch` can read it without reaching back to `Runtime`.
         state.http_timeout = if state.policy.trust == crate::capability::TrustMode::Sandboxed {
             runtime.http_timeout().min(std::time::Duration::from_millis(
                 state.policy.limits.call_timeout_ms,
@@ -835,19 +827,54 @@ impl Plugin {
         };
         let config_handle = state.config.clone();
         let version_handle = state.config_version.clone();
+
+        match artifact {
+            crate::runtime::CompiledArtifact::CoreModule(module) => Self::load_core_artifact(
+                engine,
+                runtime,
+                module,
+                path,
+                name,
+                log,
+                state,
+                config_handle,
+                version_handle,
+            ),
+            crate::runtime::CompiledArtifact::Component(component) => Self::load_component_artifact(
+                engine,
+                component,
+                path,
+                name,
+                log,
+                state,
+                config_handle,
+                version_handle,
+            ),
+        }
+    }
+
+    fn load_core_artifact(
+        engine: &Engine,
+        runtime: &crate::runtime::Runtime,
+        module: wasmtime::Module,
+        path: &Path,
+        name: String,
+        log: std::sync::Arc<crate::state::LogSink>,
+        state: HostState,
+        config_handle: std::sync::Arc<std::sync::Mutex<serde_json::Value>>,
+        version_handle: std::sync::Arc<std::sync::atomic::AtomicI64>,
+    ) -> Result<Plugin> {
         let mut store = Store::new(engine, state);
         let instance = runtime.instantiate(&mut store, &module)?;
-
         let memory = instance
             .get_memory(&mut store, "memory")
             .ok_or_else(|| anyhow!("plugin `{name}` does not export `memory`"))?;
 
-        // ABI version gate.
         let abi: TypedFunc<(), i32> = get(instance, &mut store, &name, "plugin_abi_version")?;
         prepare_guest_call(&mut store)?;
-        let v = abi.call(&mut store, ())?;
-        if v != 1 {
-            bail!("plugin `{name}` speaks ABI v{v}, host expects v1");
+        let version = abi.call(&mut store, ())?;
+        if version != 1 {
+            bail!("plugin `{name}` speaks ABI v{version}, host expects v1");
         }
 
         let f_alloc: TypedFunc<i32, i32> = get(instance, &mut store, &name, "plugin_alloc")?;
@@ -858,7 +885,6 @@ impl Plugin {
             get(instance, &mut store, &name, "plugin_invoke")?;
         let f_shutdown: Option<TypedFunc<(), ()>> =
             instance.get_typed_func(&mut store, "plugin_shutdown").ok();
-        // Config hooks are optional — older plugins simply don't export them.
         let f_configure: Option<TypedFunc<(i32, i32), i32>> =
             instance.get_typed_func(&mut store, "plugin_configure").ok();
         let f_on_config: Option<TypedFunc<(), i32>> =
@@ -867,17 +893,8 @@ impl Plugin {
         let mut plugin = Plugin {
             name: name.clone(),
             path: path.display().to_string(),
-            state: PluginState::Pending,
-            decl: PluginDecl {
-                name: name.clone(),
-                abi: 1,
-                tools: vec![],
-                hooks: vec![],
-                injects: vec![],
-                provides: vec![],
-                ui: None,
-                capabilities: Default::default(),
-            },
+            state: PluginState::Init,
+            decl: empty_decl(&name),
             logs: log,
             backend: PluginBackend::Core(CoreBackend {
                 store,
@@ -895,14 +912,11 @@ impl Plugin {
             config_version: version_handle,
         };
 
-        // Init.
-        plugin.state = PluginState::Init;
-        let plugin_name = plugin.name.clone();
         let rc = {
             let core = plugin.core_mut()?;
             core.prepare_guest_call()?;
             let init: TypedFunc<(), i32> =
-                get(core.instance, &mut core.store, &plugin_name, "plugin_init")?;
+                get(core.instance, &mut core.store, &name, "plugin_init")?;
             init.call(&mut core.store, ())?
         };
         if rc != 0 {
@@ -910,34 +924,71 @@ impl Plugin {
             bail!("plugin `{name}` init failed with code {rc}");
         }
 
-        // Configure (optional): hand the config over once so the plugin can read
-        // it now via `host.get_config` and cache whatever it needs.
         if plugin.core()?.f_configure.is_some() {
-            let plugin_name = plugin.name.clone();
-            let rc = plugin.core_mut()?.call_configure(&plugin_name)?;
+            let rc = plugin.core_mut()?.call_configure(&name)?;
             if rc != 0 {
                 plugin.state = PluginState::Failed;
                 bail!("plugin `{name}` plugin_configure failed with code {rc}");
             }
         }
 
-        // Describe.
-        let plugin_name = plugin.name.clone();
-        let json = plugin.core_mut()?.call_describe(&plugin_name)?;
+        let json = plugin.core_mut()?.call_describe(&name)?;
         let decl: PluginDecl = serde_json::from_str(&json).map_err(|e| {
             anyhow!("plugin `{name}` returned invalid declaration JSON ({e}): {json}")
         })?;
-        if decl.abi != 1 {
-            plugin.state = PluginState::Failed;
-            bail!("plugin `{name}` declares abi {}, expected 1", decl.abi);
+        plugin.finish_load(decl)
+    }
+
+    fn load_component_artifact(
+        engine: &Engine,
+        component: wasmtime::component::Component,
+        path: &Path,
+        name: String,
+        log: std::sync::Arc<crate::state::LogSink>,
+        state: HostState,
+        config_handle: std::sync::Arc<std::sync::Mutex<serde_json::Value>>,
+        version_handle: std::sync::Arc<std::sync::atomic::AtomicI64>,
+    ) -> Result<Plugin> {
+        let mut component =
+            crate::component_backend::ComponentInstance::instantiate(engine, &component, state)?;
+        let version = component.abi_version()?;
+        if version != 1 {
+            bail!("plugin `{name}` speaks Component ABI v{version}, host expects v1");
         }
-        plugin
-            .host_state()
+
+        component.init()?;
+        let config_json = serde_json::to_string(&*config_handle.lock().unwrap())?;
+        component.configure(&config_json)?;
+        let decl = component.describe_internal()?;
+
+        let plugin = Plugin {
+            name: name.clone(),
+            path: path.display().to_string(),
+            state: PluginState::Init,
+            decl: empty_decl(&name),
+            logs: log,
+            backend: PluginBackend::Component(component),
+            config: config_handle,
+            config_version: version_handle,
+        };
+        plugin.finish_load(decl)
+    }
+
+    fn finish_load(mut self, decl: PluginDecl) -> Result<Plugin> {
+        if decl.abi != 1 {
+            self.state = PluginState::Failed;
+            bail!(
+                "plugin `{}` declares abi {}, expected 1",
+                self.name,
+                decl.abi
+            );
+        }
+        self.host_state()
             .resolve_declared_capabilities(&decl.capabilities);
-        plugin.decl = decl;
-        plugin.validate_declared_capabilities()?;
-        plugin.state = PluginState::Active;
-        Ok(plugin)
+        self.decl = decl;
+        self.validate_declared_capabilities()?;
+        self.state = PluginState::Active;
+        Ok(self)
     }
 
     /// Current config value (JSON `null` if unset).
@@ -1132,6 +1183,19 @@ impl Drop for Plugin {
     fn drop(&mut self) {
         // Instance and Store drop here — WASM memory + code released.
         self.state = PluginState::Disposed;
+    }
+}
+
+fn empty_decl(name: &str) -> PluginDecl {
+    PluginDecl {
+        name: name.to_string(),
+        abi: 1,
+        tools: vec![],
+        hooks: vec![],
+        injects: vec![],
+        provides: vec![],
+        ui: None,
+        capabilities: Default::default(),
     }
 }
 
