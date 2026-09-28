@@ -552,9 +552,23 @@ impl EffectiveCapabilities {
             .ok_or_else(|| "permission denied: URL has no host".to_string())?
             .to_ascii_lowercase();
         let net = &self.capabilities.network;
-        if !net.allow.iter().any(|p| host_matches(p, &host)) {
+        let sensitive = sensitive_network_target(&host);
+        let allowed = if sensitive {
+            // Wildcards are too broad for loopback, private/link-local, IP
+            // literals, and well-known metadata hosts. These targets require an
+            // exact grant so `*` cannot silently turn into SSRF authority.
+            net.allow.iter().any(|p| p.trim().eq_ignore_ascii_case(&host))
+        } else {
+            net.allow.iter().any(|p| host_matches(p, &host))
+        };
+        if !allowed {
+            let suffix = if sensitive {
+                " (sensitive targets require an exact host grant)"
+            } else {
+                ""
+            };
             return Err(format!(
-                "permission denied: network host {host} is not granted"
+                "permission denied: network host {host} is not granted{suffix}"
             ));
         }
         if !net.methods.is_empty() && !net.methods.iter().any(|m| m.eq_ignore_ascii_case(method)) {
@@ -575,6 +589,27 @@ fn host_matches(pattern: &str, host: &str) -> bool {
         return host != suffix && host.ends_with(&format!(".{suffix}"));
     }
     host == pattern
+}
+
+fn sensitive_network_target(host: &str) -> bool {
+    let host = host.trim().trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
+    if host == "localhost"
+        || host.ends_with(".localhost")
+        || matches!(
+            host.as_str(),
+            "metadata.google.internal"
+                | "metadata.google"
+                | "instance-data.ec2.internal"
+                | "metadata.azure.internal"
+        )
+    {
+        return true;
+    }
+
+    // Every IP literal is treated as sensitive. This includes loopback,
+    // RFC1918/ULA, link-local and cloud metadata addresses, while also making
+    // public IP grants deliberate instead of letting `*` authorize them.
+    host.parse::<std::net::IpAddr>().is_ok()
 }
 
 fn intersect_set(requested: &CapabilitySet, granted: &CapabilitySet) -> CapabilitySet {
@@ -732,6 +767,7 @@ mod tests {
 
     #[test]
     fn wildcard_host_grant_covers_an_exact_requested_host() {
+        // ordinary DNS names may still be covered by a wildcard grant
         let policy = PluginPolicy {
             trust: TrustMode::Sandboxed,
             grant: CapabilitySet {
@@ -757,6 +793,70 @@ mod tests {
         assert!(effective
             .allows_http("https://api.example.com/x", "GET")
             .is_err());
+    }
+
+    #[test]
+    fn wildcard_network_grant_does_not_authorize_sensitive_targets() {
+        let policy = PluginPolicy {
+            trust: TrustMode::Sandboxed,
+            grant: CapabilitySet {
+                network: NetworkCapabilities {
+                    allow: vec!["*".into()],
+                    methods: vec!["GET".into()],
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let requested = CapabilitySet {
+            network: NetworkCapabilities {
+                allow: vec!["*".into()],
+                methods: vec!["GET".into()],
+            },
+            ..Default::default()
+        };
+        let effective = EffectiveCapabilities::resolve(&policy, &requested);
+
+        assert!(effective
+            .allows_http("https://example.com/", "GET")
+            .is_ok());
+        for url in [
+            "http://127.0.0.1/",
+            "http://10.0.0.1/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[::1]/",
+            "http://localhost/",
+            "http://metadata.google.internal/",
+        ] {
+            let err = effective
+                .allows_http(url, "GET")
+                .expect_err("wildcards must not authorize sensitive network targets");
+            assert!(err.contains("exact host grant"), "url={url}, err={err}");
+        }
+    }
+
+    #[test]
+    fn sensitive_network_target_can_be_enabled_by_an_exact_grant() {
+        let policy = PluginPolicy {
+            trust: TrustMode::Sandboxed,
+            grant: CapabilitySet {
+                network: NetworkCapabilities {
+                    allow: vec!["127.0.0.1".into(), "metadata.google.internal".into()],
+                    methods: vec!["GET".into()],
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let requested = policy.grant.clone();
+        let effective = EffectiveCapabilities::resolve(&policy, &requested);
+
+        assert!(effective
+            .allows_http("http://127.0.0.1:8080/", "GET")
+            .is_ok());
+        assert!(effective
+            .allows_http("http://metadata.google.internal/", "GET")
+            .is_ok());
     }
 
     #[test]

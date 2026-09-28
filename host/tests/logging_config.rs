@@ -1294,6 +1294,56 @@ fn sandboxed_http_fetch_denies_a_host_that_was_not_granted() {
 }
 
 #[test]
+fn wildcard_network_capability_does_not_authorize_loopback_ip_literal() {
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let dir = tmpdir("http-sandbox-wildcard-loopback");
+    let wasm = dir.join("p.wasm");
+    write(
+        &wasm,
+        &wasm_http_tool_probe(&format!("http://127.0.0.1:{port}/"), "*"),
+    );
+
+    let mut reg = Registry::new(Runtime::new().unwrap());
+    reg.load_with_policy(
+        "fetcher",
+        &wasm,
+        serde_json::Value::Null,
+        PluginPolicy {
+            trust: TrustMode::Sandboxed,
+            grant: CapabilitySet {
+                network: NetworkCapabilities {
+                    allow: vec!["*".into()],
+                    methods: vec!["GET".into()],
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    reg.call_tool("sandbox_fetch", &serde_json::json!({}))
+        .unwrap();
+
+    let reply = reg
+        .logs()
+        .into_iter()
+        .map(|r| r.message)
+        .find(|m| m.contains("sensitive targets require an exact host grant"))
+        .expect("loopback IP literal should be denied before any socket is opened");
+    assert!(reply.contains("127.0.0.1"), "reply: {reply}");
+
+    let err = listener
+        .accept()
+        .expect_err("denied request must not reach the loopback listener");
+    assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
+}
+
+#[test]
 fn sandboxed_http_fetch_allows_request_intersect_grant() {
     use std::io::{Read, Write};
     use std::net::TcpListener;
