@@ -410,6 +410,74 @@ check('transcript becomes history content',
   api.cancel = originalCancel;
 }
 
+// After iframe/plugin recovery the bridge has no active-turn token. Stop must
+// still reach Studio because the backend turn may have survived the reload.
+{
+  const originalCancel = api.cancel;
+  const cancelled = [];
+  api.cancel = async (id) => { cancelled.push(id); };
+  const recoveredEvents = [];
+  await adapter.ws({
+    type: 'abort',
+    sessionId: 'agent-recovered',
+    sessionPath: 'studio://agent-recovered',
+    streamId: 'stream-lost-with-old-bridge',
+  }, (event) => recoveredEvents.push(event));
+  check('recovered Stop still calls cancel_agent',
+    cancelled.length === 1 && cancelled[0] === 'agent-recovered');
+  check('recovered Stop is not rejected as stale',
+    !recoveredEvents.some((event) => event.type === 'abort_result' && event.status === 'rejected')
+    && recoveredEvents.some((event) => event.type === 'turn_end' && event.aborted === true));
+  api.cancel = originalCancel;
+}
+
+// Deleting a running session seals its callback before dispose_agent awaits.
+{
+  const originalSessions = api.sessions;
+  const originalSendWithProgress = api.sendWithProgress;
+  const originalDispose = api.dispose;
+  let progress = null;
+  let finishSend = null;
+  const disposed = [];
+  api.sessions = async () => [
+    { id: 'agent-delete-race', busy: false, live: true, status: 'idle' },
+  ];
+  api.sendWithProgress = async (_id, _text, _msgId, onProgress) => {
+    progress = onProgress;
+    await new Promise((resolve) => { finishSend = resolve; });
+    return true;
+  };
+  api.dispose = async (id) => { disposed.push(id); };
+
+  const events = [];
+  const sending = adapter.ws({
+    type: 'prompt',
+    text: 'run forever',
+    sessionId: 'agent-delete-race',
+    sessionPath: 'studio://agent-delete-race',
+    clientMessageId: 'delete-race-message',
+  }, (event) => events.push(event));
+  while (!progress) await new Promise((resolve) => setTimeout(resolve, 0));
+  const archived = await adapter.http('POST', '/api/sessions/archive', {
+    sessionId: 'agent-delete-race',
+  });
+  const countAfterDelete = events.length;
+  progress({ kind: 'text_delta', delta: 'late deleted output' });
+  progress({ kind: 'tool_end', id: 'late-deleted-tool', name: 'bash', success: true });
+  finishSend();
+  await sending;
+
+  check('running archive disposes selected agent',
+    archived?.ok === true && disposed.length === 1 && disposed[0] === 'agent-delete-race');
+  check('running archive drops late progress and terminal events',
+    events.length === countAfterDelete
+    && !events.some((event) => event.delta === 'late deleted output' || event.id === 'late-deleted-tool'));
+
+  api.sessions = originalSessions;
+  api.sendWithProgress = originalSendWithProgress;
+  api.dispose = originalDispose;
+}
+
 // steer must pass msgId
 {
   calls.length = 0;

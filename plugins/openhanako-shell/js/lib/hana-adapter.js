@@ -972,6 +972,9 @@ return (function () {
   /** Archive/delete must dispose the driver AND purge the JSONL (Studio side). */
   const disposeSession = async (sessionId) => {
     if (!sessionId) return { ok: false, error: 'missing session' };
+    // Seal callbacks before disposal. `send_message` may still be awaiting the
+    // driver, but no late progress may repopulate a deleted session in Hana.
+    deactivateTurn(activeTurns.get(sessionId));
     try {
       await api.dispose(sessionId);
       disposedIds.add(sessionId);
@@ -1354,7 +1357,10 @@ return (function () {
         ? msg.streamId.trim()
         : null;
       const active = activeTurns.get(sessionId) || null;
-      if (requestedStreamId && (!active || active.streamId !== requestedStreamId)) {
+      // Reject only a token belonging to a different turn still known here.
+      // After iframe/plugin recovery the map is empty, but backend agent may
+      // still be running; Stop must remain a best-effort server cancellation.
+      if (requestedStreamId && active && active.streamId !== requestedStreamId) {
         push({
           type: 'abort_result',
           status: 'rejected',
