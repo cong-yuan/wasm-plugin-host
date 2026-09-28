@@ -578,6 +578,25 @@ impl EffectiveCapabilities {
         }
         Ok(())
     }
+
+    pub fn allows_resolved_ip(&self, ip: std::net::IpAddr) -> Result<(), String> {
+        if self.unrestricted || !sensitive_resolved_ip(ip) {
+            return Ok(());
+        }
+        let needle = ip.to_string();
+        if self
+            .capabilities
+            .network
+            .allow
+            .iter()
+            .any(|host| host.trim().eq_ignore_ascii_case(&needle))
+        {
+            return Ok(());
+        }
+        Err(format!(
+            "permission denied: resolved sensitive IP {needle} requires an exact IP grant"
+        ))
+    }
 }
 
 fn host_matches(pattern: &str, host: &str) -> bool {
@@ -610,6 +629,30 @@ fn sensitive_network_target(host: &str) -> bool {
     // RFC1918/ULA, link-local and cloud metadata addresses, while also making
     // public IP grants deliberate instead of letting `*` authorize them.
     host.parse::<std::net::IpAddr>().is_ok()
+}
+
+fn sensitive_resolved_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let first = v4.octets()[0];
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_multicast()
+                || first == 0
+        }
+        std::net::IpAddr::V6(v6) => {
+            let first = v6.segments()[0];
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80
+        }
+    }
 }
 
 fn intersect_set(requested: &CapabilitySet, granted: &CapabilitySet) -> CapabilitySet {
@@ -856,6 +899,49 @@ mod tests {
             .is_ok());
         assert!(effective
             .allows_http("http://metadata.google.internal/", "GET")
+            .is_ok());
+    }
+
+    #[test]
+    fn resolved_private_ip_needs_an_exact_ip_grant() {
+        let policy = PluginPolicy {
+            trust: TrustMode::Sandboxed,
+            grant: CapabilitySet {
+                network: NetworkCapabilities {
+                    allow: vec!["internal.example.com".into()],
+                    methods: vec!["GET".into()],
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let requested = policy.grant.clone();
+        let effective = EffectiveCapabilities::resolve(&policy, &requested);
+        assert!(effective
+            .allows_resolved_ip("10.0.0.8".parse().unwrap())
+            .is_err());
+        assert!(effective
+            .allows_resolved_ip("93.184.216.34".parse().unwrap())
+            .is_ok());
+    }
+
+    #[test]
+    fn resolved_private_ip_can_be_explicitly_granted() {
+        let policy = PluginPolicy {
+            trust: TrustMode::Sandboxed,
+            grant: CapabilitySet {
+                network: NetworkCapabilities {
+                    allow: vec!["internal.example.com".into(), "10.0.0.8".into()],
+                    methods: vec!["GET".into()],
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let requested = policy.grant.clone();
+        let effective = EffectiveCapabilities::resolve(&policy, &requested);
+        assert!(effective
+            .allows_resolved_ip("10.0.0.8".parse().unwrap())
             .is_ok());
     }
 

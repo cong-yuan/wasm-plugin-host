@@ -892,7 +892,12 @@ fn host_http_fetch(
             } else {
                 10
             };
-            http_fetch_json(&req_json, state.http_timeout, max_redirects)
+            http_fetch_json(
+                &req_json,
+                state.http_timeout,
+                max_redirects,
+                Some(state.capability_gate.snapshot()),
+            )
         }
     };
     let bytes = serde_json::to_vec(&reply)
@@ -918,7 +923,12 @@ fn host_http_fetch(
 /// `match`. The `http::Request` form is method-agnostic.
 ///
 /// The request is bounded by `timeout` on purpose; see [`HTTP_TIMEOUT`].
-fn http_fetch_json(req_json: &str, timeout: Duration, max_redirects: u32) -> serde_json::Value {
+fn http_fetch_json(
+    req_json: &str,
+    timeout: Duration,
+    max_redirects: u32,
+    effective: Option<crate::capability::EffectiveCapabilities>,
+) -> serde_json::Value {
     use serde_json::json;
     use ureq::http;
 
@@ -947,18 +957,24 @@ fn http_fetch_json(req_json: &str, timeout: Duration, max_redirects: u32) -> ser
 
     // Both arms must produce the *same* type. Sending a `String` body works for
     // every method (an empty string for GET/HEAD), so there is one path.
-    use ureq::RequestExt as _;
+    let config = ureq::Agent::config_builder()
+        // Sandboxed callers use zero automatic redirects: every next-hop URL
+        // must return through host.http_fetch and CapabilityGate. Trusted
+        // compatibility mode keeps ureq's historical/default redirect count.
+        .max_redirects(max_redirects)
+        .timeout_global(Some(timeout))
+        .build();
+    let agent = if let Some(effective) = effective {
+        ureq::Agent::with_parts(
+            config,
+            ureq::unversioned::transport::DefaultConnector::default(),
+            CapabilityResolver { effective },
+        )
+    } else {
+        ureq::Agent::new_with_config(config)
+    };
     let run = match builder.body(body.unwrap_or_default()) {
-        Ok(r) => r
-            .with_default_agent()
-            .configure()
-            // Sandboxed callers use zero automatic redirects: every next-hop URL
-            // must return through host.http_fetch and CapabilityGate. Trusted
-            // compatibility mode keeps ureq's historical/default redirect count.
-            .max_redirects(max_redirects)
-            .timeout_global(Some(timeout))
-            .build()
-            .run(),
+        Ok(r) => agent.run(r),
         Err(e) => return json!({ "error": format!("building request: {e}") }),
     };
 
@@ -988,6 +1004,35 @@ fn http_fetch_json(req_json: &str, timeout: Duration, max_redirects: u32) -> ser
             json!({ "status": status, "headers": headers, "body": text })
         }
         Err(e) => json!({ "error": e.to_string() }),
+    }
+}
+
+#[derive(Debug)]
+struct CapabilityResolver {
+    effective: crate::capability::EffectiveCapabilities,
+}
+
+impl ureq::unversioned::resolver::Resolver for CapabilityResolver {
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        config: &ureq::config::Config,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        use ureq::unversioned::resolver::DefaultResolver;
+
+        let resolved = DefaultResolver::default().resolve(uri, config, timeout)?;
+        let mut filtered = self.empty();
+        for addr in resolved.iter() {
+            if self.effective.allows_resolved_ip(addr.ip()).is_ok() {
+                filtered.push(*addr);
+            }
+        }
+        if filtered.is_empty() {
+            Err(ureq::Error::HostNotFound)
+        } else {
+            Ok(filtered)
+        }
     }
 }
 

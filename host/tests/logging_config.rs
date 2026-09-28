@@ -1109,12 +1109,16 @@ fn wasm_http_probe(url: &str) -> Vec<u8> {
 }
 
 fn wasm_http_tool_probe(url: &str, requested_host: &str) -> Vec<u8> {
+    wasm_http_tool_probe_hosts(url, &[requested_host])
+}
+
+fn wasm_http_tool_probe_hosts(url: &str, requested_hosts: &[&str]) -> Vec<u8> {
     let req = serde_json::json!({ "url": url }).to_string();
     let decl = serde_json::json!({
         "name": "sandbox-fetcher",
         "abi": 1,
         "tools": [{ "name": "sandbox_fetch", "description": "t", "exec": "go" }],
-        "capabilities": { "network": { "allow": [requested_host] } }
+        "capabilities": { "network": { "allow": requested_hosts } }
     })
     .to_string();
     let result = r#"{"kind":"success","content":"done","value":{}}"#;
@@ -1341,6 +1345,117 @@ fn wildcard_network_capability_does_not_authorize_loopback_ip_literal() {
         .accept()
         .expect_err("denied request must not reach the loopback listener");
     assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
+}
+
+#[test]
+fn dns_name_resolving_to_loopback_needs_the_resolved_ip_grant() {
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let dir = tmpdir("http-sandbox-dns-private-deny");
+    let wasm = dir.join("p.wasm");
+    write(
+        &wasm,
+        &wasm_http_tool_probe(&format!("http://localhost:{port}/"), "localhost"),
+    );
+
+    let mut reg = Registry::new(Runtime::new().unwrap());
+    reg.load_with_policy(
+        "fetcher",
+        &wasm,
+        serde_json::Value::Null,
+        PluginPolicy {
+            trust: TrustMode::Sandboxed,
+            grant: CapabilitySet {
+                network: NetworkCapabilities {
+                    allow: vec!["localhost".into()],
+                    methods: vec!["GET".into()],
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    reg.call_tool("sandbox_fetch", &serde_json::json!({}))
+        .unwrap();
+
+    let reply = reg
+        .logs()
+        .into_iter()
+        .map(|r| r.message)
+        .find(|m| m.contains("host not found"))
+        .expect("resolver should remove loopback addresses without an exact IP grant");
+    assert!(reply.contains("error"), "reply: {reply}");
+    let err = listener
+        .accept()
+        .expect_err("filtered DNS result must not reach the loopback listener");
+    assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
+}
+
+#[test]
+fn dns_name_resolving_to_loopback_can_be_enabled_with_exact_ip_grant() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        if let Ok((mut sock, _)) = listener.accept() {
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf);
+            let body = "DNS_PRIVATE_OK";
+            let _ = sock.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .as_bytes(),
+            );
+        }
+    });
+
+    let dir = tmpdir("http-sandbox-dns-private-allow");
+    let wasm = dir.join("p.wasm");
+    write(
+        &wasm,
+        &wasm_http_tool_probe_hosts(
+            &format!("http://localhost:{port}/"),
+            &["localhost", "127.0.0.1"],
+        ),
+    );
+
+    let mut reg = Registry::new(Runtime::new().unwrap());
+    reg.load_with_policy(
+        "fetcher",
+        &wasm,
+        serde_json::Value::Null,
+        PluginPolicy {
+            trust: TrustMode::Sandboxed,
+            grant: CapabilitySet {
+                network: NetworkCapabilities {
+                    allow: vec!["localhost".into(), "127.0.0.1".into()],
+                    methods: vec!["GET".into()],
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    reg.call_tool("sandbox_fetch", &serde_json::json!({}))
+        .unwrap();
+
+    assert!(
+        reg.logs()
+            .iter()
+            .any(|record| record.message.contains("DNS_PRIVATE_OK")),
+        "explicit resolved-IP grant should allow the connection"
+    );
 }
 
 #[test]
