@@ -51,6 +51,9 @@ pub enum Event {
     TurnStart,
     AgentPreStep,
     AgentRequest,
+    /// dsh lifecycle point fired after the final step and immediately before
+    /// the turn closes. Observe-only: dsh ignores the serial listener result.
+    AgentTurnStopping,
     /// The assembled model request, at the moment before it is sent.
     ///
     /// This is the deepest intervention point: dsh's fallback here performs the
@@ -80,6 +83,7 @@ impl Event {
             Event::TurnStart => "turn/start",
             Event::AgentPreStep => "agent/pre-step",
             Event::AgentRequest => "agent/request",
+            Event::AgentTurnStopping => "agent/turn-stopping",
             Event::LlmRequest => "llm/stream",
             Event::LlmChunk => "assistant/chunk",
             Event::AssistantMessage => "assistant/message",
@@ -97,6 +101,7 @@ impl Event {
             "turn/start" => Event::TurnStart,
             "agent/pre-step" => Event::AgentPreStep,
             "agent/request" => Event::AgentRequest,
+            "agent/turn-stopping" => Event::AgentTurnStopping,
             "llm/stream" => Event::LlmRequest,
             "assistant/chunk" => Event::LlmChunk,
             // Legacy alias: the event was called `llm/chunk` before it was
@@ -143,10 +148,11 @@ impl Event {
     }
 
     /// The full vocabulary, for `describe` validation and error messages.
-    pub const ALL: [Event; 12] = [
+    pub const ALL: [Event; 13] = [
         Event::TurnStart,
         Event::AgentPreStep,
         Event::AgentRequest,
+        Event::AgentTurnStopping,
         Event::LlmRequest,
         Event::LlmChunk,
         Event::AssistantMessage,

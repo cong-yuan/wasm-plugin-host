@@ -204,7 +204,7 @@ async fn observe_listener_alone_mounts_and_continues() {
     boot_dsh(&ctx).await;
     let host = host();
     let report = install_observe(&ctx, &host).await.unwrap();
-    assert_eq!(report, vec!["session/event"]);
+    assert_eq!(report, vec!["session/event", "agent/turn-stopping"]);
 
     // A full turn with no guests must be a no-op for the bridge.
     script_echo(&ctx).await;
@@ -594,12 +594,13 @@ async fn all_six_dsh_waterfall_points_are_bridged() {
 
 /// The bridge's own event vocabulary must accept every name it now registers.
 #[test]
-fn the_flow_vocabulary_covers_the_three_new_points() {
+fn the_flow_vocabulary_covers_dsh_specific_points() {
     use wasm_plugin_host::FlowEvent;
     for (name, ev) in [
         ("llm/stream", FlowEvent::LlmRequest),
         ("tools/execute", FlowEvent::ToolExecute),
         ("tools/post-execute", FlowEvent::ToolResultPost),
+        ("agent/turn-stopping", FlowEvent::AgentTurnStopping),
     ] {
         assert_eq!(
             FlowEvent::parse(name),

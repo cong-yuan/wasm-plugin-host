@@ -110,13 +110,19 @@ cargo run -p dsh-wasm-host --example compose
 | dsh point | guest `veto` | guest `rewrite` |
 |---|---|---|
 | `tools/pre-execute` | → `{kind:"deny"}` | ignored¹ |
+| `tools/execute` | skips body and returns a tool error | → replacement arguments |
+| `tools/post-execute` | ignored² | → replacement tool result |
 | `agent/pre-step` | → `{kind:"reject"}` | → `{kind:"enter", messages}` |
-| `agent/request` | ignored² | → the replacement `LlmCallConfig` |
+| `agent/request` | ignored³ | → the replacement `LlmCallConfig` |
+| `llm/stream` | prevents provider call | → replacement model request |
+| `agent/turn-stopping` | — | — (observe only) |
 | `session/event` | — | — (observe only) |
 
 ¹ dsh accepts only `allow`/`deny`/`ask` at `tools/pre-execute`; argument
-rewriting belongs at `tools/execute`, which is **not** bridged.
-² this point has no reject vocabulary; dsh will surface a parse error instead.
+rewriting belongs at `tools/execute`.
+² the tool has already executed, so post-execute veto has no meaningful undo
+semantics; rewrite is the supported intervention.
+³ this point has no reject vocabulary; dsh will surface a parse error instead.
 
 ### One vocabulary rename
 
@@ -152,18 +158,11 @@ Tests are hermetic: plugins are tiny WAT modules compiled in-process, so no
 
 ## Known limitations
 
-* **A guest's veto reason is not propagated.** The host's `Registry::dispatch`
-  breaks out of the subscriber loop on a veto without copying the guest reply
-  into the returned `Dispatch`, so the bridge reports a stable generic reason
-  (`"denied by wasm plugin"`). Propagating the real reason needs an additive
-  field on the host's `Dispatch`.
-* **`tools/execute` and `tools/post-execute` are not bridged** — only
-  `tools/pre-execute` is. Adding them is mechanical once argument rewriting is
-  wanted.
 * **A slot's own `injects` are gated by cordis, but the WASM-internal service
   graph is bypassed** for dependencies satisfied across the boundary. See the
   module docs of `plugin.rs` for how the two convergence loops are kept in
   agreement (dsh services are declared *external* to the registry).
-* **No permission model yet.** Plugins currently receive full WASI; this crate
-  inherits that (see [`docs/计划.md`](../docs/计划.md) P0). **Do not run
-  untrusted plugins.**
+* **The sandbox model is host-enforced but still evolving at the UI boundary.**
+  Backend filesystem/network/Hook/Service capabilities and resource budgets are
+  enforced by `wasm-plugin-host`; third-party frontend bridge enforcement is a
+  separate surface and should use the same Capability Gate.

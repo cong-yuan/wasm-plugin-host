@@ -26,9 +26,13 @@
 //!
 //! | dsh point | guest `veto` | guest `rewrite` |
 //! |---|---|---|
-//! | `tools/pre-execute` | → `{kind:"deny"}` | ignored (dsh accepts only allow/deny/ask here; argument rewriting belongs at `tools/execute`, which is not bridged) |
+//! | `tools/pre-execute` | → `{kind:"deny"}` | ignored (dsh accepts only allow/deny/ask here) |
+//! | `tools/execute` | → tool error, body skipped | → replacement arguments |
+//! | `tools/post-execute` | ignored (tool already ran) | → replacement result |
 //! | `agent/pre-step` | → `{kind:"reject"}` | → `{kind:"enter", messages}` |
 //! | `agent/request` | ignored (no reject vocabulary) | → the replacement `LlmCallConfig` |
+//! | `llm/stream` | provider call skipped | → replacement model request |
+//! | `agent/turn-stopping` | — | — (observe only; dsh ignores listener output) |
 //! | `session/event` | — | — (observe only) |
 //!
 //! ## One vocabulary, one rename no more
@@ -86,11 +90,11 @@ pub async fn install_waterfalls(ctx: &Context, host: &WasmHost) -> Result<FlowBr
 
 /// Install only the read-only `session/event` observe fan-out.
 pub async fn install_observe(ctx: &Context, host: &WasmHost) -> Result<Vec<&'static str>> {
-    let host = host.clone();
+    let event_host = host.clone();
     ctx.on(
         "session/event",
         move |_ctx: Context, payload: Value, next: Next| {
-            let host = host.clone();
+            let host = event_host.clone();
             Box::pin(async move {
                 if let Some(ev) = session_event_to_flow(&payload) {
                     let inner = payload.get("event").cloned().unwrap_or(Value::Null);
@@ -108,7 +112,24 @@ pub async fn install_observe(ctx: &Context, host: &WasmHost) -> Result<Vec<&'sta
     )
     .await
     .map_err(|e| anyhow::anyhow!("registering session/event observe listener: {e}"))?;
-    Ok(vec!["session/event"])
+
+    let stopping_host = host.clone();
+    ctx.on(
+        "agent/turn-stopping",
+        move |_ctx: Context, payload: Value, next: Next| {
+            let host = stopping_host.clone();
+            Box::pin(async move {
+                if let Ok(mut reg) = host.registry().lock() {
+                    let _ = reg.dispatch(FlowEvent::AgentTurnStopping, payload.clone());
+                }
+                next.run(payload).await
+            })
+        },
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("registering agent/turn-stopping observe listener: {e}"))?;
+
+    Ok(vec!["session/event", "agent/turn-stopping"])
 }
 
 // ---------------------------------------------------------------------------

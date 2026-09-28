@@ -200,6 +200,15 @@ pub fn run_turn(
         executed.push((name, args, result));
     }
 
+    // --- agent/turn-stopping (observe) ---
+    // Mirrors dsh's final serial lifecycle point. Its result is intentionally
+    // ignored: plugins may observe/flush state but cannot reopen or veto a turn
+    // that has already completed its work.
+    let _ = reg.dispatch(
+        Event::AgentTurnStopping,
+        json!({ "turn": turn, "reply": reply, "tools": executed.len() }),
+    );
+
     // --- turn/end (observe) ---
     let _ = reg.dispatch(
         Event::TurnEnd,
