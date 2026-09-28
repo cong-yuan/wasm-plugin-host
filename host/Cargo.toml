@@ -20,6 +20,7 @@ notify = "8"
 # Blocking HTTP for `host.http_fetch` — the guest-facing network capability.
 # Blocking (not async) because wasmtime host functions are sync `func_wrap`s.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
+wasmparser = "0.246.2"
 
 [[bin]]
 name = "plugin-host"

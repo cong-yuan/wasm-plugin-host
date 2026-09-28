@@ -80,6 +80,14 @@ Registry identity, policy or lifecycle semantics.
 this directory. Therefore normal `cargo check --all-targets` validates the WIT
 package without requiring a separate `wasm-tools` CLI.
 
+## Runtime seam status
+
+`Runtime::artifact_kind()` now distinguishes core modules from Components,
+`compile_component()` provides an mtime-aware in-process Component cache, and
+`compile_artifact()` is the stable compile entrypoint for both shapes. Existing
+core guests still follow the unchanged module path. `Plugin::load` recognizes a
+Component and reports that lifecycle execution is not wired yet.
+
 ## Next implementation step
 
 Add a Component-backed plugin instance that implements the same internal
@@ -90,5 +98,5 @@ operations currently used by `Plugin`:
 3. shutdown
 4. host log/config/network/filesystem/service imports
 
-Then choose core-module vs component backend at load/compile time while keeping
-Registry and Supervisor APIs stable.
+The eventual load branch should replace the current explicit Component-status
+error without changing Registry or Supervisor APIs.

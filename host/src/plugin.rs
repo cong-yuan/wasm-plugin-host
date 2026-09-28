@@ -574,7 +574,14 @@ impl Plugin {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "plugin".to_string());
 
-        let module = runtime.compile(engine, path)?;
+        let module = match runtime.compile_artifact(engine, path)? {
+            crate::runtime::CompiledArtifact::CoreModule(module) => module,
+            crate::runtime::CompiledArtifact::Component(_) => {
+                bail!(
+                    "plugin `{name}` is a WebAssembly Component; the Phase E WIT contract is available but Component lifecycle execution is not wired yet"
+                )
+            }
+        };
         let mut state = HostState::new_with_policy_and_audit(
             slot,
             &name,

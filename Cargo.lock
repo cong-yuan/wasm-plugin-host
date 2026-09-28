@@ -2953,6 +2953,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "ureq",
+ "wasmparser 0.246.2",
  "wasmtime",
  "wasmtime-wasi",
  "wat",

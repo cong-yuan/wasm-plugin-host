@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use wasmtime::PoolingAllocationConfig;
+use wasmtime::component::Component as WasmtimeComponent;
 use wasmtime::{Engine, Instance, Linker, Module, Store};
 
 use crate::state::HostState;
@@ -143,6 +144,27 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     hash
 }
 
+fn artifact_mtime(path: &Path) -> u128 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WasmArtifactKind {
+    CoreModule,
+    Component,
+}
+
+#[derive(Clone)]
+pub enum CompiledArtifact {
+    CoreModule(Module),
+    Component(WasmtimeComponent),
+}
+
 /// Fingerprint the engine configuration: the wasmtime compatibility hash plus
 /// our own allocation strategy (which the compatibility hash does not cover).
 fn engine_fingerprint(engine: &Engine, strategy: &AllocationStrategy) -> u64 {
@@ -203,6 +225,9 @@ pub struct Runtime {
     /// In-process module cache keyed by canonical path (+ mtime), so a rebuilt
     /// wasm at the same path is recompiled rather than served stale.
     modules: Mutex<HashMap<PathBuf, (u128, Module)>>,
+    /// In-process Component Model cache. Components intentionally do not use
+    /// the existing core-module disk cache yet; Phase E wires that separately.
+    components: Mutex<HashMap<PathBuf, (u128, WasmtimeComponent)>>,
     /// Optional on-disk `.cwasm` cache; `None` disables it entirely.
     disk_cache: Option<DiskCache>,
     /// Bound applied to every `host.http_fetch`. See [`HTTP_TIMEOUT`].
@@ -302,6 +327,7 @@ impl Runtime {
             linker,
             strategy,
             modules: Mutex::new(HashMap::new()),
+            components: Mutex::new(HashMap::new()),
             disk_cache: None,
             http_timeout: HTTP_TIMEOUT,
             epoch_stop,
@@ -376,6 +402,34 @@ impl Runtime {
         &self.engine
     }
 
+    /// Binary shape of a `.wasm` artifact. This is transport-level metadata;
+    /// it does not change Registry identity or capability policy.
+    pub fn artifact_kind(path: &Path) -> Result<WasmArtifactKind> {
+        let bytes = std::fs::read(path)
+            .map_err(|e| anyhow::anyhow!("reading wasm artifact {}: {e}", path.display()))?;
+        if wasmparser::Parser::is_component(&bytes) {
+            Ok(WasmArtifactKind::Component)
+        } else if wasmparser::Parser::is_core_wasm(&bytes) {
+            Ok(WasmArtifactKind::CoreModule)
+        } else {
+            anyhow::bail!("{} is not a core wasm module or component", path.display())
+        }
+    }
+
+    /// Compile either supported WebAssembly binary shape through one stable
+    /// Runtime entrypoint. Registry/Supervisor callers can keep the same load
+    /// flow while the Plugin execution backend evolves independently.
+    pub fn compile_artifact(&self, engine: &Engine, path: &Path) -> Result<CompiledArtifact> {
+        match Self::artifact_kind(path)? {
+            WasmArtifactKind::CoreModule => {
+                self.compile(engine, path).map(CompiledArtifact::CoreModule)
+            }
+            WasmArtifactKind::Component => self
+                .compile_component(engine, path)
+                .map(CompiledArtifact::Component),
+        }
+    }
+
     /// Compile (or fetch from cache) a module. The cache key includes the
     /// file's mtime, so overwriting a `.wasm` (a rebuild) forces recompilation.
     ///
@@ -428,9 +482,36 @@ impl Runtime {
         Ok(module)
     }
 
+    /// Compile (or fetch from the in-process cache) a Component Model artifact.
+    ///
+    /// This is the Phase E backend seam only. Component lifecycle execution is
+    /// added separately so existing core-module plugins cannot accidentally be
+    /// routed through a half-implemented backend.
+    pub fn compile_component(&self, engine: &Engine, path: &Path) -> Result<WasmtimeComponent> {
+        let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let mtime = artifact_mtime(path);
+        {
+            let cache = self.components.lock().unwrap();
+            if let Some((cached_mtime, component)) = cache.get(&key) {
+                if *cached_mtime == mtime {
+                    return Ok(component.clone());
+                }
+            }
+        }
+
+        let component = WasmtimeComponent::from_file(engine, path)
+            .map_err(|e| anyhow::anyhow!("compiling wasm component {}: {e}", path.display()))?;
+        self.components
+            .lock()
+            .unwrap()
+            .insert(key, (mtime, component.clone()));
+        Ok(component)
+    }
+
     /// Drop every cached module. Used by the `refresh` command.
     pub fn clear_cache(&self) {
         self.modules.lock().unwrap().clear();
+        self.components.lock().unwrap().clear();
     }
 
     /// Delete every `.cwasm` artifact in the disk cache, if configured.

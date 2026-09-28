@@ -35,7 +35,7 @@ pub use plugin::{
     SlotInject, ToolDecl, UiAdjust, UiDecl, WindowContent, WindowDecl, WindowOpen,
 };
 pub use registry::{LoadedReport, Registry, ReloadReport};
-pub use runtime::{AllocationStrategy, CacheStats, Runtime};
+pub use runtime::{AllocationStrategy, CacheStats, CompiledArtifact, Runtime, WasmArtifactKind};
 pub use service::{Convergence, Shared};
 pub use state::{LogHook, LogLevel, LogRecord, LogSink};
 /// Back-compat: the supervisor's event type used to be exported as `Event`.
