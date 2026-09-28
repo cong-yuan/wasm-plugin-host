@@ -97,7 +97,7 @@ Component and reports that lifecycle execution is not wired yet.
 - filesystem reuses the same grant roots, cap-std handles and mutation implementation;
 - services reuse `services.consume` authorization and the existing service graph.
 
-The generated lifecycle exports are wrapped as typed calls for `abi-version`, `init`, `configure`, `describe`, `invoke` and `shutdown`. `Plugin` now has a `Core | Component` backend split and routes Component artifacts through this instance without changing Registry/Supervisor APIs. Component declarations/results are converted back into the existing internal `PluginDecl` / `InvokeResult` model, so hooks, services and UI remain transport-agnostic. The remaining validation gap is a real successful guest fixture (for example a JS component produced by `jco`) that exercises load → invoke → unload end to end.
+The generated lifecycle exports are wrapped as typed calls for `abi-version`, `init`, `configure`, `describe`, `invoke` and `shutdown`. `Plugin` has a `Core | Component` backend split and routes Component artifacts through this instance without changing Registry/Supervisor APIs. Component declarations/results are converted back into the existing internal `PluginDecl` / `InvokeResult` model, so hooks, services and UI remain transport-agnostic. `plugins/component-rust-demo` now provides a real successful guest built with `wit-bindgen` + `ComponentEncoder`; `host/examples/component_smoke.rs` verifies load → typed describe/tool registration → invoke → unload. The remaining producer work is JS/jco and Python/componentize-py using the same WIT world.
 
 ## Next implementation step
 
