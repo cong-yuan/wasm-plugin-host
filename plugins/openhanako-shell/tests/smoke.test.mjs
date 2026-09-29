@@ -483,6 +483,33 @@ check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').l
   api.sendWithProgress = originalProgress;
 }
 
+// Session creation failures must restore the composer instead of leaving
+// the conversation stuck in busy/Stop mode.
+{
+  const originalPickProvider = api.pickProvider;
+  const originalCreate = api.create;
+  api.pickProvider = async () => 'deepseek';
+  api.create = async () => { throw new Error('create failed'); };
+
+  const failureHost = new El('div');
+  const disposeFailureShell = shell.render(failureHost);
+  const failureRoot = failureHost.children[0];
+  const failureInput = failureRoot.querySelector('.input-box');
+  const failureSend = failureRoot.querySelector('.send-btn');
+  failureInput.textContent = 'creation failure smoke';
+  failureSend.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('session creation failure restores send state',
+    failureSend.getAttribute('data-mode') === 'send' && failureSend.disabled === false);
+  check('session creation failure is visible in conversation',
+    failureRoot.querySelectorAll('.md-content').some((el) => /create failed/.test(el.textContent)));
+
+  if (typeof disposeFailureShell === 'function') disposeFailureShell();
+  api.pickProvider = originalPickProvider;
+  api.create = originalCreate;
+}
+
 // Busy chat exposes Stop, calls cancel_agent, and suppresses progress that races
 // in after cancellation was requested.
 {

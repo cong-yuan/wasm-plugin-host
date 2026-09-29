@@ -271,6 +271,18 @@ return (function () {
       options.onOpened(state.id);
     }
 
+    const failSubmit = (err) => {
+      state.turns.push({
+        role: 'assistant',
+        text: (err && err.message) ? err.message : String(err),
+      });
+      state.busy = false;
+      state.cancelling = false;
+      renderSendState();
+      draw();
+      options.onChanged();
+    };
+
     async function submit() {
       const text = input.textContent.trim();
       if (!text || state.busy) return;
@@ -281,19 +293,20 @@ return (function () {
       state.turns.push({ role: 'user', text });
       draw();
       if (!state.id) {
-        const provider = await api.pickProvider();
-        if (!provider) {
-          state.turns.push({ role: 'assistant', text: t('error.llmAuthFailed') });
-          state.busy = false;
-          state.cancelling = false;
-          renderSendState();
-          draw();
+        try {
+          const provider = await api.pickProvider();
+          if (!provider) {
+            failSubmit(new Error(t('error.llmAuthFailed')));
+            return;
+          }
+          state.id = provider === 'mock'
+            ? await api.create(provider, 'mock-1')
+            : await api.create(provider);
+          options.onCreated(state.id);
+        } catch (err) {
+          failSubmit(err);
           return;
         }
-        state.id = provider === 'mock'
-          ? await api.create(provider, 'mock-1')
-          : await api.create(provider);
-        options.onCreated(state.id);
       }
       const assistant = {
         role: 'assistant',
