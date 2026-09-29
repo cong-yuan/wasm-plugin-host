@@ -126,6 +126,13 @@ jobs:
           cache: npm
           cache-dependency-path: plugins/component-js-demo/package-lock.json
 
+      - name: Install Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: plugins/component-python-demo/requirements.txt
+
       - name: Cache Cargo
         uses: actions/cache@v6.1.0
         with:
@@ -232,6 +239,34 @@ jobs:
         run: |
           cargo run -p wasm-plugin-host --example component_hook_smoke -- \
             plugins/component-rust-hook-demo/target/component-rust-hook-demo.component.wasm
+
+      - name: Install Python Component toolchain
+        run: python -m pip install -r plugins/component-python-demo/requirements.txt
+
+      - name: Build Python WIT 0.3 Component
+        working-directory: plugins/component-python-demo
+        run: |
+          mkdir -p dist
+          componentize-py \
+            -d ../../wit-v0.3 \
+            -w plugin \
+            componentize \
+            --stub-wasi \
+            -p . \
+            app \
+            -o dist/component-python-demo.component.wasm
+
+      - name: Validate Python WIT 0.3 Component artifact
+        run: |
+          cargo run -p wasm-plugin-host -- plugin-check \
+            plugins/component-python-demo/dist/component-python-demo.component.wasm --json | python -m json.tool >/dev/null
+
+      - name: Smoke Python WIT 0.3 Component
+        run: |
+          cargo run -p wasm-plugin-host --example component_smoke -- \
+            plugins/component-python-demo/dist/component-python-demo.component.wasm \
+            python_component_echo \
+            sandboxed
 
       - name: Install JS Component toolchain
         working-directory: plugins/component-js-demo
