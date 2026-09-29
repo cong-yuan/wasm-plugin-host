@@ -47,7 +47,7 @@ return (function () {
   </svg>`;
 
   function render(options) {
-    const state = { id: null, turns: [], busy: false, memory: true };
+    const state = { id: null, turns: [], busy: false, cancelling: false, memory: true };
 
     // ── WelcomeScreen.tsx ──
     const heroSlot = h('div', { class: 'hana-slot' });
@@ -99,6 +99,24 @@ return (function () {
 
     const send = h('button', { class: 'send-btn', type: 'button' },
       h('span', { class: 'send-label' }, svg(SEND_ENTER), h('span', {}, t('chat.send'))));
+
+    function renderSendState() {
+      clear(send);
+      if (state.busy) {
+        send.setAttribute('data-mode', 'stop');
+        send.classList.add('send-btn-stop');
+        send.disabled = !!state.cancelling;
+        send.appendChild(h('span', { class: 'send-label' },
+          h('span', { class: 'send-stop-icon', 'aria-hidden': 'true' }),
+          h('span', {}, state.cancelling ? 'Stopping…' : 'Stop')));
+      } else {
+        send.setAttribute('data-mode', 'send');
+        send.classList.remove('send-btn-stop');
+        send.disabled = false;
+        send.appendChild(h('span', { class: 'send-label' },
+          svg(SEND_ENTER), h('span', {}, t('chat.send'))));
+      }
+    }
 
     const controlBar = h('div', { class: 'input-bottom-bar' },
       h('div', { class: 'input-actions' }, attach, slash, plan, trailing),
@@ -194,7 +212,8 @@ return (function () {
       const text = input.textContent.trim();
       if (!text || state.busy) return;
       state.busy = true;
-      send.disabled = true;
+      state.cancelling = false;
+      renderSendState();
       input.textContent = '';
       state.turns.push({ role: 'user', text });
       draw();
@@ -202,7 +221,11 @@ return (function () {
         const provider = await api.pickProvider();
         if (!provider) {
           state.turns.push({ role: 'assistant', text: t('error.llmAuthFailed') });
-          state.busy = false; send.disabled = false; draw(); return;
+          state.busy = false;
+          state.cancelling = false;
+          renderSendState();
+          draw();
+          return;
         }
         state.id = await api.create(provider, provider === 'mock' ? 'mock-1' : provider);
         options.onCreated(state.id);
@@ -224,6 +247,7 @@ return (function () {
           'hana-' + Date.now(),
           (event) => {
             if (!event || typeof event !== 'object') return;
+            if (state.cancelling) return;
             if (event.kind === 'text_delta' && event.delta) {
               assistant.text += event.delta;
             } else if (event.kind === 'thinking_delta' && event.delta) {
@@ -258,17 +282,37 @@ return (function () {
         assistant.text = (err && err.message) ? err.message : String(err);
       } finally {
         state.busy = false;
-        send.disabled = false;
+        state.cancelling = false;
+        renderSendState();
         draw();
         options.onChanged();
       }
     }
 
-    send.onclick = submit;
+    async function stop() {
+      if (!state.busy || state.cancelling || !state.id) return;
+      state.cancelling = true;
+      renderSendState();
+      options.onChanged();
+      try {
+        await api.cancel(state.id);
+      } catch (err) {
+        state.turns.push({
+          role: 'assistant',
+          text: (err && err.message) ? err.message : String(err),
+        });
+        state.cancelling = false;
+        renderSendState();
+        draw();
+      }
+    }
+
+    send.onclick = () => (state.busy ? stop() : submit());
     input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit(); }
     });
 
+    renderSendState();
     draw();
     return {
       root, open, setModelLabel,

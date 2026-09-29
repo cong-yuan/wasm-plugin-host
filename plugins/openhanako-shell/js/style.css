@@ -6236,6 +6236,18 @@ html[data-platform="linux"] .onboarding {
     color: #a64238;
 }
 
+.send-btn-stop {
+    color: #a64238;
+}
+.send-stop-icon {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    background: currentColor;
+    display: inline-block;
+    flex: 0 0 auto;
+}
+
 /* ── 连续过程大折叠 ── */
 
 .processFoldMessage {

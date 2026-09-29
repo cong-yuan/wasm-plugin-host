@@ -49,6 +49,9 @@ class El {
   getAttribute(k) { return this.attrs[k] ?? null; }
   removeAttribute(k) { delete this.attrs[k]; }
   addEventListener(ev, fn) { (this._ev ||= {})[ev] = fn; }
+  removeEventListener(ev, fn) {
+    if (this._ev && this._ev[ev] === fn) delete this._ev[ev];
+  }
   fire(ev, obj = {}) {
     const prop = this['on' + ev];
     if (typeof prop === 'function') prop(obj);
@@ -173,6 +176,7 @@ const check = (label, cond) => { if (!cond) failures.push(label); };
 const api = studio.require('lib/api');
 let streamedSends = 0;
 const originalSendWithProgress = api.sendWithProgress;
+const originalCancel = api.cancel;
 api.sendWithProgress = async (...args) => {
   streamedSends += 1;
   return originalSendWithProgress(...args);
@@ -254,6 +258,55 @@ check('conversation uses sendWithProgress', streamedSends === 1);
 check('streamed assistant response reaches DOM',
   root.querySelectorAll('.md-content').some((el) => /mock fallback/.test(el.textContent)));
 check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').length > 0);
+
+// Busy chat exposes Stop, calls cancel_agent, and suppresses progress that races
+// in after cancellation was requested.
+{
+  let heldProgress = null;
+  let releaseHeld = null;
+  let cancelCalls = 0;
+  api.sendWithProgress = async (_agentId, _text, _msgId, onProgress) => {
+    heldProgress = onProgress;
+    onProgress({ kind: 'text_delta', delta: 'before-stop' });
+    return new Promise((resolve) => { releaseHeld = () => resolve(true); });
+  };
+  api.cancel = async () => {
+    cancelCalls += 1;
+    heldProgress?.({ kind: 'text_delta', delta: 'late-output' });
+    return null;
+  };
+
+  const cancelHost = new El('div');
+  const disposeCancelShell = shell.render(cancelHost);
+  const cancelRoot = cancelHost.children[0];
+  const cancelInput = cancelRoot.querySelector('.input-box');
+  const cancelButton = cancelRoot.querySelector('.send-btn');
+  cancelInput.textContent = 'cancel smoke';
+  cancelButton.fire('click');
+  for (let i = 0; i < 20 && !heldProgress; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  check('busy send button becomes Stop',
+    cancelButton.getAttribute('data-mode') === 'stop' && /Stop/.test(cancelButton.textContent));
+  check('pre-cancel progress is visible',
+    cancelRoot.querySelectorAll('.md-content').some((el) => /before-stop/.test(el.textContent)));
+
+  cancelButton.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('Stop invokes cancel once', cancelCalls === 1);
+  check('late output after cancel request is suppressed',
+    !cancelRoot.querySelectorAll('.md-content').some((el) => /late-output/.test(el.textContent)));
+  check('Stop enters stopping state while original turn settles',
+    /Stopping/.test(cancelButton.textContent) && cancelButton.disabled === true);
+
+  releaseHeld?.();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  check('send button returns after cancelled turn settles',
+    cancelButton.getAttribute('data-mode') === 'send' && cancelButton.disabled === false);
+  if (typeof disposeCancelShell === 'function') disposeCancelShell();
+  api.sendWithProgress = originalSendWithProgress;
+  api.cancel = originalCancel;
+}
 
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
