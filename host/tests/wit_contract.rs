@@ -24,6 +24,13 @@ mod v3 {
     });
 }
 
+mod v4 {
+    wasmtime::component::bindgen!({
+        path: "../wit-v0.4",
+        world: "plugin",
+    });
+}
+
 #[test]
 fn wit_v01_contract_generates_component_bindings() {
     let _ = std::any::type_name::<v1::Plugin>();
@@ -88,4 +95,19 @@ fn wit_v03_contract_generates_typed_ui_declarations() {
         }],
     };
     assert_eq!(ui.provides[0].name, "demo.slot");
+}
+
+#[test]
+fn wit_v04_contract_generates_typed_hook_decisions() {
+    let _ = std::any::type_name::<v4::Plugin>();
+    use v4::wasm_plugin_host::plugin::types::HookDecision;
+
+    let decisions = [
+        HookDecision::Continue,
+        HookDecision::Rewrite(r#"{\"x\":1}"#.into()),
+        HookDecision::Veto("blocked".into()),
+    ];
+    assert!(matches!(decisions[0], HookDecision::Continue));
+    assert!(matches!(decisions[1], HookDecision::Rewrite(_)));
+    assert!(matches!(decisions[2], HookDecision::Veto(_)));
 }

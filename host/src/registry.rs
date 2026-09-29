@@ -758,11 +758,11 @@ impl Registry {
             let payload = serde_json::json!({ "event": ev.as_str(), "value": current });
             let reply = self
                 .shared
-                .with_plugin(&sub.slot, |p| p.invoke_raw(&sub.exec, &payload));
+                .with_plugin(&sub.slot, |p| p.invoke_hook(&sub.exec, &payload));
             match reply {
-                Ok(r) => {
+                Ok(decision) => {
                     if sub.mode == crate::plugin::HookMode::Waterfall {
-                        match crate::hooks::Decision::parse(&r) {
+                        match decision {
                             crate::hooks::Decision::Continue => {}
                             crate::hooks::Decision::Rewrite { value: v } if ev.allows_rewrite() => {
                                 current = v

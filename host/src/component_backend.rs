@@ -1,4 +1,4 @@
-//! Component Model backend bindings for the versioned WIT 0.1 / 0.2 / 0.3 contracts.
+//! Component Model backend bindings for the versioned WIT 0.1 / 0.2 / 0.3 / 0.4 contracts.
 //!
 //! This module is deliberately separate from the core-module linker. Both
 //! backends share `HostState`, CapabilityGate and AuditSink.
@@ -24,6 +24,13 @@ mod v2 {
 mod v3 {
     wasmtime::component::bindgen!({
         path: "../wit-v0.3",
+        world: "plugin",
+    });
+}
+
+mod v4 {
+    wasmtime::component::bindgen!({
+        path: "../wit-v0.4",
         world: "plugin",
     });
 }
@@ -478,6 +485,137 @@ impl v3::wasm_plugin_host::plugin::host_services::Host for HostState {
     }
 }
 
+
+impl v4::wasm_plugin_host::plugin::types::Host for HostState {}
+
+impl v4::wasm_plugin_host::plugin::host_log::Host for HostState {
+    fn log(&mut self, level: v4::wasm_plugin_host::plugin::types::LogLevel, message: String) {
+        let level = match level {
+            v4::wasm_plugin_host::plugin::types::LogLevel::Debug => {
+                wasm_plugin_host::plugin::types::LogLevel::Debug
+            }
+            v4::wasm_plugin_host::plugin::types::LogLevel::Info => {
+                wasm_plugin_host::plugin::types::LogLevel::Info
+            }
+            v4::wasm_plugin_host::plugin::types::LogLevel::Warn => {
+                wasm_plugin_host::plugin::types::LogLevel::Warn
+            }
+            v4::wasm_plugin_host::plugin::types::LogLevel::Error => {
+                wasm_plugin_host::plugin::types::LogLevel::Error
+            }
+        };
+        <HostState as wasm_plugin_host::plugin::host_log::Host>::log(self, level, message);
+    }
+
+    fn now_ms(&mut self) -> u64 {
+        <HostState as wasm_plugin_host::plugin::host_log::Host>::now_ms(self)
+    }
+}
+
+impl v4::wasm_plugin_host::plugin::host_config::Host for HostState {
+    fn get_config(&mut self) -> String {
+        <HostState as wasm_plugin_host::plugin::host_config::Host>::get_config(self)
+    }
+
+    fn config_version(&mut self) -> u64 {
+        <HostState as wasm_plugin_host::plugin::host_config::Host>::config_version(self)
+    }
+}
+
+impl v4::wasm_plugin_host::plugin::host_network::Host for HostState {
+    fn http_fetch(
+        &mut self,
+        request: v4::wasm_plugin_host::plugin::types::HttpRequest,
+    ) -> std::result::Result<v4::wasm_plugin_host::plugin::types::HttpResponse, String> {
+        let request = wasm_plugin_host::plugin::types::HttpRequest {
+            url: request.url,
+            method: request.method,
+            headers: request
+                .headers
+                .into_iter()
+                .map(|header| wasm_plugin_host::plugin::types::HttpHeader {
+                    name: header.name,
+                    value: header.value,
+                })
+                .collect(),
+            body: request.body,
+        };
+        let response =
+            <HostState as wasm_plugin_host::plugin::host_network::Host>::http_fetch(self, request)?;
+        Ok(v4::wasm_plugin_host::plugin::types::HttpResponse {
+            status: response.status,
+            headers: response
+                .headers
+                .into_iter()
+                .map(|header| v4::wasm_plugin_host::plugin::types::HttpHeader {
+                    name: header.name,
+                    value: header.value,
+                })
+                .collect(),
+            body: response.body,
+        })
+    }
+}
+
+impl v4::wasm_plugin_host::plugin::host_filesystem::Host for HostState {
+    fn read_file(&mut self, root: String, path: String) -> std::result::Result<Vec<u8>, String> {
+        <HostState as wasm_plugin_host::plugin::host_filesystem::Host>::read_file(self, root, path)
+    }
+
+    fn write_file(
+        &mut self,
+        root: String,
+        path: String,
+        data: Vec<u8>,
+    ) -> std::result::Result<(), String> {
+        <HostState as wasm_plugin_host::plugin::host_filesystem::Host>::write_file(
+            self, root, path, data,
+        )
+    }
+
+    fn create_file(
+        &mut self,
+        root: String,
+        path: String,
+        data: Vec<u8>,
+    ) -> std::result::Result<(), String> {
+        <HostState as wasm_plugin_host::plugin::host_filesystem::Host>::create_file(
+            self, root, path, data,
+        )
+    }
+
+    fn delete_file(&mut self, root: String, path: String) -> std::result::Result<(), String> {
+        <HostState as wasm_plugin_host::plugin::host_filesystem::Host>::delete_file(
+            self, root, path,
+        )
+    }
+
+    fn create_dir(&mut self, root: String, path: String) -> std::result::Result<(), String> {
+        <HostState as wasm_plugin_host::plugin::host_filesystem::Host>::create_dir(self, root, path)
+    }
+
+    fn delete_dir(&mut self, root: String, path: String) -> std::result::Result<(), String> {
+        <HostState as wasm_plugin_host::plugin::host_filesystem::Host>::delete_dir(self, root, path)
+    }
+}
+
+impl v4::wasm_plugin_host::plugin::host_services::Host for HostState {
+    fn has_service(&mut self, service: String) -> bool {
+        <HostState as wasm_plugin_host::plugin::host_services::Host>::has_service(self, service)
+    }
+
+    fn call_service(
+        &mut self,
+        service: String,
+        op: String,
+        args_json: String,
+    ) -> std::result::Result<String, String> {
+        <HostState as wasm_plugin_host::plugin::host_services::Host>::call_service(
+            self, service, op, args_json,
+        )
+    }
+}
+
 fn component_fs_mutation(
     state: &HostState,
     op: &str,
@@ -508,6 +646,7 @@ enum ComponentBindings {
     V1(Plugin),
     V2(v2::Plugin),
     V3(v3::Plugin),
+    V4(v4::Plugin),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -515,6 +654,7 @@ enum ComponentContract {
     V1,
     V2,
     V3,
+    V4,
 }
 
 pub(crate) struct ComponentInstance {
@@ -546,6 +686,9 @@ impl ComponentInstance {
             ComponentContract::V3 => {
                 ComponentBindings::V3(v3::Plugin::instantiate(&mut store, component, &linker)?)
             }
+            ComponentContract::V4 => {
+                ComponentBindings::V4(v4::Plugin::instantiate(&mut store, component, &linker)?)
+            }
         };
         Ok(Self { store, bindings })
     }
@@ -560,6 +703,9 @@ impl ComponentInstance {
                 .wasm_plugin_host_plugin_lifecycle()
                 .call_abi_version(&mut self.store)?,
             ComponentBindings::V3(bindings) => bindings
+                .wasm_plugin_host_plugin_lifecycle()
+                .call_abi_version(&mut self.store)?,
+            ComponentBindings::V4(bindings) => bindings
                 .wasm_plugin_host_plugin_lifecycle()
                 .call_abi_version(&mut self.store)?,
         })
@@ -580,6 +726,10 @@ impl ComponentInstance {
                 .wasm_plugin_host_plugin_lifecycle()
                 .call_init(&mut self.store)?
                 .map_err(anyhow::Error::msg),
+            ComponentBindings::V4(bindings) => bindings
+                .wasm_plugin_host_plugin_lifecycle()
+                .call_init(&mut self.store)?
+                .map_err(anyhow::Error::msg),
         }
     }
 
@@ -596,6 +746,10 @@ impl ComponentInstance {
                 .call_configure(&mut self.store, &config_json)?
                 .map_err(anyhow::Error::msg),
             ComponentBindings::V3(bindings) => bindings
+                .wasm_plugin_host_plugin_lifecycle()
+                .call_configure(&mut self.store, &config_json)?
+                .map_err(anyhow::Error::msg),
+            ComponentBindings::V4(bindings) => bindings
                 .wasm_plugin_host_plugin_lifecycle()
                 .call_configure(&mut self.store, &config_json)?
                 .map_err(anyhow::Error::msg),
@@ -637,6 +791,17 @@ impl ComponentInstance {
                     component_decl_output_bytes_v3(&decl),
                 )?;
                 component_decl_to_internal_v3(decl)
+            }
+            ComponentBindings::V4(bindings) => {
+                let decl = bindings
+                    .wasm_plugin_host_plugin_lifecycle()
+                    .call_describe(&mut self.store)?;
+                enforce_component_output_limit(
+                    self.store.data(),
+                    "describe",
+                    component_decl_output_bytes_v4(&decl),
+                )?;
+                component_decl_to_internal_v4(decl)
             }
         }
     }
@@ -688,6 +853,19 @@ impl ComponentInstance {
                 )?;
                 invoke_result_to_internal_v3(result)
             }
+            ComponentBindings::V4(bindings) => {
+                let result = bindings.wasm_plugin_host_plugin_lifecycle().call_invoke(
+                    &mut self.store,
+                    op,
+                    &args_json,
+                )?;
+                enforce_component_output_limit(
+                    self.store.data(),
+                    "invoke",
+                    component_invoke_output_bytes_v4(&result),
+                )?;
+                invoke_result_to_internal_v4(result)
+            }
         }
     }
 
@@ -738,7 +916,46 @@ impl ComponentInstance {
                 )?;
                 invoke_result_to_raw_v3(result)
             }
+            ComponentBindings::V4(bindings) => {
+                let result = bindings.wasm_plugin_host_plugin_lifecycle().call_invoke(
+                    &mut self.store,
+                    op,
+                    &args_json,
+                )?;
+                enforce_component_output_limit(
+                    self.store.data(),
+                    "invoke",
+                    component_invoke_output_bytes_v4(&result),
+                )?;
+                invoke_result_to_raw_v4(result)
+            }
         }
+    }
+
+    pub(crate) fn invoke_hook_decision(
+        &mut self,
+        op: &str,
+        args_json: &str,
+    ) -> Result<crate::hooks::Decision> {
+        if !matches!(&self.bindings, ComponentBindings::V4(_)) {
+            let raw = self.invoke_raw_json(op, args_json)?;
+            return Ok(crate::hooks::Decision::parse(&raw));
+        }
+
+        self.prepare_guest_call()?;
+        let args_json = args_json.to_string();
+        let ComponentBindings::V4(bindings) = &self.bindings else {
+            unreachable!("checked WIT 0.4 binding above");
+        };
+        let decision = bindings
+            .wasm_plugin_host_plugin_lifecycle()
+            .call_invoke_hook(&mut self.store, op, &args_json)?;
+        enforce_component_output_limit(
+            self.store.data(),
+            "invoke-hook",
+            component_hook_output_bytes_v4(&decision),
+        )?;
+        hook_decision_to_internal_v4(decision)
     }
 
     pub(crate) fn shutdown(&mut self) -> Result<()> {
@@ -755,6 +972,11 @@ impl ComponentInstance {
                     .call_shutdown(&mut self.store)?;
             }
             ComponentBindings::V3(bindings) => {
+                bindings
+                    .wasm_plugin_host_plugin_lifecycle()
+                    .call_shutdown(&mut self.store)?;
+            }
+            ComponentBindings::V4(bindings) => {
                 bindings
                     .wasm_plugin_host_plugin_lifecycle()
                     .call_shutdown(&mut self.store)?;
@@ -829,6 +1051,50 @@ fn component_invoke_output_bytes_v3(
     }
 }
 
+fn component_invoke_output_bytes_v4(
+    result: &v4::wasm_plugin_host::plugin::types::InvokeResult,
+) -> usize {
+    match result {
+        v4::wasm_plugin_host::plugin::types::InvokeResult::Success(success) => success
+            .content
+            .len()
+            .saturating_add(success.value_json.len()),
+        v4::wasm_plugin_host::plugin::types::InvokeResult::Error(error) => error
+            .code
+            .len()
+            .saturating_add(error.message.len())
+            .saturating_add(error.value_json.len()),
+    }
+}
+
+fn component_hook_output_bytes_v4(
+    decision: &v4::wasm_plugin_host::plugin::types::HookDecision,
+) -> usize {
+    match decision {
+        v4::wasm_plugin_host::plugin::types::HookDecision::Continue => 0,
+        v4::wasm_plugin_host::plugin::types::HookDecision::Rewrite(value_json) => value_json.len(),
+        v4::wasm_plugin_host::plugin::types::HookDecision::Veto(reason) => reason.len(),
+    }
+}
+
+fn hook_decision_to_internal_v4(
+    decision: v4::wasm_plugin_host::plugin::types::HookDecision,
+) -> Result<crate::hooks::Decision> {
+    Ok(match decision {
+        v4::wasm_plugin_host::plugin::types::HookDecision::Continue => {
+            crate::hooks::Decision::Continue
+        }
+        v4::wasm_plugin_host::plugin::types::HookDecision::Rewrite(value_json) => {
+            crate::hooks::Decision::Rewrite {
+                value: parse_json_value(&value_json, "component hook rewrite value")?,
+            }
+        }
+        v4::wasm_plugin_host::plugin::types::HookDecision::Veto(reason) => {
+            crate::hooks::Decision::Veto { reason }
+        }
+    })
+}
+
 fn invoke_result_to_internal(
     result: wasm_plugin_host::plugin::types::InvokeResult,
 ) -> Result<crate::plugin::InvokeResult> {
@@ -886,6 +1152,25 @@ fn invoke_result_to_internal_v3(
     }
 }
 
+fn invoke_result_to_internal_v4(
+    result: v4::wasm_plugin_host::plugin::types::InvokeResult,
+) -> Result<crate::plugin::InvokeResult> {
+    match result {
+        v4::wasm_plugin_host::plugin::types::InvokeResult::Success(success) => {
+            Ok(crate::plugin::InvokeResult::Success {
+                content: success.content,
+                value: parse_json_value(&success.value_json, "component invoke value")?,
+            })
+        }
+        v4::wasm_plugin_host::plugin::types::InvokeResult::Error(error) => {
+            Ok(crate::plugin::InvokeResult::Error {
+                message: error.message,
+                code: error.code,
+            })
+        }
+    }
+}
+
 fn invoke_result_to_raw(
     result: wasm_plugin_host::plugin::types::InvokeResult,
 ) -> Result<serde_json::Value> {
@@ -924,6 +1209,21 @@ fn invoke_result_to_raw_v3(
             parse_json_value(&success.value_json, "component raw invoke value")
         }
         v3::wasm_plugin_host::plugin::types::InvokeResult::Error(error) => Ok(serde_json::json!({
+            "kind": "error",
+            "message": error.message,
+            "code": error.code,
+        })),
+    }
+}
+
+fn invoke_result_to_raw_v4(
+    result: v4::wasm_plugin_host::plugin::types::InvokeResult,
+) -> Result<serde_json::Value> {
+    match result {
+        v4::wasm_plugin_host::plugin::types::InvokeResult::Success(success) => {
+            parse_json_value(&success.value_json, "component raw invoke value")
+        }
+        v4::wasm_plugin_host::plugin::types::InvokeResult::Error(error) => Ok(serde_json::json!({
             "kind": "error",
             "message": error.message,
             "code": error.code,
@@ -1027,6 +1327,35 @@ fn component_decl_output_bytes_v2(decl: &v2::wasm_plugin_host::plugin::types::Pl
 }
 
 fn component_decl_output_bytes_v3(decl: &v3::wasm_plugin_host::plugin::types::PluginDecl) -> usize {
+    let mut bytes = decl.name.len();
+    for tool in &decl.tools {
+        bytes = bytes.saturating_add(tool.name.len()).saturating_add(tool.description.len()).saturating_add(tool.parameters_json.len()).saturating_add(tool.exec.len());
+        for required in &tool.requires { bytes = bytes.saturating_add(required.len()); }
+    }
+    for hook in &decl.hooks { bytes = bytes.saturating_add(hook.on.len()).saturating_add(hook.exec.len()); }
+    for value in decl.injects.iter().chain(decl.provides.iter()) { bytes = bytes.saturating_add(value.len()); }
+    let caps = &decl.capabilities;
+    for value in caps.filesystem.read.iter()
+        .chain(caps.filesystem.write.iter()).chain(caps.filesystem.create.iter()).chain(caps.filesystem.delete.iter())
+        .chain(caps.network.allow.iter()).chain(caps.network.methods.iter())
+        .chain(caps.agent.observe.iter()).chain(caps.agent.rewrite.iter()).chain(caps.agent.veto.iter())
+        .chain(caps.services.consume.iter()).chain(caps.services.provide.iter())
+        .chain(caps.ui.slots.iter()).chain(caps.ui.routes.iter()).chain(caps.ui.adjusts.iter())
+        .chain(caps.ui.backend_commands.iter()).chain(caps.ui.host_events.iter()) {
+        bytes = bytes.saturating_add(value.len());
+    }
+    if let Some(ui) = &decl.ui {
+        for slot in &ui.provides { bytes = bytes.saturating_add(slot.name.len()); if let Some(v)=&slot.description { bytes=bytes.saturating_add(v.len()); } }
+        for inject in &ui.injects { bytes = bytes.saturating_add(inject.slot.len()); if let Some(v)=&inject.component { bytes=bytes.saturating_add(v.len()); } }
+        for asset in &ui.assets { bytes = bytes.saturating_add(asset.name.len()).saturating_add(asset.source.len()); }
+        for window in &ui.windows { bytes = bytes.saturating_add(window.name.len()).saturating_add(window.component.len()); if let Some(v)=&window.title { bytes=bytes.saturating_add(v.len()); } if let Some(v)=&window.html { bytes=bytes.saturating_add(v.len()); } }
+        for route in &ui.routes { bytes = bytes.saturating_add(route.path.len()).saturating_add(route.component.len()); if let Some(v)=&route.title { bytes=bytes.saturating_add(v.len()); } if let Some(v)=&route.icon { bytes=bytes.saturating_add(v.len()); } }
+        for adjust in &ui.adjusts { bytes = bytes.saturating_add(adjust.slot.len()); if let Some(v)=&adjust.from_plugin { bytes=bytes.saturating_add(v.len()); } if let Some(v)=&adjust.component { bytes=bytes.saturating_add(v.len()); } }
+    }
+    bytes
+}
+
+fn component_decl_output_bytes_v4(decl: &v4::wasm_plugin_host::plugin::types::PluginDecl) -> usize {
     let mut bytes = decl.name.len();
     for tool in &decl.tools {
         bytes = bytes.saturating_add(tool.name.len()).saturating_add(tool.description.len()).saturating_add(tool.parameters_json.len()).saturating_add(tool.exec.len());
@@ -1287,6 +1616,54 @@ fn component_capabilities_to_internal_v3(caps: v3::wasm_plugin_host::plugin::typ
     }
 }
 
+fn component_decl_to_internal_v4(
+    decl: v4::wasm_plugin_host::plugin::types::PluginDecl,
+) -> Result<crate::plugin::PluginDecl> {
+    use self::v4::wasm_plugin_host::plugin::types as wit;
+    let tools = decl.tools.into_iter().map(|tool| Ok(crate::plugin::ToolDecl {
+        name: tool.name, description: tool.description,
+        parameters: parse_json_value(&tool.parameters_json, "tool parameters")?,
+        exec: tool.exec, requires: tool.requires,
+    })).collect::<Result<Vec<_>>>()?;
+    let hooks = decl.hooks.into_iter().map(|hook| crate::plugin::HookDecl {
+        on: hook.on, exec: hook.exec,
+        mode: match hook.mode { wit::HookMode::Observe => crate::plugin::HookMode::Observe, wit::HookMode::Waterfall => crate::plugin::HookMode::Waterfall },
+        priority: hook.priority,
+    }).collect();
+    let ui = decl.ui.map(|ui| crate::plugin::UiDecl {
+        provides: ui.provides.into_iter().map(|slot| crate::plugin::SlotDecl { name: slot.name, description: slot.description }).collect(),
+        injects: ui.injects.into_iter().map(|inject| crate::plugin::SlotInject { slot: inject.slot, priority: inject.priority, component: inject.component }).collect(),
+        assets: ui.assets.into_iter().map(|asset| (asset.name, asset.source)).collect(),
+        windows: ui.windows.into_iter().map(|window| crate::plugin::WindowDecl {
+            name: window.name, component: window.component, title: window.title, width: window.width, height: window.height,
+            open: match window.open { wit::WindowOpen::Manual => crate::plugin::WindowOpen::Manual, wit::WindowOpen::Auto => crate::plugin::WindowOpen::Auto, wit::WindowOpen::Startup => crate::plugin::WindowOpen::Startup },
+            content: match window.content { wit::WindowContent::App => crate::plugin::WindowContent::App, wit::WindowContent::Html => crate::plugin::WindowContent::Html },
+            html: window.html,
+        }).collect(),
+        routes: ui.routes.into_iter().map(|route| crate::plugin::RouteDecl { path: route.path, component: route.component, title: route.title, icon: route.icon, nav: route.nav }).collect(),
+        adjusts: ui.adjusts.into_iter().map(|adjust| crate::plugin::UiAdjust {
+            slot: adjust.slot, from: adjust.from_plugin,
+            action: match adjust.action { wit::AdjustAction::Hide => crate::plugin::AdjustAction::Hide, wit::AdjustAction::Unhide => crate::plugin::AdjustAction::Unhide, wit::AdjustAction::Replace => crate::plugin::AdjustAction::Replace, wit::AdjustAction::Priority => crate::plugin::AdjustAction::Priority },
+            to: adjust.to, by: adjust.by, component: adjust.component,
+        }).collect(),
+    });
+    Ok(crate::plugin::PluginDecl {
+        name: decl.name, abi: i32::try_from(decl.abi).map_err(|_| anyhow::anyhow!("component ABI value does not fit i32"))?,
+        tools, hooks, injects: decl.injects, provides: decl.provides, ui,
+        capabilities: component_capabilities_to_internal_v4(decl.capabilities),
+    })
+}
+
+fn component_capabilities_to_internal_v4(caps: v4::wasm_plugin_host::plugin::types::CapabilityRequest) -> crate::capability::CapabilitySet {
+    crate::capability::CapabilitySet {
+        filesystem: crate::capability::FilesystemCapabilities { read: caps.filesystem.read, write: caps.filesystem.write, create: caps.filesystem.create, delete: caps.filesystem.delete },
+        network: crate::capability::NetworkCapabilities { allow: caps.network.allow, methods: caps.network.methods },
+        agent: crate::capability::AgentCapabilities { observe: caps.agent.observe, rewrite: caps.agent.rewrite, veto: caps.agent.veto },
+        services: crate::capability::ServiceCapabilities { consume: caps.services.consume, provide: caps.services.provide },
+        ui: crate::capability::UiCapabilities { slots: caps.ui.slots, routes: caps.ui.routes, windows: caps.ui.windows, theme: caps.ui.theme, adjusts: caps.ui.adjusts, backend_commands: caps.ui.backend_commands, host_events: caps.ui.host_events },
+    }
+}
+
 fn component_contract(
     engine: &Engine,
     component: &wasmtime::component::Component,
@@ -1294,17 +1671,20 @@ fn component_contract(
     const V1_LIFECYCLE: &str = "wasm-plugin-host:plugin/lifecycle@0.1.0";
     const V2_LIFECYCLE: &str = "wasm-plugin-host:plugin/lifecycle@0.2.0";
     const V3_LIFECYCLE: &str = "wasm-plugin-host:plugin/lifecycle@0.3.0";
+    const V4_LIFECYCLE: &str = "wasm-plugin-host:plugin/lifecycle@0.4.0";
 
     let ty = component.component_type();
     let has_v1 = ty.get_export(engine, V1_LIFECYCLE).is_some();
     let has_v2 = ty.get_export(engine, V2_LIFECYCLE).is_some();
     let has_v3 = ty.get_export(engine, V3_LIFECYCLE).is_some();
-    match (has_v1, has_v2, has_v3) {
-        (true, false, false) => Ok(ComponentContract::V1),
-        (false, true, false) => Ok(ComponentContract::V2),
-        (false, false, true) => Ok(ComponentContract::V3),
-        (false, false, false) => anyhow::bail!(
-            "Component exports none of {V1_LIFECYCLE}, {V2_LIFECYCLE}, or {V3_LIFECYCLE}"
+    let has_v4 = ty.get_export(engine, V4_LIFECYCLE).is_some();
+    match (has_v1, has_v2, has_v3, has_v4) {
+        (true, false, false, false) => Ok(ComponentContract::V1),
+        (false, true, false, false) => Ok(ComponentContract::V2),
+        (false, false, true, false) => Ok(ComponentContract::V3),
+        (false, false, false, true) => Ok(ComponentContract::V4),
+        (false, false, false, false) => anyhow::bail!(
+            "Component exports none of {V1_LIFECYCLE}, {V2_LIFECYCLE}, {V3_LIFECYCLE}, or {V4_LIFECYCLE}"
         ),
         _ => anyhow::bail!("Component exports multiple plugin lifecycle versions; choose exactly one"),
     }
@@ -1320,6 +1700,9 @@ fn component_linker(engine: &Engine, contract: ComponentContract) -> Result<Link
         }
         ComponentContract::V3 => {
             v3::Plugin::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
+        }
+        ComponentContract::V4 => {
+            v4::Plugin::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
         }
     }
     // Preview2 is linked for all Component guests so language runtimes such as
@@ -1367,6 +1750,8 @@ mod tests {
             .expect("generated WIT 0.2 imports should link to HostState");
         component_linker(runtime.engine(), ComponentContract::V3)
             .expect("generated WIT 0.3 imports should link to HostState");
+        component_linker(runtime.engine(), ComponentContract::V4)
+            .expect("generated WIT 0.4 imports should link to HostState");
     }
 
     #[test]
@@ -1380,6 +1765,9 @@ mod tests {
         );
         component_linker(runtime.engine(), ComponentContract::V3).expect(
             "WIT 0.3 Component linker should compose Preview2 + wasi:http without duplicate interfaces",
+        );
+        component_linker(runtime.engine(), ComponentContract::V4).expect(
+            "WIT 0.4 Component linker should compose Preview2 + wasi:http without duplicate interfaces",
         );
     }
 
@@ -1482,6 +1870,37 @@ mod tests {
         assert_eq!(ui.routes[0].path, "demo");
         assert_eq!(ui.adjusts[0].from.as_deref(), Some("other"));
         assert_eq!(ui.adjusts[0].to, Some(3));
+    }
+
+    #[test]
+    fn wit_v04_typed_hook_decisions_map_to_internal_decisions() {
+        use v4::wasm_plugin_host::plugin::types::HookDecision;
+
+        assert!(matches!(
+            hook_decision_to_internal_v4(HookDecision::Continue).unwrap(),
+            crate::hooks::Decision::Continue
+        ));
+
+        match hook_decision_to_internal_v4(HookDecision::Rewrite(
+            r#"{"name":"rewritten"}"#.into(),
+        ))
+        .unwrap()
+        {
+            crate::hooks::Decision::Rewrite { value } => {
+                assert_eq!(value["name"], "rewritten");
+            }
+            other => panic!("expected rewrite, got {other:?}"),
+        }
+
+        assert!(matches!(
+            hook_decision_to_internal_v4(HookDecision::Veto("blocked".into())).unwrap(),
+            crate::hooks::Decision::Veto { reason } if reason == "blocked"
+        ));
+
+        assert!(
+            hook_decision_to_internal_v4(HookDecision::Rewrite("{bad-json".into())).is_err(),
+            "typed rewrite still carries polymorphic JSON and must validate it"
+        );
     }
 
     #[test]

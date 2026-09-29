@@ -82,13 +82,15 @@ Compatibility rule for `0.1.0`: do not add/reorder required record fields or req
 
 `../wit-v0.3` is the next parallel contract. It keeps 0.2 tool dependencies and replaces `ui-json` with typed `ui: option<ui-decl>` records for slots, assets, windows, routes and adjustments. Runtime dispatch supports all three lifecycle package versions side-by-side and converts each wire revision into the same internal `PluginDecl` / `UiDecl` model.
 
+`../wit-v0.4` adds a typed `hook-decision` variant plus lifecycle `invoke-hook`. Core modules and WIT 0.1-0.3 keep the legacy JSON decision envelope, while 0.4 Components return typed `continue` / `rewrite(json)` / `veto(string)`. Registry dispatch consumes one internal `Decision` model for every transport/version.
+
 ## Validation
 
-`host/tests/wit_contract.rs` invokes Wasmtime's `component::bindgen!` against both `../wit` (0.1) and `../wit-v0.2` (0.2). Therefore normal `cargo check --all-targets` validates both WIT packages without requiring a separate `wasm-tools` CLI.
+`host/tests/wit_contract.rs` invokes Wasmtime's `component::bindgen!` against WIT 0.1, 0.2, 0.3 and 0.4. Therefore normal `cargo check --all-targets` validates every supported WIT package without requiring a separate `wasm-tools` CLI.
 
 ## Runtime status
 
-`Runtime::artifact_kind()` distinguishes core modules from Components, `compile_component()` provides an mtime-aware in-process Component cache, and `compile_artifact()` is the stable compile entrypoint for both shapes. `PluginBackend::Core | Component` routes both transports behind the same Registry/Supervisor API. Component lifecycle (`abi-version`, `init`, `configure`, `describe`, `invoke`, `shutdown`) is live, including resource budgets and capability resolution.
+`Runtime::artifact_kind()` distinguishes core modules from Components, `compile_component()` provides an mtime-aware in-process Component cache, and `compile_artifact()` is the stable compile entrypoint for both shapes. `PluginBackend::Core | Component` routes both transports behind the same Registry/Supervisor API. Component lifecycle (`abi-version`, `init`, `configure`, `describe`, `invoke`, `shutdown`) is live for 0.1-0.4; WIT 0.4 additionally exposes typed `invoke-hook`. Resource budgets and capability resolution apply to all versions.
 
 ## Host import binding status
 
@@ -105,5 +107,5 @@ The generated lifecycle exports are wrapped as typed calls and converted back in
 
 - Python/componentize-py producer validation remains blocked on the current runner: even componentize-py's minimal hello-world is terminated by the OS with SIGKILL, across tested versions. This is tracked as an environment validation item rather than a Host runtime blocker.
 - WIT `0.2.0` types tool dependencies and remains runtime-loadable alongside 0.1.
-- WIT `0.3.0` types the stable UI declaration and is runtime-loadable alongside 0.1/0.2.
-- A later wire revision may introduce a dedicated typed hook-decision surface; it should continue the same side-by-side versioning model.
+- WIT `0.3.0` types the stable UI declaration and remains runtime-loadable alongside 0.1/0.2.
+- WIT `0.4.0` adds typed hook decisions / `invoke-hook` and is runtime-loadable alongside 0.1/0.2/0.3.

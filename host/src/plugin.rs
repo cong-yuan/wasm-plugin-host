@@ -1143,6 +1143,32 @@ impl Plugin {
         }
     }
 
+    /// Invoke a hook operation and return the host's typed waterfall decision.
+    ///
+    /// Core modules and WIT 0.1-0.3 Components retain the legacy JSON decision
+    /// envelope. WIT 0.4 Components use the typed `invoke-hook` export.
+    pub fn invoke_hook(
+        &mut self,
+        op: &str,
+        args: &serde_json::Value,
+    ) -> Result<crate::hooks::Decision> {
+        if self.state != PluginState::Active {
+            bail!("plugin `{}` is not active ({:?})", self.name, self.state);
+        }
+        let args_json = serde_json::to_string(args)?;
+        let plugin_name = self.name.clone();
+        match &mut self.backend {
+            PluginBackend::Core(core) => {
+                let raw = core.call_op(&plugin_name, op, &args_json)?;
+                let reply: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+                    anyhow!("plugin `{plugin_name}` returned bad JSON ({e}): {raw}")
+                })?;
+                Ok(crate::hooks::Decision::parse(&reply))
+            }
+            PluginBackend::Component(component) => component.invoke_hook_decision(op, &args_json),
+        }
+    }
+
     /// Unload: call `plugin_shutdown`, then the caller drops the `Plugin`,
     /// which releases code + linear memory.
     pub fn shutdown(&mut self) {

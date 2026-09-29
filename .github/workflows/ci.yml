@@ -95,9 +95,11 @@ jobs:
             plugins/component-rust-demo/target
             plugins/component-rust-demo-v2/target
             plugins/component-rust-ui-demo/target
+            plugins/component-rust-hook-demo/target
             plugins/component-rust-demo/componentize/target
             plugins/component-rust-ui-demo/componentize/target
-          key: ${{ runner.os }}-component-cargo-${{ hashFiles('Cargo.lock', 'plugins/component-rust-demo/**/Cargo.lock', 'plugins/component-rust-demo-v2/Cargo.lock', 'plugins/component-rust-ui-demo/**/Cargo.lock') }}
+            plugins/component-rust-hook-demo/componentize/target
+          key: ${{ runner.os }}-component-cargo-${{ hashFiles('Cargo.lock', 'plugins/component-rust-demo/**/Cargo.lock', 'plugins/component-rust-demo-v2/Cargo.lock', 'plugins/component-rust-ui-demo/**/Cargo.lock', 'plugins/component-rust-hook-demo/**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-component-cargo-
 
@@ -109,6 +111,9 @@ jobs:
 
       - name: Build Rust WIT 0.3 typed-UI Component
         run: bash plugins/component-rust-ui-demo/build-component.sh
+
+      - name: Build Rust WIT 0.4 typed-hook Component
+        run: bash plugins/component-rust-hook-demo/build-component.sh
 
       - name: Build core plugin fixture
         run: cargo build -p hello-rust --target wasm32-wasip1
@@ -147,6 +152,18 @@ jobs:
           assert report['tool_dependencies']['component_ui_echo'] == ['component_ui_base']
           PY
 
+      - name: Validate Rust WIT 0.4 typed-hook Component artifact
+        run: |
+          cargo run -p wasm-plugin-host -- plugin-check \
+            plugins/component-rust-hook-demo/target/component-rust-hook-demo.component.wasm --json \
+            > /tmp/component-v4-report.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open('/tmp/component-v4-report.json'))
+          assert report['plugin'] == 'component-rust-hook-demo'
+          assert 'tools/pre-execute' in report['hooks']
+          PY
+
       - name: Smoke Rust Component
         run: |
           cargo run -p wasm-plugin-host --example component_smoke -- \
@@ -167,6 +184,11 @@ jobs:
             plugins/component-rust-ui-demo/target/component-rust-ui-demo.component.wasm \
             component_ui_echo \
             sandboxed
+
+      - name: Smoke Rust WIT 0.4 typed-hook Component
+        run: |
+          cargo run -p wasm-plugin-host --example component_hook_smoke -- \
+            plugins/component-rust-hook-demo/target/component-rust-hook-demo.component.wasm
 
       - name: Install JS Component toolchain
         working-directory: plugins/component-js-demo
