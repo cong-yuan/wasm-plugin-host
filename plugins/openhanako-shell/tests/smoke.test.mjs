@@ -675,6 +675,8 @@ check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').l
   const adapter = studio.require('lib/hana-adapter');
   const originalHttp = adapter.http;
   const modelCalls = [];
+  let holdModelSwitch = false;
+  let releaseModelSwitch = null;
   adapter.http = async (method, path, body) => {
     if (method === 'GET' && path === '/api/models') {
       return {
@@ -687,6 +689,18 @@ check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').l
     }
     if (method === 'POST' && (path === '/api/models/set' || path === '/api/models/switch')) {
       modelCalls.push({ method, path, body });
+      if (holdModelSwitch) {
+        return new Promise((resolve) => {
+          releaseModelSwitch = () => resolve({
+            ok: true,
+            model: {
+              id: body.modelId,
+              name: body.modelId === 'model-2' ? 'Model Two' : 'Model One',
+              provider: body.provider,
+            },
+          });
+        });
+      }
       return {
         ok: true,
         model: {
@@ -730,6 +744,25 @@ check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').l
     modelCalls.some((call) => call.path === '/api/models/switch'
       && /^studio:\/\//.test(call.body.sessionPath || '')
       && call.body.modelId === 'model-2'));
+
+  modelPill.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  holdModelSwitch = true;
+  const beforeHeldSwitches = modelCalls.length;
+  const heldOption = modelRoot.querySelectorAll('.model-option')[0];
+  heldOption.fire('click');
+  heldOption.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('model switch lock prevents duplicate rebind requests',
+    modelCalls.length === beforeHeldSwitches + 1
+    && modelRoot.querySelector('.model-selector')?.getAttribute('aria-busy') === 'true'
+    && modelPill.disabled === true);
+  releaseModelSwitch?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('model switch lock releases controls after completion',
+    modelRoot.querySelector('.model-selector')?.getAttribute('aria-busy') === 'false'
+    && modelPill.disabled === false);
+  holdModelSwitch = false;
 
   if (typeof disposeModelShell === 'function') disposeModelShell();
   adapter.http = originalHttp;

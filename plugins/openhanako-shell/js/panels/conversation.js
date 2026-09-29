@@ -48,7 +48,7 @@ return (function () {
   </svg>`;
 
   function render(options) {
-    const state = { id: null, turns: [], busy: false, cancelling: false, memory: true, epoch: 0 };
+    const state = { id: null, turns: [], busy: false, cancelling: false, memory: true, epoch: 0, switchingModel: false };
 
     // ── WelcomeScreen.tsx ──
     const heroSlot = h('div', { class: 'hana-slot' });
@@ -118,8 +118,10 @@ return (function () {
         send.appendChild(h('span', { class: 'send-label' },
           svg(SEND_ENTER), h('span', {}, t('chat.send'))));
       }
-      modelPill.disabled = !!state.busy;
-      modelPill.classList.toggle('model-pill-disabled', !!state.busy);
+      const modelDisabled = !!state.busy || !!state.switchingModel;
+      modelPill.disabled = modelDisabled;
+      modelPill.classList.toggle('model-pill-disabled', modelDisabled);
+      modelSelector.setAttribute('aria-busy', state.switchingModel ? 'true' : 'false');
     }
 
     const controlBar = h('div', { class: 'input-bottom-bar' },
@@ -148,18 +150,32 @@ return (function () {
     };
 
     const chooseModel = async (model) => {
-      if (!model || state.busy) return;
-      const payload = { modelId: model.id, provider: model.provider };
-      const result = state.id
-        ? await adapter.http('POST', '/api/models/switch', {
-            ...payload,
-            sessionPath: 'studio://' + state.id,
-          })
-        : await adapter.http('POST', '/api/models/set', payload);
-      const selected = result && result.model ? result.model : model;
-      setModelLabel(selected.name || selected.id || model.id);
-      closeModels();
-      options.onChanged();
+      if (!model || state.busy || state.switchingModel) return;
+      state.switchingModel = true;
+      const switchEpoch = state.epoch;
+      renderSendState();
+      const optionsNow = modelDropdown.querySelectorAll('.model-option');
+      optionsNow.forEach((option) => { option.disabled = true; });
+      try {
+        const payload = { modelId: model.id, provider: model.provider };
+        const result = state.id
+          ? await adapter.http('POST', '/api/models/switch', {
+              ...payload,
+              sessionPath: 'studio://' + state.id,
+            })
+          : await adapter.http('POST', '/api/models/set', payload);
+        if (state.epoch !== switchEpoch) return;
+        const selected = result && result.model ? result.model : model;
+        setModelLabel(selected.name || selected.id || model.id);
+        closeModels();
+        options.onChanged();
+      } finally {
+        optionsNow.forEach((option) => { option.disabled = false; });
+        if (state.epoch === switchEpoch) {
+          state.switchingModel = false;
+          renderSendState();
+        }
+      }
     };
 
     const refreshModels = async () => {
@@ -189,7 +205,7 @@ return (function () {
     };
 
     modelPill.onclick = async () => {
-      if (state.busy) return;
+      if (state.busy || state.switchingModel) return;
       const opening = !modelSelector.classList.contains('open');
       if (!opening) {
         closeModels();
@@ -267,6 +283,7 @@ return (function () {
       state.id = session.id;
       state.busy = false;
       state.cancelling = false;
+      state.switchingModel = false;
       renderSendState();
       if (wasBusy && previousId && previousId !== session.id) {
         api.cancel(previousId).catch(() => {});
@@ -424,6 +441,7 @@ return (function () {
         state.turns = [];
         state.busy = false;
         state.cancelling = false;
+        state.switchingModel = false;
         closeModels();
         renderSendState();
         draw();
