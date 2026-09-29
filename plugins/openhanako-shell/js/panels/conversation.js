@@ -126,6 +126,13 @@ return (function () {
       welcome.classList.toggle('hidden', !empty);
       root.classList.toggle('welcome-mode', empty);
       chat.classList.toggle('has-panels', !empty);
+      const toolResults = new Map();
+      state.turns.forEach((message) => {
+        (message && Array.isArray(message.tool_results) ? message.tool_results : []).forEach((result) => {
+          const id = result && (result.tool_call_id ?? result.toolCallId ?? result.id);
+          if (id != null) toolResults.set(String(id), result);
+        });
+      });
       // UserMessage.tsx / AssistantMessage.tsx group markup (Chat.module.css).
       state.turns.forEach((m) => {
         const isUser = m.role === 'user';
@@ -145,6 +152,28 @@ return (function () {
         group.appendChild(h('div', {
           class: 'message ' + (isUser ? 'messageUser' : 'messageAssistant'),
         }, h('div', { class: 'md-content' }, m.text || '')));
+        if (!isUser && m.reasoning) {
+          group.appendChild(h('details', { class: 'thinkingBlock' },
+            h('summary', { class: 'thinkingBlockSummary' }, 'Thinking'),
+            h('div', { class: 'thinkingBlockBody' }, m.reasoning)));
+        }
+        if (!isUser && Array.isArray(m.tool_calls) && m.tool_calls.length) {
+          m.tool_calls.forEach((call) => {
+            const id = String(call.id ?? call.call_id ?? call.tool_call_id ?? '');
+            const result = id ? toolResults.get(id) : null;
+            const failed = !!(result && (result.is_error === true || result.isError === true || result.success === false));
+            const status = result ? (failed ? 'Failed' : 'Succeeded') : 'Running';
+            const box = h('div', {
+              class: 'toolGroup toolGroupSingle',
+              'data-tool-state': result ? (failed ? 'failed' : 'succeeded') : 'running',
+            },
+              h('div', { class: 'toolGroupContent' },
+                h('div', { class: 'toolGroupSummary' },
+                  h('span', { class: 'toolGroupTitle' }, call.name || 'tool'),
+                  h('span', { class: 'openhanako-tool-status' }, status))));
+            group.appendChild(box);
+          });
+        }
         stream.appendChild(group);
       });
       chat.scrollTop = chat.scrollHeight;
@@ -178,13 +207,61 @@ return (function () {
         state.id = await api.create(provider, provider === 'mock' ? 'mock-1' : provider);
         options.onCreated(state.id);
       }
-      const sent = await api.send(state.id, text, 'hana-' + Date.now());
-      if (!sent) state.turns.push({ role: 'assistant', text: t('error.llmEmptyResponse') });
-      else state.turns = await api.transcript(state.id);
-      state.busy = false;
-      send.disabled = false;
+      const assistant = {
+        role: 'assistant',
+        text: '',
+        reasoning: '',
+        tool_calls: [],
+        tool_results: [],
+      };
+      state.turns.push(assistant);
       draw();
       options.onChanged();
+      try {
+        const sent = await api.sendWithProgress(
+          state.id,
+          text,
+          'hana-' + Date.now(),
+          (event) => {
+            if (!event || typeof event !== 'object') return;
+            if (event.kind === 'text_delta' && event.delta) {
+              assistant.text += event.delta;
+            } else if (event.kind === 'thinking_delta' && event.delta) {
+              assistant.reasoning += event.delta;
+            } else if (event.kind === 'tool_start') {
+              const id = String(event.id || ('tool-' + Date.now()));
+              if (!assistant.tool_calls.some((call) => String(call.id) === id)) {
+                assistant.tool_calls.push({
+                  id,
+                  name: event.name || 'tool',
+                  arguments: event.args || {},
+                });
+              }
+            } else if (event.kind === 'tool_end') {
+              const id = String(event.id || '');
+              if (id && !assistant.tool_results.some((result) => String(result.tool_call_id) === id)) {
+                assistant.tool_results.push({
+                  tool_call_id: id,
+                  content: event.error || event.output || '',
+                  is_error: event.success === false,
+                  details: event.details,
+                });
+              }
+            }
+            draw();
+            options.onChanged();
+          },
+        );
+        if (!sent && !assistant.text) assistant.text = t('error.llmEmptyResponse');
+        state.turns = await api.transcript(state.id);
+      } catch (err) {
+        assistant.text = (err && err.message) ? err.message : String(err);
+      } finally {
+        state.busy = false;
+        send.disabled = false;
+        draw();
+        options.onChanged();
+      }
     }
 
     send.onclick = submit;

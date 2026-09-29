@@ -6223,6 +6223,19 @@ html[data-platform="linux"] .onboarding {
     padding: 0;
 }
 
+.openhanako-tool-status {
+    margin-left: auto;
+    font-size: var(--fs-hint);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.toolGroup[data-tool-state="running"] .openhanako-tool-status {
+    color: #a4742f;
+}
+.toolGroup[data-tool-state="failed"] .openhanako-tool-status {
+    color: #a64238;
+}
+
 /* ── 连续过程大折叠 ── */
 
 .processFoldMessage {

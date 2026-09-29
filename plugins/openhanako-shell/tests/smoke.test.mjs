@@ -162,6 +162,14 @@ const studio = {
 const failures = [];
 const check = (label, cond) => { if (!cond) failures.push(label); };
 
+const api = studio.require('lib/api');
+let streamedSends = 0;
+const originalSendWithProgress = api.sendWithProgress;
+api.sendWithProgress = async (...args) => {
+  streamedSends += 1;
+  return originalSendWithProgress(...args);
+};
+
 const shell = studio.require('shell');
 const host = new El('div');
 shell.render(host);
@@ -219,6 +227,17 @@ check('jian drawer opens',
 root.querySelectorAll('.tab')[0].fire('click');
 check('tab switches', root.querySelectorAll('.tabActive').length === 1);
 root.querySelector('.memoryToggleBtn').fire('click');
+
+// Main shell chat must use the incremental transport rather than the legacy
+// whole-turn send path. The mock backend emits thinking + text in chunks.
+const smokeInput = root.querySelector('.input-box');
+smokeInput.textContent = 'stream smoke';
+root.querySelector('.send-btn').fire('click');
+await new Promise((resolve) => setTimeout(resolve, 120));
+check('conversation uses sendWithProgress', streamedSends === 1);
+check('streamed assistant response reaches DOM',
+  root.querySelectorAll('.md-content').some((el) => /mock fallback/.test(el.textContent)));
+check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').length > 0);
 
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
