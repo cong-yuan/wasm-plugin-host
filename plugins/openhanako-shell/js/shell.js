@@ -5,6 +5,7 @@ return (function () {
   const { h } = studio.require('lib/dom');
   const slots = studio.require('lib/slots');
   const api = studio.require('lib/api');
+  const adapter = studio.require('lib/hana-adapter');
   const theme = studio.require('lib/theme');
   const resize = studio.require('lib/resize');
   const { t } = studio.require('lib/i18n');
@@ -89,8 +90,13 @@ return (function () {
     const unResize = resize.wireAll(root);
 
     async function refresh() {
-      const [plugins, tools, status] = await Promise.all([api.plugins(), api.tools(), api.status()]);
-      right.update({ plugins, tools, status });
+      const [plugins, tools, status, runtime] = await Promise.all([
+        api.plugins(),
+        api.tools(),
+        api.status(),
+        adapter.http('GET', '/api/runtime-state').catch(() => ({ mode: api.mode(), sessions: [] })),
+      ]);
+      right.update({ plugins, tools, status, runtime });
       await side.refresh(state.selected);
     }
     refresh();

@@ -54,9 +54,10 @@ return (function () {
     });
 
     // <div className={styles.content} role="tabpanel"> → TabContent
+    const runtimeSummary = h('div', { class: 'runtimeSummary' });
     const fileList = h('div', { class: 'fileList' });
     const itemsSlot = h('div', { class: 'rail-items-slot' });
-    const content = h('div', { class: 'content', role: 'tabpanel' }, fileList, itemsSlot);
+    const content = h('div', { class: 'content', role: 'tabpanel' }, runtimeSummary, fileList, itemsSlot);
     slots.mount('hana.rail.items', itemsSlot);
 
     // <section className={styles.jianDrawer} data-open=…>
@@ -117,6 +118,28 @@ return (function () {
 
     function update(data) {
       const tools = (data && data.tools) || [];
+      const plugins = (data && data.plugins) || [];
+      const runtime = (data && data.runtime) || { mode: 'unknown', sessions: [] };
+      const sessions = Array.isArray(runtime.sessions) ? runtime.sessions : [];
+      const running = sessions.filter((session) => session.status === 'running' || session.isStreaming).length;
+      const errors = sessions.filter((session) => session.status === 'error' || session.error).length;
+      const activeTools = sessions.reduce((sum, session) => sum + (Number(session.activeToolCount) || 0), 0);
+      clear(runtimeSummary);
+      const metrics = [
+        ['Sessions', sessions.length],
+        ['Running', running],
+        ['Active tools', activeTools],
+        ['Errors', errors],
+        ['Plugins', plugins.length],
+      ];
+      for (const [label, value] of metrics) {
+        runtimeSummary.appendChild(h('div', {
+          class: 'runtimeMetric' + (label === 'Errors' && value > 0 ? ' runtimeMetricError' : ''),
+        },
+          h('span', { class: 'runtimeMetricLabel' }, label),
+          h('strong', { class: 'runtimeMetricValue' }, String(value))));
+      }
+      runtimeSummary.setAttribute('data-runtime-mode', runtime.mode || 'unknown');
       clear(fileList);
       if (!tools.length) {
         fileList.appendChild(h('div', { class: 'emptyState' },

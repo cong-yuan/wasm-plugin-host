@@ -195,7 +195,7 @@ for (const sel of [
   '.input-bottom-bar', '.input-actions', '.input-controls', '.attach-btn',
   '.plan-mode-btn', '.model-selector', '.model-pill', '.send-btn', '.send-label',
   '.preview-panel', '.jian-sidebar', '.jian-sidebar-inner', '.workspaceShell',
-  '.workspaceCard', '.universal-card', '.workspaceHeader', '.workspaceTitle',
+  '.workspaceCard', '.universal-card', '.workspaceHeader', '.workspaceTitle', '.runtimeSummary',
   '.tabs', '.tabSlider', '.tab', '.tabActive', '.content',
   '.jianDrawer', '.jianHeader', '.jianTitle', '.jianBody', '.jianToggle',
 ]) {
