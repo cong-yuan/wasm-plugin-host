@@ -175,13 +175,13 @@ return (function () {
       return null;
     },
     softUnbind: async (agentId) => {
-      // Mock keeps the transcript fixture.
-      const row = sessions.find((s) => s.id === agentId);
-      if (row) row.live = true;
+      // Mock keeps the transcript fixture but marks the session cold.
+      const row = sessionsStore.find((s) => s.id === agentId);
+      if (row) row.live = false;
       return null;
     },
     rebind: async (agentId, provider, model) => {
-      const row = sessions.find((s) => s.id === agentId);
+      const row = sessionsStore.find((s) => s.id === agentId);
       if (row) {
         row.live = true;
         row.provider = provider;

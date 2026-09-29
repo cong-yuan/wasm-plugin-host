@@ -490,14 +490,14 @@ check('transcript becomes history content',
   api.cancel = originalCancel;
 }
 
-// Deleting a running session seals its callback before dispose_agent awaits.
+// Archiving a running session seals its callback before soft-unbind awaits.
 {
   const originalSessions = api.sessions;
   const originalSendWithProgress = api.sendWithProgress;
-  const originalDispose = api.dispose;
+  const originalSoftUnbind = api.softUnbind;
   let progress = null;
   let finishSend = null;
-  const disposed = [];
+  const softUnbound = [];
   api.sessions = async () => [
     { id: 'agent-delete-race', busy: false, live: true, status: 'idle' },
   ];
@@ -506,7 +506,7 @@ check('transcript becomes history content',
     await new Promise((resolve) => { finishSend = resolve; });
     return true;
   };
-  api.dispose = async (id) => { disposed.push(id); };
+  api.softUnbind = async (id) => { softUnbound.push(id); };
 
   const events = [];
   const sending = adapter.ws({
@@ -526,15 +526,16 @@ check('transcript becomes history content',
   finishSend();
   await sending;
 
-  check('running archive disposes selected agent',
-    archived?.ok === true && disposed.length === 1 && disposed[0] === 'agent-delete-race');
+  check('running archive soft-unbinds selected agent',
+    archived?.ok === true && archived?.archived === true
+    && softUnbound.length === 1 && softUnbound[0] === 'agent-delete-race');
   check('running archive drops late progress and terminal events',
     events.length === countAfterDelete
     && !events.some((event) => event.delta === 'late deleted output' || event.id === 'late-deleted-tool'));
 
   api.sessions = originalSessions;
   api.sendWithProgress = originalSendWithProgress;
-  api.dispose = originalDispose;
+  api.softUnbind = originalSoftUnbind;
 }
 
 // steer must pass msgId
@@ -631,13 +632,26 @@ check('host bridge correlates requestId',
 }
 
 
-// archive must dispose the Studio agent (not a no-op stub)
+// Archive is reversible: soft-unbind keeps JSONL/history, hides the session
+// from the active list, and restore resumes it. Permanent archived delete is
+// the operation that disposes the Studio agent.
 {
   calls.length = 0;
   const archived = await adapter.http('POST', '/api/sessions/archive', { sessionId: 'agent-1' });
-  check('archive disposes agent',
-    archived && archived.ok === true && archived.removed === true
-    && calls.some((c) => c.cmd === 'dispose_agent' && c.args.agentId === 'agent-1'));
+  check('archive soft-unbinds agent without disposing history',
+    archived && archived.ok === true && archived.archived === true
+    && calls.some((c) => c.cmd === 'soft_unbind_agent' && c.args.agentId === 'agent-1')
+    && !calls.some((c) => c.cmd === 'dispose_agent'));
+  const archivedRows = await adapter.http('GET', '/api/sessions/archived');
+  check('archived session is listed', archivedRows.some((row) => row.sessionId === 'agent-1'));
+  const activeRows = await adapter.http('GET', '/api/sessions');
+  check('archived session is hidden from active list', !activeRows.some((row) => row.sessionId === 'agent-1'));
+
+  calls.length = 0;
+  const restored = await adapter.http('POST', '/api/sessions/restore', { sessionId: 'agent-1' });
+  check('restore resumes archived agent',
+    restored && restored.ok === true && restored.restored === true
+    && calls.some((c) => c.cmd === 'resume_session' && c.args.sessionId === 'agent-1'));
 }
 
 // Busy session must refuse a second prompt (send lock).

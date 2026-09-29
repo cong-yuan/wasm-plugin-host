@@ -80,6 +80,8 @@ return (function () {
   const CATALOG_KEY = 'openhanako.sessionProjectCatalog.v1';
   const ASSIGN_KEY = 'openhanako.sessionProjectAssignments.v1';
   const PIN_KEY = 'openhanako.sessionPins.v1';
+  const TITLE_KEY = 'openhanako.sessionTitles.v1';
+  const ARCHIVE_KEY = 'openhanako.archivedSessions.v1';
   const PIN_ORDER_STEP = 1024;
   const UNCATEGORIZED_PROJECT_ID = 'cwd:';
 
@@ -118,6 +120,12 @@ return (function () {
       localStorage.setItem(key, JSON.stringify(value));
     } catch (_) { /* quota / private mode / broken Storage */ }
   };
+
+  const loadTitles = () => readJson(TITLE_KEY, {}) || {};
+  const saveTitles = (value) => writeJson(TITLE_KEY, value || {});
+  const loadArchived = () => readJson(ARCHIVE_KEY, {}) || {};
+  const saveArchived = (value) => writeJson(ARCHIVE_KEY, value || {});
+  const archivedRecord = (sessionId) => loadArchived()[pathFor(sessionId)] || null;
 
 
   // ── Per-session model assignment (local; Studio agents bind model at create) ──
@@ -669,6 +677,7 @@ return (function () {
   const projection = (row) => {
     const path = pathFor(row.id);
     const pin = loadPins()[path] || null;
+    const localTitle = loadTitles()[path] || null;
     const activeTurn = activeTurns.get(String(row.id || ''));
     const isStreaming = !!(activeTurn && isActiveTurn(activeTurn));
     const status = row.busy || isStreaming
@@ -682,8 +691,8 @@ return (function () {
     return {
       path,
       sessionId: row.id,
-      title: row.title || null,
-      firstMessage: row.title || '',
+      title: localTitle || row.title || null,
+      firstMessage: localTitle || row.title || '',
       ...(isoTimestamp ? { modified: isoTimestamp, created: isoTimestamp } : {}),
       messageCount: row.messages || 0,
       cwd: null,
@@ -1003,6 +1012,7 @@ return (function () {
 
   const ensureLive = async (sessionId) => {
     if (!sessionId) throw new Error('missing session');
+    if (archivedRecord(sessionId)) throw new Error('session is archived');
     if (disposedIds.has(sessionId)) {
       throw new Error('session was archived/deleted');
     }
@@ -1246,7 +1256,14 @@ return (function () {
 
     if (pathname === '/api/sessions' && verb === 'GET') {
       const rows = await api.sessions();
-      return rows.map(projection);
+      return rows.filter((row) => !archivedRecord(row.id)).map(projection);
+    }
+
+    if (pathname === '/api/sessions/archived' && verb === 'GET') {
+      const archived = loadArchived();
+      return Object.values(archived)
+        .filter((row) => row && row.sessionId)
+        .sort((a, b) => String(b.archivedAt || '').localeCompare(String(a.archivedAt || '')));
     }
 
     if (pathname === '/api/runtime-state' && verb === 'GET') {
@@ -1360,11 +1377,74 @@ return (function () {
     }
 
     if (pathname === '/api/sessions/archive' && verb === 'POST') {
-      return disposeSession(sessionIdFromBody(body, query));
+      const sessionId = sessionIdFromBody(body, query);
+      if (!sessionId) return { ok: false, error: 'missing session' };
+      deactivateTurn(activeTurns.get(sessionId));
+      const rows = await api.sessions();
+      const row = rows.find((item) => item.id === sessionId) || { id: sessionId };
+      const projected = projection(row);
+      try {
+        await api.softUnbind(sessionId);
+        const archived = loadArchived();
+        archived[pathFor(sessionId)] = {
+          ...projected,
+          sessionId,
+          path: pathFor(sessionId),
+          archivedAt: new Date().toISOString(),
+          live: false,
+          busy: false,
+          isStreaming: false,
+        };
+        saveArchived(archived);
+        return { ok: true, sessionId, archived: true };
+      } catch (err) {
+        return { ok: false, sessionId, error: err && err.message ? err.message : String(err) };
+      }
     }
 
     if (pathname === '/api/sessions/archived/delete' && verb === 'POST') {
-      return disposeSession(sessionIdFromBody(body, query));
+      const sessionId = sessionIdFromBody(body, query);
+      const result = await disposeSession(sessionId);
+      if (result.ok && sessionId) {
+        const archived = loadArchived();
+        delete archived[pathFor(sessionId)];
+        saveArchived(archived);
+      }
+      return result;
+    }
+
+    if (pathname === '/api/sessions/rename' && verb === 'POST') {
+      const sessionId = sessionIdOf(body, query);
+      const title = trimName(body && (body.title || body.name));
+      if (!sessionId) return { ok: false, error: 'missing session' };
+      if (!title) return { ok: false, error: 'title required' };
+      const titles = loadTitles();
+      titles[pathFor(sessionId)] = title;
+      saveTitles(titles);
+      const archived = loadArchived();
+      if (archived[pathFor(sessionId)]) {
+        archived[pathFor(sessionId)].title = title;
+        archived[pathFor(sessionId)].firstMessage = title;
+        saveArchived(archived);
+      }
+      return { ok: true, sessionId, path: pathFor(sessionId), title };
+    }
+
+    if (pathname === '/api/sessions/restore' && verb === 'POST') {
+      const sessionId = sessionIdOf(body, query);
+      if (!sessionId) return { ok: false, error: 'missing session' };
+      const archived = loadArchived();
+      if (!archived[pathFor(sessionId)]) return { ok: false, error: 'session is not archived' };
+      try {
+        const resumed = await api.resume(sessionId);
+        delete archived[pathFor(sessionId)];
+        saveArchived(archived);
+        disposedIds.delete(sessionId);
+        const restoredId = resumed || sessionId;
+        return { ok: true, sessionId: restoredId, path: pathFor(restoredId), restored: true };
+      } catch (err) {
+        return { ok: false, sessionId, error: err && err.message ? err.message : String(err) };
+      }
     }
 
     if ((pathname === '/api/sessions/delete' || pathname === '/api/sessions/remove') && verb === 'POST') {
