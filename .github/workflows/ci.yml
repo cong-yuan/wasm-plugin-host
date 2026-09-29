@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  rust:
+    name: Rust checks and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check default host crates
+        env:
+          RUSTFLAGS: -D warnings
+        run: |
+          cargo check -p wasm-plugin-host --all-targets
+          cargo check -p dsh-wasm-host --all-targets
+          cargo check -p plugin-sdk --all-targets
+
+      - name: Test host
+        run: cargo test -p wasm-plugin-host
+
+      - name: Test dsh integration
+        run: cargo test -p dsh-wasm-host
+
+      - name: Test plugin SDK
+        run: cargo test -p plugin-sdk
+
+      - name: Release build
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo build --release -p wasm-plugin-host -p dsh-wasm-host -p plugin-sdk
+
+  components:
+    name: Component Model smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust and wasm target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: plugins/component-js-demo/package-lock.json
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            plugins/component-rust-demo/target
+            plugins/component-rust-demo/componentize/target
+          key: ${{ runner.os }}-component-cargo-${{ hashFiles('Cargo.lock', 'plugins/component-rust-demo/**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-component-cargo-
+
+      - name: Build Rust Component
+        run: bash plugins/component-rust-demo/build-component.sh
+
+      - name: Smoke Rust Component
+        run: |
+          cargo run -p wasm-plugin-host --example component_smoke --             plugins/component-rust-demo/target/component-rust-demo.component.wasm             component_echo             sandboxed
+
+      - name: Install JS Component toolchain
+        working-directory: plugins/component-js-demo
+        run: npm ci --ignore-scripts
+
+      - name: Build sandbox-safe JS Component
+        working-directory: plugins/component-js-demo
+        run: npm run build
+
+      - name: Smoke sandbox-safe JS Component
+        run: |
+          cargo run -p wasm-plugin-host --example component_smoke --             plugins/component-js-demo/dist/component-js-demo.component.wasm             js_component_echo             sandboxed
+
+      - name: Build trusted Preview2 JS Component
+        working-directory: plugins/component-js-demo
+        run: npm run build:preview2
+
+      - name: Smoke trusted Preview2 JS Component
+        run: |
+          cargo run -p wasm-plugin-host --example component_smoke --             plugins/component-js-demo/dist/component-js-demo.preview2.component.wasm             js_component_echo
+
+  ui:
+    name: UI plugin harnesses
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            plugins/hana-shell/package-lock.json
+            plugins/openhanako-shell/package-lock.json
+
+      - name: Test hana-shell
+        working-directory: plugins/hana-shell
+        run: |
+          npm ci --ignore-scripts
+          npm test
+
+      - name: Test openhanako-shell
+        working-directory: plugins/openhanako-shell
+        run: |
+          npm ci --ignore-scripts
+          npm test
