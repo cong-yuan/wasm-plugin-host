@@ -128,6 +128,29 @@ function dragData() {
   };
 }
 
+function ensureTestLocalStorage(): void {
+  if (
+    window.localStorage
+    && typeof window.localStorage.getItem === 'function'
+    && typeof window.localStorage.setItem === 'function'
+    && typeof window.localStorage.removeItem === 'function'
+  ) return;
+
+  const values = new Map<string, string>();
+  const storage: Storage = {
+    get length() { return values.size; },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => { values.delete(key); },
+    setItem: (key, value) => { values.set(key, String(value)); },
+  };
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: storage,
+  });
+}
+
 async function openSortMenu() {
   fireEvent.click(await screen.findByRole('button', { name: 'sidebar.view.sort' }));
 }
@@ -141,6 +164,7 @@ async function switchToProjectView() {
 
 describe('SessionList context menu', () => {
   beforeEach(() => {
+    ensureTestLocalStorage();
     window.localStorage.removeItem('hana-session-sidebar-view-mode');
     window.localStorage.removeItem('hana-sidebar-ui-prefs');
     useStore.getState().applySidebarUiPrefs({});
@@ -583,9 +607,11 @@ describe('SessionList context menu', () => {
 
     const pendingRow = sessionButton('Has summary');
     expect(pendingRow).toHaveAttribute('data-switch-pending', 'true');
+    expect(pendingRow.querySelector('[data-session-switch-spinner]')).toBeInTheDocument();
 
     const currentRow = sessionButton('No summary');
     expect(currentRow).toHaveAttribute('data-switch-pending', 'false');
+    expect(currentRow.querySelector('[data-session-switch-spinner]')).not.toBeInTheDocument();
   });
 
   // 切换会话是本地操作，通常几十毫秒就完成。此前它会借用「正在输出」的状态点，
@@ -602,6 +628,7 @@ describe('SessionList context menu', () => {
 
     const pendingRow = sessionButton('Has summary');
     expect(pendingRow.querySelector('[data-session-status-dot]')).not.toBeInTheDocument();
+    expect(pendingRow.querySelector('[data-session-switch-spinner]')).toBeInTheDocument();
   });
 
   it('keeps the running dot on a session that is both switching and streaming', () => {

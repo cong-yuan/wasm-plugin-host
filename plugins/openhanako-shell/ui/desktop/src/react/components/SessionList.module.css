@@ -226,6 +226,24 @@
     font-weight: 600;
 }
 
+.sessionSwitchSpinner {
+    width: 10px;
+    height: 10px;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    border: 1.5px solid color-mix(in srgb, var(--text-muted) 38%, transparent);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: hana-spin 0.72s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sessionSwitchSpinner {
+        animation: none;
+        border-top-color: currentColor;
+    }
+}
+
 .sessionItemMeta {
     font-size: var(--fs-hint);
     color: var(--text-muted);

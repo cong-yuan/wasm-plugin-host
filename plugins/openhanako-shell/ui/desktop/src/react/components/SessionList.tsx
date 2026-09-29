@@ -1711,6 +1711,14 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isPending,
               aria-hidden="true"
             />
           )}
+          {isPending && (
+            <span
+              className={styles.sessionSwitchSpinner}
+              data-session-switch-spinner=""
+              aria-label={t('common.loading')}
+              role="status"
+            />
+          )}
           {editing ? (
             <input
               ref={inputRef}
