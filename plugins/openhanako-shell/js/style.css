@@ -1081,6 +1081,8 @@ html[data-platform="linux"] .tb-toggle-right {
 .sessionPinBtn,
 .sessionArchiveBtn,
 .sessionRestoreBtn,
+.sessionDeleteBtn,
+.sessionRenameBtn,
 .sessionPinMoveBtn,
 .sessionStopBtn,
 .sessionDetailsBtn {
@@ -1101,6 +1103,8 @@ html[data-platform="linux"] .tb-toggle-right {
 .sessionPinBtn:hover,
 .sessionArchiveBtn:hover,
 .sessionRestoreBtn:hover,
+.sessionDeleteBtn:hover,
+.sessionRenameBtn:hover,
 .sessionPinMoveBtn:hover,
 .sessionStopBtn:hover,
 .sessionDetailsBtn:hover {
@@ -1117,6 +1121,50 @@ html[data-platform="linux"] .tb-toggle-right {
 .sessionRestoreBtn:hover {
     color: #47765d;
     background: rgba(70,130,95,0.08);
+}
+.sessionDeleteBtn.confirm {
+    width: auto;
+    min-width: 42px;
+    padding: 0 5px;
+    color: #a64238;
+    background: rgba(190,80,70,0.1);
+}
+.sessionRenameEditor {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+.sessionRenameInput {
+    min-width: 0;
+    flex: 1;
+    height: 24px;
+    border: 1px solid rgba(0,0,0,0.09);
+    border-radius: 6px;
+    padding: 0 6px;
+    font: inherit;
+    font-size: 11px;
+    color: var(--text-primary);
+    background: rgba(255,255,255,0.75);
+    outline: none;
+}
+.sessionRenameSave,
+.sessionRenameCancel {
+    height: 22px;
+    border: 0;
+    border-radius: 5px;
+    padding: 0 6px;
+    font: inherit;
+    font-size: 9px;
+    color: var(--text-muted);
+    background: rgba(0,0,0,0.045);
+    cursor: pointer;
+}
+.sessionRenameSave:hover,
+.sessionRenameCancel:hover {
+    color: var(--text-primary);
+    background: rgba(0,0,0,0.075);
 }
 .sessionStopBtn:hover {
     color: #a64238;

@@ -251,7 +251,7 @@ check('4 activity bars', chatContent.children.filter(
     && root.querySelectorAll('.sessionPinBtn').length === beforeRows.length
     && root.querySelectorAll('.sessionArchiveBtn').length === beforeRows.length);
   const target = beforeRows[beforeRows.length - 1];
-  const targetTitle = target.querySelector('.sessionItemTitle')?.textContent || '';
+  let targetTitle = target.querySelector('.sessionItemTitle')?.textContent || '';
   target.querySelector('.sessionPinBtn')?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   const pinnedRows = root.querySelectorAll('.sessionItem');
@@ -269,8 +269,20 @@ check('4 activity bars', chatContent.children.filter(
     root.querySelectorAll('.sessionDetailsPanel').length === 1
     && /Session/.test(root.querySelector('.sessionDetailsPanel')?.textContent || '')
     && /Runtime/.test(root.querySelector('.sessionDetailsPanel')?.textContent || ''));
+  root.querySelectorAll('.sessionItem')[0]?.querySelector('.sessionRenameBtn')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const renameInput = root.querySelector('.sessionRenameInput');
+  check('rename action opens inline editor', !!renameInput && root.querySelectorAll('.sessionRenameSave').length === 1);
+  const renamedTitle = 'Renamed smoke session';
+  if (renameInput) renameInput.value = renamedTitle;
+  root.querySelector('.sessionRenameSave')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('inline rename persists through adapter',
+    root.querySelectorAll('.sessionItemTitle').some((el) => el.textContent === renamedTitle)
+    && /session renamed/i.test(root.querySelector('.sessionActionStatus')?.textContent || ''));
+  targetTitle = renamedTitle;
 
-  pinnedRows[0]?.querySelector('.sessionArchiveBtn')?.fire('click');
+  root.querySelectorAll('.sessionItem')[0]?.querySelector('.sessionArchiveBtn')?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   check('archive removes the session from sidebar',
     !root.querySelectorAll('.sessionItemTitle').some((el) => el.textContent === targetTitle));
@@ -284,6 +296,17 @@ check('4 activity bars', chatContent.children.filter(
     && root.querySelectorAll('.sessionRestoreBtn').length >= 1);
   check('archive action reports completion',
     /session archived/i.test(root.querySelector('.sessionActionStatus')?.textContent || ''));
+  root.querySelector('.sessionDeleteBtn')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('archived delete requires explicit second confirmation',
+    root.querySelectorAll('.sessionItemTitle').some((el) => el.textContent === targetTitle)
+    && root.querySelector('.sessionDeleteBtn')?._classes().includes('confirm')
+    && /click delete again/i.test(root.querySelector('.sessionActionStatus')?.textContent || ''));
+  // Switching views cancels the armed permanent delete.
+  viewButtons[0]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  viewButtons[1]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
   root.querySelector('.sessionRestoreBtn')?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   check('restore returns archived session to active view',

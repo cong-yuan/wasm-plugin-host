@@ -19,7 +19,7 @@ return (function () {
   };
 
   function render(options) {
-    const view = { archived: false, query: '', searchVersion: 0, expanded: new Set() };
+    const view = { archived: false, query: '', searchVersion: 0, expanded: new Set(), renamingId: null, deleteConfirmId: null };
     const searchCache = new Map();
     let searchTimer = null;
     const add = h('button', { class: 'sidebar-action-btn', title: t('sidebar.newChat') }, svg(ICON.newChat));
@@ -209,6 +209,14 @@ return (function () {
           : isError ? h('button', { class: 'sessionRetryBtn', type: 'button', title: 'Retry session' }, '↻') : null;
         const rowActions = h('span', { class: 'sessionItemActions' });
 
+        const rename = h('button', { class: 'sessionRenameBtn', type: 'button', title: 'Rename session' }, '✎');
+        rename.onclick = (event) => {
+          event?.stopPropagation?.();
+          view.renamingId = s.id;
+          draw(selected);
+        };
+        rowActions.appendChild(rename);
+
         if (view.archived) {
           const restore = h('button', { class: 'sessionRestoreBtn', type: 'button', title: 'Restore session' }, '↩');
           restore.onclick = async (event) => {
@@ -230,6 +238,36 @@ return (function () {
             }
           };
           rowActions.appendChild(restore);
+          const deleting = view.deleteConfirmId === s.id;
+          const remove = h('button', {
+            class: 'sessionDeleteBtn' + (deleting ? ' confirm' : ''),
+            type: 'button',
+            title: deleting ? 'Click again to permanently delete' : 'Permanently delete archived session',
+          }, deleting ? 'Delete' : '⌫');
+          remove.onclick = async (event) => {
+            event?.stopPropagation?.();
+            if (!deleting) {
+              view.deleteConfirmId = s.id;
+              reportAction('Click Delete again to permanently remove this session');
+              await draw(selected);
+              return;
+            }
+            reportAction('Deleting archived session…');
+            try {
+              const result = await adapter.http('POST', '/api/sessions/archived/delete', { sessionId: s.id, path: s.path });
+              if (!result || result.ok === false || result.error) {
+                reportAction(result?.error || 'Delete failed', true, () => remove.onclick({ stopPropagation() {} }));
+                return;
+              }
+              view.deleteConfirmId = null;
+              view.expanded.delete(s.id);
+              reportAction('Archived session permanently deleted');
+              await draw(selected);
+            } catch (err) {
+              reportAction(err?.message || 'Delete failed', true, () => remove.onclick({ stopPropagation() {} }));
+            }
+          };
+          rowActions.appendChild(remove);
         } else {
           const pin = h('button', {
             class: 'sessionPinBtn' + (s.pinnedAt ? ' active' : ''),
@@ -305,6 +343,48 @@ return (function () {
           title: view.expanded.has(s.id) ? 'Hide session details' : 'Show session details',
         }, view.expanded.has(s.id) ? '⌃' : '…');
         rowActions.appendChild(detailsToggle);
+        const renaming = view.renamingId === s.id;
+        const titleNode = renaming
+          ? h('span', { class: 'sessionRenameEditor' })
+          : h('span', { class: 'sessionItemTitle' }, s.title || t('session.untitled'));
+        if (renaming) {
+          const renameInput = h('input', { class: 'sessionRenameInput', type: 'text', 'aria-label': 'Session title' });
+          renameInput.value = s.title || '';
+          const saveRename = h('button', { class: 'sessionRenameSave', type: 'button' }, 'Save');
+          const cancelRename = h('button', { class: 'sessionRenameCancel', type: 'button' }, 'Cancel');
+          saveRename.onclick = async (event) => {
+            event?.stopPropagation?.();
+            const nextTitle = String(renameInput.value || '').trim();
+            if (!nextTitle) {
+              reportAction('Session title cannot be empty', true);
+              return;
+            }
+            reportAction('Renaming session…');
+            try {
+              const result = await adapter.http('POST', '/api/sessions/rename', {
+                sessionId: s.id, path: s.path, title: nextTitle,
+              });
+              if (!result || result.ok === false || result.error) {
+                reportAction(result?.error || 'Rename failed', true, () => saveRename.onclick({ stopPropagation() {} }));
+                return;
+              }
+              view.renamingId = null;
+              searchCache.clear();
+              reportAction('Session renamed');
+              await draw(selected);
+            } catch (err) {
+              reportAction(err?.message || 'Rename failed', true, () => saveRename.onclick({ stopPropagation() {} }));
+            }
+          };
+          cancelRename.onclick = (event) => {
+            event?.stopPropagation?.();
+            view.renamingId = null;
+            draw(selected);
+          };
+          titleNode.appendChild(renameInput);
+          titleNode.appendChild(saveRename);
+          titleNode.appendChild(cancelRename);
+        }
         const row = h('div', {
           class: 'sessionItem sessionItemSingleLine' + (selected === s.id ? ' sessionItemActive' : ''),
           role: 'button', tabindex: '0',
@@ -313,7 +393,7 @@ return (function () {
           ...(isError ? { 'data-runtime-state': 'error' } : isRunning ? { 'data-runtime-state': 'running' } : {}),
         }, h('div', { class: 'sessionItemHeader' },
           isRunning ? h('span', { class: 'sessionStreamingDot', 'data-state': 'running' }) : null,
-          h('span', { class: 'sessionItemTitle' }, s.title || t('session.untitled')),
+          titleNode,
           statusNode, runtimeAction, rowActions));
         const details = [];
         if (view.archived) details.push('Archived');
@@ -370,7 +450,7 @@ return (function () {
             else options.onSelect(s);
           };
         }
-        if (!view.archived) row.onclick = () => options.onSelect(s);
+        if (!view.archived && !renaming) row.onclick = () => options.onSelect(s);
         scroller.appendChild(row);
       });
     }
@@ -382,10 +462,14 @@ return (function () {
     };
     activeView.onclick = () => {
       view.archived = false;
+      view.deleteConfirmId = null;
+      view.renamingId = null;
       draw(options.selected);
     };
     archivedView.onclick = () => {
       view.archived = true;
+      view.deleteConfirmId = null;
+      view.renamingId = null;
       draw(options.selected);
     };
     draw(options.selected);
