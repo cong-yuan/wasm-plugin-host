@@ -661,6 +661,39 @@ check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').l
   api.cancel = originalCancel;
 }
 
+// A lagging transcript snapshot must not overwrite the just-streamed local turn.
+{
+  const originalProgress = api.sendWithProgress;
+  const originalTranscript = api.transcript;
+
+  const staleTranscriptHost = new El('div');
+  const disposeStaleTranscriptShell = shell.render(staleTranscriptHost);
+  const staleTranscriptRoot = staleTranscriptHost.children[0];
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  api.sendWithProgress = async (_agentId, _text, _msgId, onProgress) => {
+    onProgress({ kind: 'text_delta', delta: 'fresh streamed response' });
+    return true;
+  };
+  api.transcript = async () => [
+    { role: 'user', text: 'older prompt' },
+    { role: 'assistant', text: 'older answer' },
+  ];
+
+  const staleTranscriptInput = staleTranscriptRoot.querySelector('.input-box');
+  staleTranscriptInput.textContent = 'latest prompt';
+  staleTranscriptRoot.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  check('lagging transcript cannot overwrite latest local turn',
+    staleTranscriptRoot.querySelectorAll('.md-content').some((el) => /fresh streamed response/.test(el.textContent))
+    && staleTranscriptRoot.querySelectorAll('.md-content').some((el) => /latest prompt/.test(el.textContent))
+    && !staleTranscriptRoot.querySelectorAll('.md-content').some((el) => /older answer/.test(el.textContent)));
+
+  if (typeof disposeStaleTranscriptShell === 'function') disposeStaleTranscriptShell();
+  api.sendWithProgress = originalProgress;
+  api.transcript = originalTranscript;
+}
+
 // A final transcript refresh failure must not erase content that already
 // arrived through the streaming transport.
 {

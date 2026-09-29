@@ -315,6 +315,13 @@ return (function () {
       options.onChanged();
     };
 
+    const transcriptIncludesLatestUser = (transcript, text) => {
+      if (!Array.isArray(transcript) || !transcript.length) return false;
+      const latestUser = [...transcript].reverse().find((message) => message?.role === 'user');
+      return !!latestUser
+        && String(latestUser.text || '').trim() === String(text || '').trim();
+    };
+
     async function submit() {
       const text = input.textContent.trim();
       if (!text || state.busy) return;
@@ -396,7 +403,9 @@ return (function () {
         if (state.epoch === submitEpoch && !sent && !assistant.text) assistant.text = t('error.llmEmptyResponse');
         try {
           const transcript = await api.transcript(state.id);
-          if (state.epoch === submitEpoch) state.turns = transcript;
+          if (state.epoch === submitEpoch && transcriptIncludesLatestUser(transcript, text)) {
+            state.turns = transcript;
+          }
         } catch (err) {
           if (state.epoch === submitEpoch
             && !assistant.text
