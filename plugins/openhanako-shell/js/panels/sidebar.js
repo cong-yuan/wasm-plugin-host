@@ -19,7 +19,7 @@ return (function () {
   };
 
   function render(options) {
-    const view = { archived: false, query: '' };
+    const view = { archived: false, query: '', searchVersion: 0 };
     const add = h('button', { class: 'sidebar-action-btn', title: t('sidebar.newChat') }, svg(ICON.newChat));
     const settings = h('button', { class: 'sidebar-action-btn', title: t('settings.title') }, svg(ICON.settings));
     const collapse = h('button', { class: 'sidebar-action-btn', title: t('sidebar.collapse') }, svg(ICON.collapse));
@@ -56,7 +56,21 @@ return (function () {
     const activeView = h('button', { class: 'sessionViewBtn active', type: 'button' }, 'Active');
     const archivedView = h('button', { class: 'sessionViewBtn', type: 'button' }, 'Archived');
     const viewToggle = h('div', { class: 'sessionViewToggle' }, activeView, archivedView);
-    const sessionControls = h('div', { class: 'sessionListControls' }, search, viewToggle);
+    const searchStatus = h('div', { class: 'sessionSearchStatus', 'aria-live': 'polite' }, '');
+    const actionStatus = h('div', { class: 'sessionActionStatus', 'aria-live': 'polite' }, '');
+    const sessionControls = h('div', { class: 'sessionListControls' }, search, viewToggle, searchStatus, actionStatus);
+    let actionStatusTimer = null;
+    const reportAction = (message, isError = false) => {
+      if (actionStatusTimer) clearTimeout(actionStatusTimer);
+      actionStatus.textContent = message || '';
+      actionStatus.className = 'sessionActionStatus' + (isError ? ' error' : '');
+      if (message) {
+        actionStatusTimer = setTimeout(() => {
+          actionStatus.textContent = '';
+          actionStatus.className = 'sessionActionStatus';
+        }, 2600);
+      }
+    };
 
     // Upstream: <div className="session-list"><SessionList /><SidebarNoticeSlot /></div>
     const scroller = h('div', { class: 'sessionListScroller' });
@@ -84,7 +98,8 @@ return (function () {
         view.archived ? adapter.http('GET', '/api/sessions/archived').catch(() => []) : Promise.resolve([]),
         adapter.http('GET', '/api/runtime-state').catch(() => ({ mode: api.mode(), sessions: [] })),
       ]);
-      const query = view.query.trim().toLocaleLowerCase();
+      const rawQuery = view.query.trim();
+      const query = rawQuery.toLocaleLowerCase();
       const allRows = (view.archived ? archivedRows : activeRows).map((row) => ({
         ...row, id: row.sessionId || row.id,
       }));
@@ -100,8 +115,47 @@ return (function () {
         }
         return String(b.modified || b.updated_at || '').localeCompare(String(a.modified || a.updated_at || ''));
       });
-      const rows = allRows.filter((row) => !query
+      let rows = allRows.filter((row) => !query
         || `${row.title || ''} ${row.sessionId || row.id || ''}`.toLocaleLowerCase().includes(query));
+      if (query && !view.archived) {
+        const mySearchVersion = ++view.searchVersion;
+        searchStatus.textContent = 'Searching titles and messages…';
+        try {
+          const encoded = encodeURIComponent(rawQuery);
+          const [titleData, contentData] = await Promise.all([
+            adapter.http('GET', `/api/sessions/search?q=${encoded}&phase=title&limit=20`),
+            adapter.http('GET', `/api/sessions/search?q=${encoded}&phase=content&limit=20`),
+          ]);
+          if (mySearchVersion !== view.searchVersion) return;
+          const merged = new Map();
+          for (const result of [...(titleData?.results || []), ...(contentData?.results || [])]) {
+            const id = result.sessionId || result.id;
+            if (!id) continue;
+            const existing = merged.get(id);
+            merged.set(id, {
+              ...(existing || result),
+              ...result,
+              id,
+              title: result.title || existing?.title || null,
+              searchSnippet: result.matchKind === 'content' && result.snippet
+                ? result.snippet
+                : existing?.searchSnippet || '',
+              searchMatchKind: result.matchKind || existing?.searchMatchKind || null,
+            });
+          }
+          rows = Array.from(merged.values());
+          searchStatus.textContent = rows.length
+            ? `${rows.length} result${rows.length === 1 ? '' : 's'} · title + message search`
+            : 'No title or message matches';
+        } catch {
+          searchStatus.textContent = 'Message search unavailable · showing local title matches';
+        }
+      } else {
+        view.searchVersion += 1;
+        searchStatus.textContent = query && view.archived
+          ? 'Archived search matches title and session ID'
+          : '';
+      }
 
       const runtimeById = new Map((runtime.sessions || []).map((state) => [state.sessionId, state]));
       const runtimeRows = Array.from(runtimeById.values());
@@ -139,12 +193,20 @@ return (function () {
           const restore = h('button', { class: 'sessionRestoreBtn', type: 'button', title: 'Restore session' }, '↩');
           restore.onclick = async (event) => {
             event?.stopPropagation?.();
-            const result = await adapter.http('POST', '/api/sessions/restore', { sessionId: s.id, path: s.path });
-            if (result && result.ok !== false && !result.error) {
+            reportAction('Restoring session…');
+            try {
+              const result = await adapter.http('POST', '/api/sessions/restore', { sessionId: s.id, path: s.path });
+              if (!result || result.ok === false || result.error) {
+                reportAction(result?.error || 'Restore failed', true);
+                return;
+              }
+              reportAction('Session restored');
               view.archived = false;
               view.query = '';
               search.value = '';
               await draw(result.sessionId || selected);
+            } catch (err) {
+              reportAction(err?.message || 'Restore failed', true);
             }
           };
           rowActions.appendChild(restore);
@@ -155,8 +217,19 @@ return (function () {
           }, s.pinnedAt ? '★' : '☆');
           pin.onclick = async (event) => {
             event?.stopPropagation?.();
-            await adapter.http('POST', '/api/sessions/pin', { sessionId: s.id, pinned: !s.pinnedAt });
-            await draw(selected);
+            const nextPinned = !s.pinnedAt;
+            reportAction(nextPinned ? 'Pinning session…' : 'Unpinning session…');
+            try {
+              const result = await adapter.http('POST', '/api/sessions/pin', { sessionId: s.id, pinned: nextPinned });
+              if (!result || result.ok === false || result.error) {
+                reportAction(result?.error || 'Pin update failed', true);
+                return;
+              }
+              reportAction(nextPinned ? 'Session pinned' : 'Session unpinned');
+              await draw(selected);
+            } catch (err) {
+              reportAction(err?.message || 'Pin update failed', true);
+            }
           };
           rowActions.appendChild(pin);
 
@@ -172,7 +245,13 @@ return (function () {
               const target = index + delta;
               if (target < 0 || target >= next.length) return;
               [next[index], next[target]] = [next[target], next[index]];
-              await adapter.http('POST', '/api/sessions/pin-order', { sessionIds: next });
+              reportAction('Updating pinned order…');
+              const result = await adapter.http('POST', '/api/sessions/pin-order', { sessionIds: next });
+              if (!result || result.ok === false || result.error) {
+                reportAction(result?.error || 'Pinned order update failed', true);
+                return;
+              }
+              reportAction('Pinned order updated');
               await draw(selected);
             };
             up.onclick = (event) => move(-1, event);
@@ -184,9 +263,19 @@ return (function () {
           const archive = h('button', { class: 'sessionArchiveBtn', type: 'button', title: 'Archive session' }, '×');
           archive.onclick = async (event) => {
             event?.stopPropagation?.();
-            await adapter.http('POST', '/api/sessions/archive', { sessionId: s.id });
-            if (selected === s.id) options.onNew();
-            else await draw(selected);
+            reportAction('Archiving session…');
+            try {
+              const result = await adapter.http('POST', '/api/sessions/archive', { sessionId: s.id });
+              if (!result || result.ok === false || result.error) {
+                reportAction(result?.error || 'Archive failed', true);
+                return;
+              }
+              reportAction('Session archived');
+              if (selected === s.id) options.onNew();
+              else await draw(selected);
+            } catch (err) {
+              reportAction(err?.message || 'Archive failed', true);
+            }
           };
           rowActions.appendChild(archive);
         }
@@ -201,13 +290,33 @@ return (function () {
           isRunning ? h('span', { class: 'sessionStreamingDot', 'data-state': 'running' }) : null,
           h('span', { class: 'sessionItemTitle' }, s.title || t('session.untitled')),
           statusNode, runtimeAction, rowActions));
+        const details = [];
+        if (view.archived) details.push('Archived');
+        else if (isRunning) details.push('Running');
+        else if (isError) details.push('Error');
+        else details.push('Idle');
+        const messageCount = Number(s.messageCount ?? s.messages);
+        if (Number.isFinite(messageCount) && messageCount > 0) {
+          details.push(`${messageCount} message${messageCount === 1 ? '' : 's'}`);
+        }
+        if (s.modelId) details.push(String(s.modelId));
+        row.appendChild(h('div', { class: 'sessionItemMeta' }, details.join(' · ')));
+        if (s.searchSnippet) {
+          row.appendChild(h('div', { class: 'sessionSearchSnippet' }, s.searchSnippet));
+        }
 
         if (runtimeAction) {
           runtimeAction.onclick = async (event) => {
             event?.stopPropagation?.();
             if (isRunning) {
-              await api.cancel(s.id);
-              await draw(selected);
+              reportAction('Stopping session…');
+              try {
+                await api.cancel(s.id);
+                reportAction('Stop requested');
+                await draw(selected);
+              } catch (err) {
+                reportAction(err?.message || 'Stop failed', true);
+              }
             } else if (typeof options.onRetry === 'function') options.onRetry(s);
             else options.onSelect(s);
           };

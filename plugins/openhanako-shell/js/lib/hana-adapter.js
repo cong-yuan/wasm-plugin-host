@@ -1259,6 +1259,57 @@ return (function () {
       return rows.filter((row) => !archivedRecord(row.id)).map(projection);
     }
 
+
+    if (pathname === '/api/sessions/search' && verb === 'GET') {
+      const rawQuery = typeof query.q === 'string' ? query.q.trim() : '';
+      const phase = query.phase === 'content' ? 'content' : 'title';
+      const requestedLimit = Number(query.limit);
+      const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.min(Math.floor(requestedLimit), 50)
+        : 20;
+      if (!rawQuery) return { query: rawQuery, phase, results: [] };
+      const needle = rawQuery.toLocaleLowerCase();
+      const rows = (await api.sessions()).filter((row) => !archivedRecord(row.id));
+      const results = [];
+      for (const row of rows) {
+        const projected = projection(row);
+        if (phase === 'title') {
+          const haystack = `${projected.title || ''} ${projected.sessionId || ''}`.toLocaleLowerCase();
+          if (!haystack.includes(needle)) continue;
+          results.push({
+            ...projected,
+            matchKind: 'title',
+            snippet: projected.title || '',
+            score: 1,
+          });
+        } else {
+          const transcript = await api.transcript(row.id).catch(() => []);
+          let snippet = '';
+          for (const message of transcript || []) {
+            const text = [message?.text, message?.reasoning]
+              .filter((value) => typeof value === 'string' && value)
+              .join(' ');
+            const lower = text.toLocaleLowerCase();
+            const at = lower.indexOf(needle);
+            if (at < 0) continue;
+            const start = Math.max(0, at - 48);
+            const end = Math.min(text.length, at + rawQuery.length + 72);
+            snippet = text.slice(start, end).trim();
+            break;
+          }
+          if (!snippet) continue;
+          results.push({
+            ...projected,
+            matchKind: 'content',
+            snippet,
+            score: 1,
+          });
+        }
+        if (results.length >= limit) break;
+      }
+      return { query: rawQuery, phase, results };
+    }
+
     if (pathname === '/api/sessions/archived' && verb === 'GET') {
       const archived = loadArchived();
       return Object.values(archived)

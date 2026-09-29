@@ -654,6 +654,23 @@ check('host bridge correlates requestId',
     && calls.some((c) => c.cmd === 'resume_session' && c.args.sessionId === 'agent-1'));
 }
 
+// Standalone session search mirrors the server's title/content phases and
+// searches transcript text without requiring the full React server.
+{
+  const titleSearch = await adapter.http('GET', '/api/sessions/search?q=Hello&phase=title&limit=20');
+  check('standalone title search returns projected sessions',
+    titleSearch && titleSearch.phase === 'title'
+    && titleSearch.results.some((row) => row.sessionId === 'agent-1' && /hello/i.test(row.title || '')));
+
+  const contentSearch = await adapter.http('GET', '/api/sessions/search?q=done&phase=content&limit=20');
+  check('standalone content search returns snippets',
+    contentSearch && contentSearch.phase === 'content'
+    && contentSearch.results.some((row) =>
+      row.sessionId === 'agent-1'
+      && row.matchKind === 'content'
+      && /done/i.test(row.snippet || '')));
+}
+
 // Busy session must refuse a second prompt (send lock).
 {
   calls.length = 0;

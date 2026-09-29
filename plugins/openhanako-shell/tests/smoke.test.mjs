@@ -209,7 +209,8 @@ for (const sel of [
   '.app', '.sidebar', '.sidebar-inner', '.sidebar-chat-content', '.sidebar-header',
   '.sidebar-title', '.sidebar-header-actions', '.sidebar-activity-bar', '.sidebar-bridge-card',
   '.sidebar-bridge-dot', '.sidebar-bridge-status', '.session-list', '.sessionListControls',
-  '.sessionSearchInput', '.sessionViewToggle', '.sessionViewBtn', '.sessionListScroller', '.resize-handle',
+  '.sessionSearchInput', '.sessionViewToggle', '.sessionViewBtn', '.sessionSearchStatus',
+  '.sessionActionStatus', '.sessionListScroller', '.resize-handle',
   '.main-content', '.chat-area', '.welcome', '.welcomeAvatar', '.welcomeText',
   '.folderSelectWrap', '.folderSelectBtn', '.memoryToggleBtn',
   '.input-area', '.input-surface', '.input-stack', '.input-wrapper', '.input-box',
@@ -257,6 +258,11 @@ check('4 activity bars', chatContent.children.filter(
   check('pinning moves the session to the top',
     pinnedRows[0]?.querySelector('.sessionItemTitle')?.textContent === targetTitle
     && pinnedRows[0]?.querySelector('.sessionPinBtn')?._classes().includes('active'));
+  check('pin action reports completion',
+    /session pinned/i.test(root.querySelector('.sessionActionStatus')?.textContent || ''));
+  check('session rows expose lightweight status metadata',
+    root.querySelectorAll('.sessionItemMeta').length === pinnedRows.length
+    && root.querySelectorAll('.sessionItemMeta').every((el) => /idle|running|error/i.test(el.textContent)));
 
   pinnedRows[0]?.querySelector('.sessionArchiveBtn')?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -270,11 +276,15 @@ check('4 activity bars', chatContent.children.filter(
   check('archived view lists archived session with restore action',
     root.querySelectorAll('.sessionItemTitle').some((el) => el.textContent === targetTitle)
     && root.querySelectorAll('.sessionRestoreBtn').length >= 1);
+  check('archive action reports completion',
+    /session archived/i.test(root.querySelector('.sessionActionStatus')?.textContent || ''));
   root.querySelector('.sessionRestoreBtn')?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   check('restore returns archived session to active view',
     root.querySelectorAll('.sessionItemTitle').some((el) => el.textContent === targetTitle)
     && root.querySelectorAll('.sessionRestoreBtn').length === 0);
+  check('restore action reports completion',
+    /session restored/i.test(root.querySelector('.sessionActionStatus')?.textContent || ''));
 
   const search = root.querySelector('.sessionSearchInput');
   search?.fire('input', { target: { value: 'Welcome' } });
@@ -282,6 +292,12 @@ check('4 activity bars', chatContent.children.filter(
   check('session search filters active rows',
     root.querySelectorAll('.sessionItemTitle').length >= 1
     && root.querySelectorAll('.sessionItemTitle').every((el) => /welcome/i.test(el.textContent)));
+  search?.fire('input', { target: { value: '当前窗口' } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('session search includes transcript content matches',
+    root.querySelectorAll('.sessionSearchSnippet').some((el) => /当前窗口/.test(el.textContent))
+    && /title \+ message search/i.test(root.querySelector('.sessionSearchStatus')?.textContent || ''));
   search?.fire('input', { target: { value: '' } });
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
