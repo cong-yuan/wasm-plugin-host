@@ -196,7 +196,8 @@ check('api mode flips to tauri once invoke exists', api.mode() === 'tauri');
 check('pickProvider falls back to configured provider without studio_status', await api.pickProvider() === 'deepseek');
 const configuredStatus = await api.status();
 check('status falls back to configured provider and model without studio_status',
-  configuredStatus.providers.includes('deepseek')
+  configuredStatus.provider === 'deepseek'
+  && configuredStatus.providers.includes('deepseek')
   && configuredStatus.model === 'deepseek-chat'
   && /get_llm_config/.test(configuredStatus.note || ''));
 const live = await api.sessions();

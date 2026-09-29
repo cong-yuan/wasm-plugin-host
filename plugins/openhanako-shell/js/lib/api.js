@@ -641,6 +641,7 @@ return (function () {
           || (provider === DEFAULT_PROVIDER ? DEFAULT_MODEL : provider);
         const configuredProviders = Object.keys(llm?.providers || {});
         return {
+          provider,
           providers: configuredProviders.length ? configuredProviders : [provider],
           model,
           offline: false,
@@ -648,6 +649,7 @@ return (function () {
         };
       } catch (_) {
         return {
+          provider: DEFAULT_PROVIDER,
           providers: [DEFAULT_PROVIDER],
           model: DEFAULT_MODEL,
           offline: false,

@@ -37,7 +37,7 @@ return (function () {
       const providers = summaryData?.providers && typeof summaryData.providers === 'object'
         ? Object.entries(summaryData.providers)
         : [];
-      const activeProvider = status?.providers?.[0] || '';
+      const activeProvider = status?.provider || status?.providers?.[0] || '';
       const activeModel = status?.model || '';
       const refresh = h('button', { class: 'sidebarSettingsRefresh', type: 'button' }, 'Refresh');
       refresh.onclick = () => loadSettings();
