@@ -155,7 +155,15 @@ const studio = {
   },
   register() {},
   provideSlot() {},
-  renderSlot() {},
+  renderSlot(name, box) {
+    if (name === 'openhanako.sidebar.notice') {
+      const contribution = document.createElement('div');
+      contribution.setAttribute('data-contribution', 'smoke-plugin');
+      contribution.textContent = 'Injected notice';
+      box.appendChild(contribution);
+    }
+    return () => {};
+  },
 };
 
 // --- run ---
@@ -178,6 +186,11 @@ const root = host.children[0];
 const slotState = studio.require('lib/slots').snapshot();
 check('all openhanako manifest slots mount in the shell',
   slotState.total === 17 && slotState.mounted === 17);
+check('slot diagnostics detect real contribution nodes',
+  slotState.contributions === 1
+  && slotState.slots.find((slot) => slot.name === 'openhanako.sidebar.notice')?.hasContribution === true);
+check('rail mirrors slot contribution count',
+  root.querySelector('.slotSummary')?.getAttribute('data-contributions') === '1');
 check('root .hana-replica', root.className.includes('hana-replica'));
 check('root data-theme=new-warm-paper', root.getAttribute('data-theme') === 'new-warm-paper');
 check('paper-texture enabled', root.className.includes('paper-texture'));
