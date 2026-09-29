@@ -215,14 +215,16 @@ return (function () {
         parts.after);
     };
 
-    async function draw(selected) {
+    async function draw(selected, runtimeOverride = null) {
       const [activeRows, archivedRows, runtime] = await Promise.all([
         adapter.http('GET', '/api/sessions').catch(async () => (await api.sessions()).map((row) => ({
           sessionId: row.id, title: row.title, busy: row.busy, live: row.live,
           status: row.status, error: row.error, pinnedAt: null, pinOrder: null,
         }))),
         view.archived ? adapter.http('GET', '/api/sessions/archived').catch(() => []) : Promise.resolve([]),
-        adapter.http('GET', '/api/runtime-state').catch(() => ({ mode: api.mode(), sessions: [] })),
+        runtimeOverride
+          ? Promise.resolve(runtimeOverride)
+          : adapter.http('GET', '/api/runtime-state').catch(() => ({ mode: api.mode(), sessions: [] })),
       ]);
       const rawQuery = view.query.trim();
       const query = rawQuery.toLocaleLowerCase();
@@ -627,7 +629,7 @@ return (function () {
         updateBridgeStatus(runtime);
         if (nextSignature !== lastRuntimeSignature) {
           lastRuntimeSignature = nextSignature;
-          await draw(options.selected);
+          await draw(options.selected, runtime);
         }
       } catch {
         // Keep the last known runtime state; manual bridge refresh remains available.
