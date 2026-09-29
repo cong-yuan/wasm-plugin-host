@@ -767,23 +767,38 @@ return (function () {
     return { active, failed };
   };
 
-  const runtimeProjection = async (row) => {
-    const base = projection(row);
+  const cachedTranscriptForRow = async (row, base = projection(row)) => {
     const cacheKey = runtimeTranscriptKey(row, base);
     const cached = runtimeTranscriptCache.get(row.id) || null;
-    let transcript = cached?.transcript || [];
-    const shouldRefreshTranscript = base.busy
-      || base.isStreaming
-      || !cached
-      || cached.key !== cacheKey;
-    if (shouldRefreshTranscript) {
-      try {
-        transcript = await api.transcript(row.id);
-        if (!base.busy && !base.isStreaming) {
-          runtimeTranscriptCache.set(row.id, { key: cacheKey, transcript });
-        }
-      } catch (_) { /* retain cached transcript when available */ }
+    if (!base.busy && !base.isStreaming && cached?.key === cacheKey) {
+      if (cached.pending) return cached.pending;
+      if (Array.isArray(cached.transcript)) return cached.transcript;
     }
+
+    const previousTranscript = Array.isArray(cached?.transcript) ? cached.transcript : [];
+    const pending = Promise.resolve(api.transcript(row.id))
+      .then((transcript) => {
+        const normalized = Array.isArray(transcript) ? transcript : [];
+        if (!base.busy && !base.isStreaming) {
+          runtimeTranscriptCache.set(row.id, { key: cacheKey, transcript: normalized, pending: null });
+        }
+        return normalized;
+      })
+      .catch(() => previousTranscript);
+
+    if (!base.busy && !base.isStreaming) {
+      runtimeTranscriptCache.set(row.id, {
+        key: cacheKey,
+        transcript: previousTranscript,
+        pending,
+      });
+    }
+    return pending;
+  };
+
+  const runtimeProjection = async (row) => {
+    const base = projection(row);
+    const transcript = await cachedTranscriptForRow(row, base);
     const tools = runtimeToolState(transcript);
     const failure = base.error || (tools.failed.length ? tools.failed[tools.failed.length - 1].error : null);
     return {
@@ -1329,7 +1344,7 @@ return (function () {
         const contentResults = await sessionSearch.searchContentRows(
           rows,
           rawQuery,
-          (row) => api.transcript(row.id),
+          (row) => cachedTranscriptForRow(row),
           projection,
           limit,
           4,

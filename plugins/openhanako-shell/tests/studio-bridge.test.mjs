@@ -290,14 +290,46 @@ check('sessions without backend timestamps do not become just-now on every refre
   await adapter.http('GET', '/api/runtime-state');
   check('idle runtime-state reuses transcript cache', transcriptCalls === 1);
 
+  const cachedSearch = await adapter.http(
+    'GET',
+    '/api/sessions/search?q=cached&phase=content&limit=20',
+  );
+  check('content search reuses idle runtime transcript cache',
+    cachedSearch.results.some((row) => row.sessionId === 'runtime-cache')
+    && transcriptCalls === 1);
+
   messageCount = 3;
   await adapter.http('GET', '/api/runtime-state');
   check('runtime transcript cache invalidates on message version change', transcriptCalls === 2);
 
+  let releaseConcurrentTranscript = null;
+  messageCount = 4;
+  api.transcript = async () => {
+    transcriptCalls += 1;
+    return new Promise((resolve) => {
+      releaseConcurrentTranscript = () => resolve([
+        { role: 'assistant', text: 'shared pending transcript', tool_calls: [], tool_results: [] },
+      ]);
+    });
+  };
+  const pendingRuntime = adapter.http('GET', '/api/runtime-state');
+  const pendingSearch = adapter.http(
+    'GET',
+    '/api/sessions/search?q=shared&phase=content&limit=20',
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('runtime and search share one inflight transcript request', transcriptCalls === 3);
+  releaseConcurrentTranscript?.();
+  await Promise.all([pendingRuntime, pendingSearch]);
+
+  api.transcript = async () => {
+    transcriptCalls += 1;
+    return [{ role: 'assistant', text: 'busy', tool_calls: [], tool_results: [] }];
+  };
   busy = true;
   await adapter.http('GET', '/api/runtime-state');
   await adapter.http('GET', '/api/runtime-state');
-  check('busy runtime-state bypasses transcript cache', transcriptCalls === 4);
+  check('busy runtime-state bypasses transcript cache', transcriptCalls === 5);
 
   api.sessions = originalSessions;
   api.transcript = originalTranscript;
