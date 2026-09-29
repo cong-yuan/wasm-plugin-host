@@ -250,9 +250,9 @@ impl wasmtime_wasi_http::p2::WasiHttpHooks for Preview2HttpHooks {
 /// Per-`Store` host state. `T` in `Store<T>` is this type.
 pub struct HostState {
     pub wasi: WasiP1Ctx,
-    /// Preview2 state for Component guests. The Component linker only exposes
-    /// this to trusted plugins; sandboxed Components remain on the explicit,
-    /// capability-gated host WIT imports.
+    /// Preview2 state for Component guests. Both trust modes can instantiate
+    /// Preview2 runtimes; authority is configured here (trusted inheritance vs
+    /// sandboxed read-only preopens / gated HTTP / exact-IP raw TCP).
     pub component_wasi: WasiCtx,
     pub component_table: ResourceTable,
     pub component_http: wasmtime_wasi_http::WasiHttpCtx,

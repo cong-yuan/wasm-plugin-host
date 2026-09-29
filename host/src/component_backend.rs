@@ -281,10 +281,13 @@ impl ComponentInstance {
 
     pub(crate) fn describe(&mut self) -> Result<wasm_plugin_host::plugin::types::PluginDecl> {
         self.prepare_guest_call()?;
-        Ok(self
+        let decl = self
             .bindings
             .wasm_plugin_host_plugin_lifecycle()
-            .call_describe(&mut self.store)?)
+            .call_describe(&mut self.store)?;
+        let bytes = component_decl_output_bytes(&decl);
+        enforce_component_output_limit(self.store.data(), "describe", bytes)?;
+        Ok(decl)
     }
 
     pub(crate) fn describe_internal(&mut self) -> Result<crate::plugin::PluginDecl> {
@@ -298,10 +301,13 @@ impl ComponentInstance {
     ) -> Result<wasm_plugin_host::plugin::types::InvokeResult> {
         self.prepare_guest_call()?;
         let args_json = args_json.to_string();
-        Ok(self
+        let result = self
             .bindings
             .wasm_plugin_host_plugin_lifecycle()
-            .call_invoke(&mut self.store, op, &args_json)?)
+            .call_invoke(&mut self.store, op, &args_json)?;
+        let bytes = component_invoke_output_bytes(&result);
+        enforce_component_output_limit(self.store.data(), "invoke", bytes)?;
+        Ok(result)
     }
 
     pub(crate) fn invoke_internal(
@@ -349,6 +355,85 @@ impl ComponentInstance {
             .wasm_plugin_host_plugin_lifecycle()
             .call_shutdown(&mut self.store)?)
     }
+}
+
+fn enforce_component_output_limit(state: &HostState, operation: &str, bytes: usize) -> Result<()> {
+    const TRUSTED_MAX_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
+    let max = if state.policy.trust == crate::capability::TrustMode::Sandboxed {
+        state.policy.limits.max_output_bytes
+    } else {
+        TRUSTED_MAX_OUTPUT_BYTES
+    };
+    if bytes as u64 <= max {
+        return Ok(());
+    }
+    let reason = format!("Component {operation} returned {bytes} output bytes (> cap {max})");
+    state.audit_resource_limit(
+        "limits.max_output_bytes",
+        &format!("{bytes} bytes"),
+        &reason,
+    );
+    anyhow::bail!(reason)
+}
+
+fn component_invoke_output_bytes(result: &wasm_plugin_host::plugin::types::InvokeResult) -> usize {
+    match result {
+        wasm_plugin_host::plugin::types::InvokeResult::Success(success) => success
+            .content
+            .len()
+            .saturating_add(success.value_json.len()),
+        wasm_plugin_host::plugin::types::InvokeResult::Error(error) => error
+            .code
+            .len()
+            .saturating_add(error.message.len())
+            .saturating_add(error.value_json.len()),
+    }
+}
+
+fn component_decl_output_bytes(decl: &wasm_plugin_host::plugin::types::PluginDecl) -> usize {
+    let mut bytes = decl.name.len();
+    for tool in &decl.tools {
+        bytes = bytes
+            .saturating_add(tool.name.len())
+            .saturating_add(tool.description.len())
+            .saturating_add(tool.parameters_json.len())
+            .saturating_add(tool.exec.len());
+    }
+    for hook in &decl.hooks {
+        bytes = bytes
+            .saturating_add(hook.on.len())
+            .saturating_add(hook.exec.len());
+    }
+    for value in decl.injects.iter().chain(decl.provides.iter()) {
+        bytes = bytes.saturating_add(value.len());
+    }
+    let caps = &decl.capabilities;
+    for value in caps
+        .filesystem
+        .read
+        .iter()
+        .chain(caps.filesystem.write.iter())
+        .chain(caps.filesystem.create.iter())
+        .chain(caps.filesystem.delete.iter())
+        .chain(caps.network.allow.iter())
+        .chain(caps.network.methods.iter())
+        .chain(caps.agent.observe.iter())
+        .chain(caps.agent.rewrite.iter())
+        .chain(caps.agent.veto.iter())
+        .chain(caps.services.consume.iter())
+        .chain(caps.services.provide.iter())
+        .chain(caps.ui.slots.iter())
+        .chain(caps.ui.routes.iter())
+        .chain(caps.ui.adjusts.iter())
+        .chain(caps.ui.backend_commands.iter())
+        .chain(caps.ui.host_events.iter())
+    {
+        bytes = bytes.saturating_add(value.len());
+    }
+    if let Some(ui) = &decl.ui_json {
+        bytes = bytes.saturating_add(ui.len());
+    }
+    bytes
 }
 
 fn parse_json_value(raw: &str, label: &str) -> Result<serde_json::Value> {
@@ -522,6 +607,40 @@ mod tests {
 
         let denied = state.read_file("/".into(), "etc/passwd".into());
         assert!(denied.is_err(), "ungranted root must remain denied");
+    }
+
+    #[test]
+    fn component_output_budget_rejects_oversized_results() {
+        let mut policy = PluginPolicy {
+            trust: TrustMode::Sandboxed,
+            ..Default::default()
+        };
+        policy.limits.max_output_bytes = 8;
+        let state = HostState::new_with_policy(
+            "component-budget",
+            "component-budget",
+            serde_json::Value::Null,
+            Arc::new(LogSink::new(8, false, None)),
+            None,
+            policy,
+        );
+
+        assert!(enforce_component_output_limit(&state, "invoke", 8).is_ok());
+        let err = enforce_component_output_limit(&state, "invoke", 9)
+            .expect_err("Component output above policy cap must be rejected");
+        assert!(err.to_string().contains("9 output bytes"));
+        assert!(err.to_string().contains("cap 8"));
+    }
+
+    #[test]
+    fn component_invoke_budget_counts_content_and_json_payload() {
+        let result = wasm_plugin_host::plugin::types::InvokeResult::Success(
+            wasm_plugin_host::plugin::types::InvokeSuccess {
+                content: "abcd".into(),
+                value_json: "12345".into(),
+            },
+        );
+        assert_eq!(component_invoke_output_bytes(&result), 9);
     }
 
     #[test]

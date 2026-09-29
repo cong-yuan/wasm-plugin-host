@@ -61,6 +61,8 @@ host-services.call-service
 
 A Component guest must not receive broader authority merely because it uses WIT.
 
+The same rule applies to resource budgets: Component `describe` and `invoke` results are charged against `limits.max_output_bytes` after canonical lifting, while Wasmtime memory/fuel/epoch limits remain the earlier physical execution boundary.
+
 ## Transitional JSON fields
 
 The first WIT version types lifecycle, capability requests, host operations and
