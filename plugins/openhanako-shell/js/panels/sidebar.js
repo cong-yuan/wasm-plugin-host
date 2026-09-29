@@ -293,21 +293,26 @@ return (function () {
           const restore = h('button', { class: 'sessionRestoreBtn', type: 'button', title: 'Restore session' }, '↩');
           restore.onclick = async (event) => {
             event?.stopPropagation?.();
-            reportAction('Restoring session…');
-            try {
-              const result = await adapter.http('POST', '/api/sessions/restore', { sessionId: s.id, path: s.path });
-              if (!result || result.ok === false || result.error) {
-                reportAction(result?.error || 'Restore failed', true, () => restore.onclick({ stopPropagation() {} }));
-                return;
+            await actionLock.run(`${s.id}:restore`, async () => {
+              restore.disabled = true;
+              reportAction('Restoring session…');
+              try {
+                const result = await adapter.http('POST', '/api/sessions/restore', { sessionId: s.id, path: s.path });
+                if (!result || result.ok === false || result.error) {
+                  reportAction(result?.error || 'Restore failed', true, () => restore.onclick({ stopPropagation() {} }));
+                  return;
+                }
+                reportAction('Session restored');
+                view.archived = false;
+                view.query = '';
+                search.value = '';
+                await draw(result.sessionId || selected);
+              } catch (err) {
+                reportAction(err?.message || 'Restore failed', true, () => restore.onclick({ stopPropagation() {} }));
+              } finally {
+                restore.disabled = false;
               }
-              reportAction('Session restored');
-              view.archived = false;
-              view.query = '';
-              search.value = '';
-              await draw(result.sessionId || selected);
-            } catch (err) {
-              reportAction(err?.message || 'Restore failed', true, () => restore.onclick({ stopPropagation() {} }));
-            }
+            });
           };
           rowActions.appendChild(restore);
           const deleting = view.deleteConfirmId === s.id;
@@ -324,20 +329,25 @@ return (function () {
               await draw(selected);
               return;
             }
-            reportAction('Deleting archived session…');
-            try {
-              const result = await adapter.http('POST', '/api/sessions/archived/delete', { sessionId: s.id, path: s.path });
-              if (!result || result.ok === false || result.error) {
-                reportAction(result?.error || 'Delete failed', true, () => remove.onclick({ stopPropagation() {} }));
-                return;
+            await actionLock.run(`${s.id}:delete`, async () => {
+              remove.disabled = true;
+              reportAction('Deleting archived session…');
+              try {
+                const result = await adapter.http('POST', '/api/sessions/archived/delete', { sessionId: s.id, path: s.path });
+                if (!result || result.ok === false || result.error) {
+                  reportAction(result?.error || 'Delete failed', true, () => remove.onclick({ stopPropagation() {} }));
+                  return;
+                }
+                view.deleteConfirmId = null;
+                view.expanded.delete(s.id);
+                reportAction('Archived session permanently deleted');
+                await draw(selected);
+              } catch (err) {
+                reportAction(err?.message || 'Delete failed', true, () => remove.onclick({ stopPropagation() {} }));
+              } finally {
+                remove.disabled = false;
               }
-              view.deleteConfirmId = null;
-              view.expanded.delete(s.id);
-              reportAction('Archived session permanently deleted');
-              await draw(selected);
-            } catch (err) {
-              reportAction(err?.message || 'Delete failed', true, () => remove.onclick({ stopPropagation() {} }));
-            }
+            });
           };
           rowActions.appendChild(remove);
         } else {
@@ -347,19 +357,24 @@ return (function () {
           }, s.pinnedAt ? '★' : '☆');
           pin.onclick = async (event) => {
             event?.stopPropagation?.();
-            const nextPinned = !s.pinnedAt;
-            reportAction(nextPinned ? 'Pinning session…' : 'Unpinning session…');
-            try {
-              const result = await adapter.http('POST', '/api/sessions/pin', { sessionId: s.id, pinned: nextPinned });
-              if (!result || result.ok === false || result.error) {
-                reportAction(result?.error || 'Pin update failed', true, () => pin.onclick({ stopPropagation() {} }));
-                return;
+            await actionLock.run(`${s.id}:pin`, async () => {
+              pin.disabled = true;
+              const nextPinned = !s.pinnedAt;
+              reportAction(nextPinned ? 'Pinning session…' : 'Unpinning session…');
+              try {
+                const result = await adapter.http('POST', '/api/sessions/pin', { sessionId: s.id, pinned: nextPinned });
+                if (!result || result.ok === false || result.error) {
+                  reportAction(result?.error || 'Pin update failed', true, () => pin.onclick({ stopPropagation() {} }));
+                  return;
+                }
+                reportAction(nextPinned ? 'Session pinned' : 'Session unpinned');
+                await draw(selected);
+              } catch (err) {
+                reportAction(err?.message || 'Pin update failed', true, () => pin.onclick({ stopPropagation() {} }));
+              } finally {
+                pin.disabled = false;
               }
-              reportAction(nextPinned ? 'Session pinned' : 'Session unpinned');
-              await draw(selected);
-            } catch (err) {
-              reportAction(err?.message || 'Pin update failed', true, () => pin.onclick({ stopPropagation() {} }));
-            }
+            });
           };
           rowActions.appendChild(pin);
 
@@ -371,18 +386,27 @@ return (function () {
             down.disabled = index < 0 || index >= pinnedIds.length - 1;
             const move = async (delta, event) => {
               event?.stopPropagation?.();
-              const next = pinnedIds.slice();
-              const target = index + delta;
-              if (target < 0 || target >= next.length) return;
-              [next[index], next[target]] = [next[target], next[index]];
-              reportAction('Updating pinned order…');
-              const result = await adapter.http('POST', '/api/sessions/pin-order', { sessionIds: next });
-              if (!result || result.ok === false || result.error) {
-                reportAction(result?.error || 'Pinned order update failed', true);
-                return;
-              }
-              reportAction('Pinned order updated');
-              await draw(selected);
+              await actionLock.run(`${s.id}:pin-order`, async () => {
+                up.disabled = true;
+                down.disabled = true;
+                try {
+                  const next = pinnedIds.slice();
+                  const target = index + delta;
+                  if (target < 0 || target >= next.length) return;
+                  [next[index], next[target]] = [next[target], next[index]];
+                  reportAction('Updating pinned order…');
+                  const result = await adapter.http('POST', '/api/sessions/pin-order', { sessionIds: next });
+                  if (!result || result.ok === false || result.error) {
+                    reportAction(result?.error || 'Pinned order update failed', true);
+                    return;
+                  }
+                  reportAction('Pinned order updated');
+                  await draw(selected);
+                } finally {
+                  up.disabled = index <= 0;
+                  down.disabled = index < 0 || index >= pinnedIds.length - 1;
+                }
+              });
             };
             up.onclick = (event) => move(-1, event);
             down.onclick = (event) => move(1, event);
@@ -393,19 +417,24 @@ return (function () {
           const archive = h('button', { class: 'sessionArchiveBtn', type: 'button', title: 'Archive session' }, '×');
           archive.onclick = async (event) => {
             event?.stopPropagation?.();
-            reportAction('Archiving session…');
-            try {
-              const result = await adapter.http('POST', '/api/sessions/archive', { sessionId: s.id });
-              if (!result || result.ok === false || result.error) {
-                reportAction(result?.error || 'Archive failed', true, () => archive.onclick({ stopPropagation() {} }));
-                return;
+            await actionLock.run(`${s.id}:archive`, async () => {
+              archive.disabled = true;
+              reportAction('Archiving session…');
+              try {
+                const result = await adapter.http('POST', '/api/sessions/archive', { sessionId: s.id });
+                if (!result || result.ok === false || result.error) {
+                  reportAction(result?.error || 'Archive failed', true, () => archive.onclick({ stopPropagation() {} }));
+                  return;
+                }
+                reportAction('Session archived');
+                if (selected === s.id) options.onNew();
+                else await draw(selected);
+              } catch (err) {
+                reportAction(err?.message || 'Archive failed', true, () => archive.onclick({ stopPropagation() {} }));
+              } finally {
+                archive.disabled = false;
               }
-              reportAction('Session archived');
-              if (selected === s.id) options.onNew();
-              else await draw(selected);
-            } catch (err) {
-              reportAction(err?.message || 'Archive failed', true, () => archive.onclick({ stopPropagation() {} }));
-            }
+            });
           };
           rowActions.appendChild(archive);
         }
@@ -431,22 +460,27 @@ return (function () {
               reportAction('Session title cannot be empty', true);
               return;
             }
-            reportAction('Renaming session…');
-            try {
-              const result = await adapter.http('POST', '/api/sessions/rename', {
-                sessionId: s.id, path: s.path, title: nextTitle,
-              });
-              if (!result || result.ok === false || result.error) {
-                reportAction(result?.error || 'Rename failed', true, () => saveRename.onclick({ stopPropagation() {} }));
-                return;
+            await actionLock.run(`${s.id}:rename`, async () => {
+              saveRename.disabled = true;
+              reportAction('Renaming session…');
+              try {
+                const result = await adapter.http('POST', '/api/sessions/rename', {
+                  sessionId: s.id, path: s.path, title: nextTitle,
+                });
+                if (!result || result.ok === false || result.error) {
+                  reportAction(result?.error || 'Rename failed', true, () => saveRename.onclick({ stopPropagation() {} }));
+                  return;
+                }
+                view.renamingId = null;
+                searchController.clear();
+                reportAction('Session renamed');
+                await draw(selected);
+              } catch (err) {
+                reportAction(err?.message || 'Rename failed', true, () => saveRename.onclick({ stopPropagation() {} }));
+              } finally {
+                saveRename.disabled = false;
               }
-              view.renamingId = null;
-              searchController.clear();
-              reportAction('Session renamed');
-              await draw(selected);
-            } catch (err) {
-              reportAction(err?.message || 'Rename failed', true, () => saveRename.onclick({ stopPropagation() {} }));
-            }
+            });
           };
           cancelRename.onclick = (event) => {
             event?.stopPropagation?.();
@@ -498,14 +532,19 @@ return (function () {
           runtimeAction.onclick = async (event) => {
             event?.stopPropagation?.();
             if (isRunning) {
-              reportAction('Stopping session…');
-              try {
-                await api.cancel(s.id);
-                reportAction('Stop requested');
-                await draw(selected);
-              } catch (err) {
-                reportAction(err?.message || 'Stop failed', true);
-              }
+              await actionLock.run(`${s.id}:stop`, async () => {
+                runtimeAction.disabled = true;
+                reportAction('Stopping session…');
+                try {
+                  await api.cancel(s.id);
+                  reportAction('Stop requested');
+                  await draw(selected);
+                } catch (err) {
+                  reportAction(err?.message || 'Stop failed', true);
+                } finally {
+                  runtimeAction.disabled = false;
+                }
+              });
             } else if (typeof options.onRetry === 'function') options.onRetry(s);
             else options.onSelect(s);
           };

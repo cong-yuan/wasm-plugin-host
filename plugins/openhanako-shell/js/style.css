@@ -1168,6 +1168,18 @@ html[data-platform="linux"] .tb-toggle-right {
     background: rgba(0,0,0,0.045);
     color: var(--text-primary);
 }
+.sessionPinBtn:disabled,
+.sessionArchiveBtn:disabled,
+.sessionRestoreBtn:disabled,
+.sessionDeleteBtn:disabled,
+.sessionRenameSave:disabled,
+.sessionPinMoveBtn:disabled,
+.sessionStopBtn:disabled,
+.sessionBulkPrimary:disabled,
+.sessionBulkDelete:disabled {
+    cursor: progress;
+    opacity: 0.42;
+}
 .sessionPinBtn.active {
     color: #a4742f;
 }
