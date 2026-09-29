@@ -555,6 +555,48 @@ check('skills and activity panels are mutually exclusive',
   && skillsButton?.getAttribute('aria-expanded') === 'true');
 skillsButton?.fire('click');
 
+// Sidebar draws use a generation guard so a slower older sessions request
+// cannot overwrite a newer refresh.
+{
+  const sidebarModule = studio.require('panels/sidebar');
+  const adapterForSidebarRace = studio.require('lib/hana-adapter');
+  const originalSidebarRaceHttp = adapterForSidebarRace.http;
+  let sessionRequestCount = 0;
+  let releaseOldSessions = null;
+  adapterForSidebarRace.http = async (method, path, body) => {
+    if (method === 'GET' && path === '/api/sessions') {
+      sessionRequestCount += 1;
+      if (sessionRequestCount === 1) {
+        return new Promise((resolve) => {
+          releaseOldSessions = () => resolve([
+            { sessionId: 'old-sidebar-row', title: 'Old sidebar snapshot', status: 'idle' },
+          ]);
+        });
+      }
+      return [{ sessionId: 'new-sidebar-row', title: 'New sidebar snapshot', status: 'idle' }];
+    }
+    return originalSidebarRaceHttp(method, path, body);
+  };
+
+  const raceSide = sidebarModule.render({
+    selected: null,
+    onNew() {},
+    onCollapse() {},
+    onSelect() {},
+  });
+  await raceSide.refresh(null);
+  check('newer sidebar draw renders before stale request resolves',
+    /New sidebar snapshot/.test(raceSide.root.textContent || ''));
+  releaseOldSessions?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('stale sidebar draw cannot overwrite newer refresh',
+    /New sidebar snapshot/.test(raceSide.root.textContent || '')
+    && !/Old sidebar snapshot/.test(raceSide.root.textContent || ''));
+
+  raceSide.destroy?.();
+  adapterForSidebarRace.http = originalSidebarRaceHttp;
+}
+
 // Rapid session switching must keep the newest transcript when an older
 // transcript request resolves later.
 {

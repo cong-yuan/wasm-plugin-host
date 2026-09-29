@@ -34,6 +34,7 @@ return (function () {
     const mutations = sessionMutations.create({ adapter, api });
     let searchTimer = null;
     let lastRuntimeSignature = '';
+    let drawVersion = 0;
     const add = h('button', { class: 'sidebar-action-btn', title: t('sidebar.newChat') }, svg(ICON.newChat));
     const settings = h('button', { class: 'sidebar-action-btn sidebar-settings-button', title: t('settings.title'), 'aria-expanded': 'false' }, svg(ICON.settings));
     const collapse = h('button', { class: 'sidebar-action-btn', title: t('sidebar.collapse') }, svg(ICON.collapse));
@@ -256,6 +257,7 @@ return (function () {
     });
 
     async function draw(selected, runtimeOverride = null) {
+      const myDrawVersion = ++drawVersion;
       const [activeRows, archivedRows, runtime] = await Promise.all([
         adapter.http('GET', '/api/sessions').catch(async () => (await api.sessions()).map((row) => ({
           sessionId: row.id, title: row.title, busy: row.busy, live: row.live,
@@ -266,6 +268,7 @@ return (function () {
           ? Promise.resolve(runtimeOverride)
           : adapter.http('GET', '/api/runtime-state').catch(() => ({ mode: api.mode(), sessions: [] })),
       ]);
+      if (myDrawVersion !== drawVersion) return;
       const rawQuery = view.query.trim();
       const query = rawQuery.toLocaleLowerCase();
       const allRows = sessionSearch.sortRows(view.archived ? archivedRows : activeRows, view.archived);
@@ -275,7 +278,7 @@ return (function () {
         searchStatus.textContent = 'Searching titles and messages…';
         try {
           const result = await searchController.search(rawQuery);
-          if (mySearchVersion !== view.searchVersion) return;
+          if (myDrawVersion !== drawVersion || mySearchVersion !== view.searchVersion) return;
           rows = result.rows;
           searchStatus.textContent = rows.length
             ? `${rows.length} result${rows.length === 1 ? '' : 's'} · ${result.cached ? 'cached ' : ''}title + message search`
