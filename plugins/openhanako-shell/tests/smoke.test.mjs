@@ -510,6 +510,51 @@ check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').l
   api.create = originalCreate;
 }
 
+// New Chat during an in-flight turn resets composer state and invalidates
+// late progress/finally work from the previous conversation.
+{
+  const originalProgress = api.sendWithProgress;
+  const originalCancel = api.cancel;
+  let heldProgress = null;
+  let releaseHeld = null;
+  let resetCancelCalls = 0;
+  api.sendWithProgress = async (_agentId, _text, _msgId, onProgress) => {
+    heldProgress = onProgress;
+    onProgress({ kind: 'text_delta', delta: 'old-session-output' });
+    return new Promise((resolve) => { releaseHeld = () => resolve(true); });
+  };
+  api.cancel = async () => { resetCancelCalls += 1; };
+
+  const resetHost = new El('div');
+  const disposeResetShell = shell.render(resetHost);
+  const resetRoot = resetHost.children[0];
+  const resetInput = resetRoot.querySelector('.input-box');
+  const resetSend = resetRoot.querySelector('.send-btn');
+  resetInput.textContent = 'reset during send';
+  resetSend.fire('click');
+  for (let i = 0; i < 20 && !heldProgress; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  resetRoot.querySelectorAll('.sidebar-action-btn')[0]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('new chat restores send state during in-flight turn',
+    resetSend.getAttribute('data-mode') === 'send' && resetSend.disabled === false);
+  check('new chat clears previous conversation immediately',
+    resetRoot.querySelectorAll('.md-content').length === 0);
+  check('new chat best-effort cancels previous live session', resetCancelCalls === 1);
+
+  heldProgress?.({ kind: 'text_delta', delta: 'late-reset-output' });
+  releaseHeld?.();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  check('late progress after new chat is ignored',
+    !resetRoot.querySelectorAll('.md-content').some((el) => /late-reset-output|old-session-output/.test(el.textContent))
+    && resetSend.getAttribute('data-mode') === 'send');
+
+  if (typeof disposeResetShell === 'function') disposeResetShell();
+  api.sendWithProgress = originalProgress;
+  api.cancel = originalCancel;
+}
+
 // Busy chat exposes Stop, calls cancel_agent, and suppresses progress that races
 // in after cancellation was requested.
 {

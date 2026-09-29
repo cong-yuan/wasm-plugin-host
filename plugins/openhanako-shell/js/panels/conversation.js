@@ -48,7 +48,7 @@ return (function () {
   </svg>`;
 
   function render(options) {
-    const state = { id: null, turns: [], busy: false, cancelling: false, memory: true };
+    const state = { id: null, turns: [], busy: false, cancelling: false, memory: true, epoch: 0 };
 
     // ── WelcomeScreen.tsx ──
     const heroSlot = h('div', { class: 'hana-slot' });
@@ -287,6 +287,7 @@ return (function () {
       const text = input.textContent.trim();
       if (!text || state.busy) return;
       state.busy = true;
+      const submitEpoch = state.epoch;
       state.cancelling = false;
       renderSendState();
       input.textContent = '';
@@ -325,7 +326,7 @@ return (function () {
           'hana-' + Date.now(),
           (event) => {
             if (!event || typeof event !== 'object') return;
-            if (state.cancelling) return;
+            if (state.epoch !== submitEpoch || state.cancelling) return;
             if (event.kind === 'text_delta' && event.delta) {
               assistant.text += event.delta;
             } else if (event.kind === 'thinking_delta' && event.delta) {
@@ -354,16 +355,21 @@ return (function () {
             options.onChanged();
           },
         );
-        if (!sent && !assistant.text) assistant.text = t('error.llmEmptyResponse');
-        state.turns = await api.transcript(state.id);
+        if (state.epoch === submitEpoch && !sent && !assistant.text) assistant.text = t('error.llmEmptyResponse');
+        const transcript = await api.transcript(state.id);
+        if (state.epoch === submitEpoch) state.turns = transcript;
       } catch (err) {
-        assistant.text = (err && err.message) ? err.message : String(err);
+        if (state.epoch === submitEpoch) {
+          assistant.text = (err && err.message) ? err.message : String(err);
+        }
       } finally {
-        state.busy = false;
-        state.cancelling = false;
-        renderSendState();
-        draw();
-        options.onChanged();
+        if (state.epoch === submitEpoch) {
+          state.busy = false;
+          state.cancelling = false;
+          renderSendState();
+          draw();
+          options.onChanged();
+        }
       }
     }
 
@@ -395,7 +401,20 @@ return (function () {
     draw();
     return {
       root, open, setModelLabel,
-      reset: () => { state.id = null; state.turns = []; draw(); input.focus(); },
+      reset: () => {
+        const previousId = state.id;
+        const wasBusy = state.busy;
+        state.epoch += 1;
+        state.id = null;
+        state.turns = [];
+        state.busy = false;
+        state.cancelling = false;
+        closeModels();
+        renderSendState();
+        draw();
+        input.focus?.();
+        if (wasBusy && previousId) api.cancel(previousId).catch(() => {});
+      },
     };
   }
   return { render };
