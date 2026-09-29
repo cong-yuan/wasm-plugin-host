@@ -25,6 +25,7 @@ const sources = new Map();
 for (const name of [
   'lib/tauri-invoke.js',
   'lib/api.js',
+  'lib/session-search.js',
   'lib/hana-adapter.js',
   'lib/host-bridge.js',
 ]) {

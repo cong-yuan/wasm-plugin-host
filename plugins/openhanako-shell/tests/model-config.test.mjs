@@ -66,9 +66,12 @@ const api = {
   steer: async () => {},
 };
 
+const sessionSearch = load('js/lib/session-search.js', { require() { throw new Error('unexpected dependency'); } });
+
 const studio = {
   require: (id) => {
     if (id === 'lib/api') return api;
+    if (id === 'lib/session-search') return sessionSearch;
     throw new Error('unexpected ' + id);
   },
 };

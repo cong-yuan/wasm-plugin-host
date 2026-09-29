@@ -129,6 +129,31 @@ const check = (label, condition) => { if (!condition) failures.push(label); };
   check('search controller clear drops cache', controller.size() === 0);
 }
 
+{
+  let activeLoads = 0;
+  let maxLoads = 0;
+  const rows = Array.from({ length: 6 }, (_value, index) => ({ id: `s-${index}`, title: `S${index}` }));
+  const contentMatches = await search.searchContentRows(
+    rows,
+    'needle',
+    async (session) => {
+      activeLoads += 1;
+      maxLoads = Math.max(maxLoads, activeLoads);
+      await new Promise((resolve) => setTimeout(resolve, session.id === 's-1' ? 4 : 1));
+      activeLoads -= 1;
+      return session.id === 's-4' || session.id === 's-1'
+        ? [{ text: `contains needle in ${session.id}` }]
+        : [{ text: 'nothing' }];
+    },
+    (session) => ({ sessionId: session.id, title: session.title }),
+    1,
+    3,
+  );
+  check('content search uses bounded transcript concurrency', maxLoads === 3);
+  check('content search preserves source ordering before limit',
+    contentMatches.length === 1 && contentMatches[0].sessionId === 's-1');
+}
+
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));
   process.exit(1);

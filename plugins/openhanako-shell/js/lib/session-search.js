@@ -57,5 +57,47 @@ return (function () {
     };
   };
 
-  return { normalizeRows, sortRows, localFilter, mergeResults, highlightParts };
+  const searchContentRows = async (rows, query, loadTranscript, project, limit = 20, concurrency = 4) => {
+    const raw = String(query || '').trim();
+    if (!raw) return [];
+    const source = Array.from(rows || []);
+    const needle = raw.toLocaleLowerCase();
+    const matches = new Array(source.length).fill(null);
+    const width = Math.max(1, Math.min(source.length || 1, Number(concurrency) || 1));
+    let cursor = 0;
+
+    const worker = async () => {
+      while (cursor < source.length) {
+        const index = cursor;
+        cursor += 1;
+        const row = source[index];
+        const transcript = await Promise.resolve(loadTranscript(row)).catch(() => []);
+        let snippet = '';
+        for (const message of transcript || []) {
+          const text = [message?.text, message?.reasoning]
+            .filter((value) => typeof value === 'string' && value)
+            .join(' ');
+          const at = text.toLocaleLowerCase().indexOf(needle);
+          if (at < 0) continue;
+          const start = Math.max(0, at - 48);
+          const end = Math.min(text.length, at + raw.length + 72);
+          snippet = text.slice(start, end).trim();
+          break;
+        }
+        if (snippet) {
+          matches[index] = {
+            ...project(row),
+            matchKind: 'content',
+            snippet,
+            score: 1,
+          };
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: width }, () => worker()));
+    return matches.filter(Boolean).slice(0, Math.max(0, Number(limit) || 0));
+  };
+
+  return { normalizeRows, sortRows, localFilter, mergeResults, highlightParts, searchContentRows };
 })();

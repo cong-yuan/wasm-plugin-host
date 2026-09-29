@@ -10,6 +10,7 @@
 // transcript growth is observed as a fallback.
 return (function () {
   const api = studio.require('lib/api');
+  const sessionSearch = studio.require('lib/session-search');
 
   const ASSISTANT_ID = 'studio';
   const ASSISTANT_NAME = 'Hanako';
@@ -1283,29 +1284,20 @@ return (function () {
             score: 1,
           });
         } else {
-          const transcript = await api.transcript(row.id).catch(() => []);
-          let snippet = '';
-          for (const message of transcript || []) {
-            const text = [message?.text, message?.reasoning]
-              .filter((value) => typeof value === 'string' && value)
-              .join(' ');
-            const lower = text.toLocaleLowerCase();
-            const at = lower.indexOf(needle);
-            if (at < 0) continue;
-            const start = Math.max(0, at - 48);
-            const end = Math.min(text.length, at + rawQuery.length + 72);
-            snippet = text.slice(start, end).trim();
-            break;
-          }
-          if (!snippet) continue;
-          results.push({
-            ...projected,
-            matchKind: 'content',
-            snippet,
-            score: 1,
-          });
+          break;
         }
         if (results.length >= limit) break;
+      }
+      if (phase === 'content') {
+        const contentResults = await sessionSearch.searchContentRows(
+          rows,
+          rawQuery,
+          (row) => api.transcript(row.id),
+          projection,
+          limit,
+          4,
+        );
+        return { query: rawQuery, phase, results: contentResults };
       }
       return { query: rawQuery, phase, results };
     }

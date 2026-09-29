@@ -38,7 +38,7 @@ global.window = {
 };
 
 const sources = new Map();
-for (const name of ['lib/tauri-invoke.js', 'lib/api.js', 'lib/hana-adapter.js']) {
+for (const name of ['lib/tauri-invoke.js', 'lib/api.js', 'lib/session-search.js', 'lib/hana-adapter.js']) {
   sources.set(name.replace(/\.js$/, ''), readFileSync(join(ROOT, 'js', name), 'utf8'));
 }
 const cache = new Map();
