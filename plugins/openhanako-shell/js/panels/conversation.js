@@ -260,13 +260,27 @@ return (function () {
     }
 
     async function open(session) {
+      const previousId = state.id;
+      const wasBusy = state.busy;
+      state.epoch += 1;
+      const openEpoch = state.epoch;
       state.id = session.id;
+      state.busy = false;
+      state.cancelling = false;
+      renderSendState();
+      if (wasBusy && previousId && previousId !== session.id) {
+        api.cancel(previousId).catch(() => {});
+      }
       if (session.live === false) {
         const resumed = await api.resume(session.id);
+        if (state.epoch !== openEpoch) return;
         if (resumed && (resumed.id || typeof resumed === 'string')) state.id = resumed.id || resumed;
       }
-      state.turns = await api.transcript(state.id);
+      const transcript = await api.transcript(state.id);
+      if (state.epoch !== openEpoch) return;
+      state.turns = transcript;
       await refreshModels().catch(() => {});
+      if (state.epoch !== openEpoch) return;
       draw();
       options.onOpened(state.id);
     }

@@ -440,6 +440,47 @@ root.querySelectorAll('.tab')[0].fire('click');
 check('tab switches', root.querySelectorAll('.tabActive').length === 1);
 root.querySelector('.memoryToggleBtn').fire('click');
 
+// Rapid session switching must keep the newest transcript when an older
+// transcript request resolves later.
+{
+  const originalTranscript = api.transcript;
+  const switchHost = new El('div');
+  const disposeSwitchShell = shell.render(switchHost);
+  const switchRoot = switchHost.children[0];
+  for (let i = 0; i < 20 && switchRoot.querySelectorAll('.sessionItem').length < 2; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  let releaseOldTranscript = null;
+  api.transcript = async (id) => {
+    if (id === 'sess-welcome') {
+      return new Promise((resolve) => {
+        releaseOldTranscript = () => resolve([
+          { role: 'assistant', text: 'stale welcome transcript' },
+        ]);
+      });
+    }
+    if (id === 'sess-sketch') {
+      return [{ role: 'assistant', text: 'latest sketch transcript' }];
+    }
+    return originalTranscript(id);
+  };
+  switchRoot.querySelector('[data-session-id="sess-welcome"]')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  switchRoot.querySelector('[data-session-id="sess-sketch"]')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('newest session transcript renders before stale request resolves',
+    switchRoot.querySelectorAll('.md-content').some((el) => /latest sketch transcript/.test(el.textContent)));
+  releaseOldTranscript?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('stale session transcript cannot overwrite newer selection',
+    switchRoot.querySelectorAll('.md-content').some((el) => /latest sketch transcript/.test(el.textContent))
+    && !switchRoot.querySelectorAll('.md-content').some((el) => /stale welcome transcript/.test(el.textContent)));
+
+  if (typeof disposeSwitchShell === 'function') disposeSwitchShell();
+  api.transcript = originalTranscript;
+}
+
 // Main shell chat must use the incremental transport rather than the legacy
 // whole-turn send path. The mock backend emits thinking + text in chunks.
 const smokeInput = root.querySelector('.input-box');
