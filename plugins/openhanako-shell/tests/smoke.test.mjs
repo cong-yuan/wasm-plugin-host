@@ -610,6 +610,15 @@ skillsButton?.fire('click');
   api.sendWithProgress = originalProgress;
 }
 
+check('unsupported standalone controls are explicitly disabled',
+  root.querySelector('.folderSelectBtn')?.disabled === true
+  && root.querySelectorAll('.attach-btn').every((button) => button.disabled === true)
+  && root.querySelector('.plan-mode-btn')?.disabled === true);
+check('unsupported controls explain why they are disabled',
+  /standalone Studio bridge/.test(root.querySelector('.folderSelectBtn')?.title || '')
+  && /server command dispatcher/.test(root.querySelectorAll('.attach-btn')[1]?.title || '')
+  && /enforce/.test(root.querySelector('.plan-mode-btn')?.title || ''));
+
 // Main shell chat must use the incremental transport rather than the legacy
 // whole-turn send path. The mock backend emits thinking + text in chunks.
 const smokeInput = root.querySelector('.input-box');

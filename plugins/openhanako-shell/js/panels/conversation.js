@@ -49,6 +49,12 @@ return (function () {
 
   function render(options) {
     const state = { id: null, turns: [], busy: false, cancelling: false, memory: true, epoch: 0, switchingModel: false };
+    const markUnsupported = (button, reason) => {
+      button.disabled = true;
+      button.setAttribute('aria-disabled', 'true');
+      button.setAttribute('data-unsupported', 'true');
+      button.title = reason;
+    };
 
     // ── WelcomeScreen.tsx ──
     const heroSlot = h('div', { class: 'hana-slot' });
@@ -56,6 +62,7 @@ return (function () {
 
     const folderBtn = h('button', { class: 'folderSelectBtn', type: 'button' },
       svg(FOLDER), h('span', {}, t('input.selectWorkspace')), svg(FOLDER_SWAP));
+    markUnsupported(folderBtn, 'Workspace selection is not available in the standalone Studio bridge yet.');
     const memoryBtn = h('button', { class: 'memoryToggleBtn memoryToggleBtnActive', type: 'button' },
       svg(MEMORY), h('span', {}, t('welcome.memoryOn')));
     memoryBtn.onclick = () => {
@@ -91,6 +98,9 @@ return (function () {
     const attach = h('button', { class: 'attach-btn', type: 'button', title: t('input.attachFiles') }, svg(PLUS));
     const slash = h('button', { class: 'attach-btn', type: 'button', title: t('input.commandMenu') }, svg(SLASH));
     const plan = h('button', { class: 'plan-mode-btn plan-mode-default', type: 'button' }, svg(PLAN));
+    markUnsupported(attach, 'File attachments are not available in the standalone Studio bridge yet.');
+    markUnsupported(slash, 'Slash commands require the server command dispatcher and are not available here yet.');
+    markUnsupported(plan, 'Permission modes are unavailable until the Studio bridge can enforce them.');
     const trailing = h('span', { class: 'input-trailing-slot hana-slot' });
     slots.mount('openhanako.conversation.input.right', trailing);
 

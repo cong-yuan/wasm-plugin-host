@@ -8811,6 +8811,18 @@ html[data-platform="linux"] .onboarding {
     color: var(--accent);
     border-color: rgba(var(--accent-rgb), 0.25);
 }
+.attach-btn:disabled,
+.plan-mode-btn:disabled,
+.folderSelectBtn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+.attach-btn:disabled:hover,
+.plan-mode-btn:disabled:hover,
+.folderSelectBtn:disabled:hover {
+    color: var(--text-muted);
+    border-color: rgba(var(--accent-rgb), 0.12);
+}
 
 /* Plan Mode 按钮 */
 .plan-mode-btn {
