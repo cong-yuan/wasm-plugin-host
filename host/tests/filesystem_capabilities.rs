@@ -392,8 +392,15 @@ fn absolute_mutation_path_is_rejected() {
         requested.clone(),
     );
     let (reg, _) = run("absolute", &wasm, policy(requested));
-    assert!(fs_reply(&reg)["error"]
+    let error = fs_reply(&reg)["error"]
         .as_str()
         .unwrap_or("")
-        .contains("relative path"));
+        .to_string();
+    assert!(
+        error.contains("absolute") || error.contains("relative path"),
+        "unexpected absolute-path rejection: {error}"
+    );
+    assert!(reg.audit_events_for("fs").iter().any(|e| {
+        e.decision == AuditDecision::Deny && e.capability == "filesystem.path"
+    }));
 }
