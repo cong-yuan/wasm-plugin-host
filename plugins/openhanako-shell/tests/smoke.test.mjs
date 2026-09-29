@@ -460,6 +460,16 @@ check('skills button opens host capabilities panel',
 check('skills panel lists plugins and tools from host api',
   /openhanako-shell/.test(root.querySelector('.sidebarSkillsPanel')?.textContent || '')
   && /read_file/.test(root.querySelector('.sidebarSkillsPanel')?.textContent || ''));
+const originalToolsForSkills = api.tools;
+api.tools = async () => [
+  ...(await originalToolsForSkills()),
+  { name: 'dynamic_tool', description: 'hot reload smoke' },
+];
+root.querySelector('.sidebarSkillsRefresh')?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('skills refresh reloads hot-added tools',
+  /dynamic_tool/.test(root.querySelector('.sidebarSkillsPanel')?.textContent || ''));
+api.tools = originalToolsForSkills;
 skillsButton?.fire('click');
 check('skills button closes capabilities panel',
   skillsButton?.getAttribute('aria-expanded') === 'false'

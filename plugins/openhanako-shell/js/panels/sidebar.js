@@ -259,14 +259,16 @@ return (function () {
       if (opening) await loadActivityPanel();
     };
 
-    let skillsLoaded = false;
     let skillsLoading = false;
     const renderSkillsPanel = (plugins, tools) => {
       clear(skillsPanel);
       const pluginRows = Array.from(plugins || []);
       const toolRows = Array.from(tools || []);
+      const refresh = h('button', { class: 'sidebarSkillsRefresh', type: 'button' }, 'Refresh');
+      refresh.onclick = () => loadSkillsPanel();
       const summary = h('div', { class: 'sidebarSkillsSummary' },
-        `${pluginRows.length} plugin${pluginRows.length === 1 ? '' : 's'} · ${toolRows.length} tool${toolRows.length === 1 ? '' : 's'}`);
+        h('span', {}, `${pluginRows.length} plugin${pluginRows.length === 1 ? '' : 's'} · ${toolRows.length} tool${toolRows.length === 1 ? '' : 's'}`),
+        refresh);
       skillsPanel.appendChild(summary);
 
       const appendSection = (title, rows, kind) => {
@@ -298,7 +300,6 @@ return (function () {
       try {
         const [plugins, tools] = await Promise.all([api.plugins(), api.tools()]);
         renderSkillsPanel(plugins, tools);
-        skillsLoaded = true;
       } catch (err) {
         clear(skillsPanel);
         skillsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty error' },
@@ -316,7 +317,7 @@ return (function () {
       }
       skillsPanel.style.display = opening ? '' : 'none';
       skills.setAttribute('aria-expanded', opening ? 'true' : 'false');
-      if (opening && !skillsLoaded) await loadSkillsPanel();
+      if (opening) await loadSkillsPanel();
     };
 
     const updateBridgeStatus = (runtime) => {
