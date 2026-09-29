@@ -820,6 +820,12 @@ return (function () {
         const s = await tauri.invoke('studio_status');
         const list = (s && s.providers) || [];
         if (list.length) return list.find((p) => p !== 'mock') || list[0];
+      } catch (_) { /* older hosts may omit studio_status */ }
+      try {
+        const llm = await tauri.invoke('get_llm_config');
+        const current = llm && llm.current && typeof llm.current === 'object' ? llm.current : {};
+        if (typeof current.provider === 'string' && current.provider) return current.provider;
+        if (typeof llm?.default === 'string' && llm.default) return llm.default;
       } catch (_) { /* fall through to the offline demo pair */ }
       return DEFAULT_PROVIDER;
     },

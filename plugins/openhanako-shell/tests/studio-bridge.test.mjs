@@ -154,6 +154,7 @@ global.window.__TAURI_INTERNALS__ = {
     }
     if (cmd === 'list_agents') return Promise.resolve([]);
     if (cmd === 'create_agent') return Promise.resolve('agent-new');
+    if (cmd === 'get_llm_config') return Promise.resolve({ current: { provider: 'deepseek', model: 'deepseek-chat' }, default: 'deepseek' });
     if (cmd === 'resume_session') return Promise.resolve(args.sessionId);
     if (cmd === 'send_message') {
       sendStarted = Date.now();
@@ -192,6 +193,7 @@ global.window.__TAURI_INTERNALS__ = {
 };
 
 check('api mode flips to tauri once invoke exists', api.mode() === 'tauri');
+check('pickProvider falls back to configured provider without studio_status', await api.pickProvider() === 'deepseek');
 const live = await api.sessions();
 check('sessions call list_sessions', calls.some((c) => c.cmd === 'list_sessions') && live[0].id === 'agent-1');
 const projectedLive = await adapter.http('GET', '/api/sessions');
