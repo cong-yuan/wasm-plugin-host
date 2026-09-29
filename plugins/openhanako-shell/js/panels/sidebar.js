@@ -442,6 +442,7 @@ return (function () {
       const runtimeById = new Map((runtime.sessions || []).map((state) => [state.sessionId, state]));
       lastRuntimeSignature = sessionRuntime.signature(runtime);
       updateBridgeStatus(runtime);
+      if (activityPanel.style.display !== 'none') renderActivityPanel(runtime);
       activeView.className = 'sessionViewBtn' + (view.archived ? '' : ' active');
       archivedView.className = 'sessionViewBtn' + (view.archived ? ' active' : '');
       activeView.setAttribute('aria-pressed', view.archived ? 'false' : 'true');
@@ -768,6 +769,7 @@ return (function () {
         const runtime = await adapter.http('GET', '/api/runtime-state');
         const nextSignature = sessionRuntime.signature(runtime);
         updateBridgeStatus(runtime);
+        if (activityPanel.style.display !== 'none') renderActivityPanel(runtime);
         if (nextSignature !== lastRuntimeSignature) {
           lastRuntimeSignature = nextSignature;
           await draw(options.selected, runtime);
