@@ -34,7 +34,7 @@ return (function () {
     let searchTimer = null;
     let lastRuntimeSignature = '';
     const add = h('button', { class: 'sidebar-action-btn', title: t('sidebar.newChat') }, svg(ICON.newChat));
-    const settings = h('button', { class: 'sidebar-action-btn', title: t('settings.title') }, svg(ICON.settings));
+    const settings = h('button', { class: 'sidebar-action-btn sidebar-settings-button', title: t('settings.title'), 'aria-expanded': 'false' }, svg(ICON.settings));
     const collapse = h('button', { class: 'sidebar-action-btn', title: t('sidebar.collapse') }, svg(ICON.collapse));
     add.onclick = options.onNew;
     collapse.onclick = options.onCollapse;
@@ -44,6 +44,12 @@ return (function () {
 
     const header = h('div', { class: 'sidebar-header' },
       h('span', { class: 'sidebar-title' }, t('sidebar.title')), actions);
+    const settingsPanel = h('div', {
+      class: 'sidebarSettingsPanel',
+      role: 'region',
+      'aria-label': t('settings.title'),
+    });
+    settingsPanel.style.display = 'none';
 
     // Upstream renders the activity bars as flat siblings (no wrapper div).
     const bridgeStatus = h('span', { class: 'sidebar-bridge-status' }, '');
@@ -128,7 +134,7 @@ return (function () {
     slots.mount('openhanako.sidebar.footer', footer);
 
     const content = h('div', { class: 'sidebar-chat-content' },
-      header, bridge, activity, activityPanel, automation, skills, skillsPanel, activities, list, footer);
+      header, settingsPanel, bridge, activity, activityPanel, automation, skills, skillsPanel, activities, list, footer);
 
     const root = h('aside', { class: 'sidebar', id: 'sidebar' },
       h('div', { class: 'sidebar-inner' }, content),
@@ -138,6 +144,65 @@ return (function () {
       panel.style.display = 'none';
       button.setAttribute('aria-expanded', 'false');
     };
+    const renderSettingsPanel = (summaryData, status) => {
+      clear(settingsPanel);
+      const providers = summaryData?.providers && typeof summaryData.providers === 'object'
+        ? Object.entries(summaryData.providers)
+        : [];
+      const activeProvider = status?.providers?.[0] || '';
+      const activeModel = status?.model || '';
+      settingsPanel.appendChild(h('div', { class: 'sidebarSettingsSummary' },
+        activeModel ? `Active: ${activeProvider ? activeProvider + ' / ' : ''}${activeModel}` : 'Provider configuration'));
+
+      if (!providers.length) {
+        settingsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'No providers configured'));
+        return;
+      }
+      providers.forEach(([name, provider]) => {
+        const configured = !!provider?.has_credentials || !!provider?.is_configured;
+        const row = h('div', { class: 'sidebarSettingsProvider', 'data-configured': configured ? 'true' : 'false' },
+          h('div', { class: 'sidebarSettingsProviderHeader' },
+            h('span', { class: 'sidebarSettingsProviderName' }, provider?.display_name || name),
+            h('span', { class: 'sidebarSettingsProviderState' }, configured ? 'Configured' : 'Needs credentials')));
+        const models = Array.isArray(provider?.models) ? provider.models : [];
+        if (models.length) {
+          row.appendChild(h('div', { class: 'sidebarSettingsProviderMeta' },
+            `${models.length} model${models.length === 1 ? '' : 's'} · ${models.slice(0, 3).join(', ')}${models.length > 3 ? '…' : ''}`));
+        }
+        if (provider?.base_url) {
+          row.appendChild(h('div', { class: 'sidebarSettingsProviderMeta' }, String(provider.base_url)));
+        }
+        settingsPanel.appendChild(row);
+      });
+    };
+
+    const loadSettingsPanel = async () => {
+      clear(settingsPanel);
+      settingsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'Loading providers…'));
+      try {
+        const [summaryData, status] = await Promise.all([
+          adapter.http('GET', '/api/providers/summary'),
+          api.status(),
+        ]);
+        renderSettingsPanel(summaryData, status);
+      } catch (err) {
+        clear(settingsPanel);
+        settingsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty error' },
+          err?.message || 'Unable to load provider settings'));
+      }
+    };
+
+    settings.onclick = async () => {
+      const opening = settingsPanel.style.display === 'none';
+      if (opening) {
+        closeInfoPanel(activityPanel, activity);
+        closeInfoPanel(skillsPanel, skills);
+      }
+      settingsPanel.style.display = opening ? '' : 'none';
+      settings.setAttribute('aria-expanded', opening ? 'true' : 'false');
+      if (opening) await loadSettingsPanel();
+    };
+
 
     const renderActivityPanel = (runtime) => {
       clear(activityPanel);
@@ -185,7 +250,10 @@ return (function () {
 
     activity.onclick = async () => {
       const opening = activityPanel.style.display === 'none';
-      if (opening) closeInfoPanel(skillsPanel, skills);
+      if (opening) {
+        closeInfoPanel(skillsPanel, skills);
+        closeInfoPanel(settingsPanel, settings);
+      }
       activityPanel.style.display = opening ? '' : 'none';
       activity.setAttribute('aria-expanded', opening ? 'true' : 'false');
       if (opening) await loadActivityPanel();
@@ -242,7 +310,10 @@ return (function () {
 
     skills.onclick = async () => {
       const opening = skillsPanel.style.display === 'none';
-      if (opening) closeInfoPanel(activityPanel, activity);
+      if (opening) {
+        closeInfoPanel(activityPanel, activity);
+        closeInfoPanel(settingsPanel, settings);
+      }
       skillsPanel.style.display = opening ? '' : 'none';
       skills.setAttribute('aria-expanded', opening ? 'true' : 'false');
       if (opening && !skillsLoaded) await loadSkillsPanel();

@@ -440,6 +440,17 @@ root.querySelectorAll('.tab')[0].fire('click');
 check('tab switches', root.querySelectorAll('.tabActive').length === 1);
 root.querySelector('.memoryToggleBtn').fire('click');
 
+const settingsButton = root.querySelector('.sidebar-settings-button');
+settingsButton?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('settings button opens provider status panel',
+  settingsButton?.getAttribute('aria-expanded') === 'true'
+  && root.querySelector('.sidebarSettingsPanel')?.style?.display !== 'none');
+check('settings provider panel uses safe provider summary',
+  /mock/i.test(root.querySelector('.sidebarSettingsPanel')?.textContent || '')
+  && !/api[_ -]?key/i.test(root.querySelector('.sidebarSettingsPanel')?.textContent || ''));
+settingsButton?.fire('click');
+
 const skillsButton = root.querySelector('.sidebar-skills-button');
 skillsButton?.fire('click');
 await new Promise((resolve) => setTimeout(resolve, 0));

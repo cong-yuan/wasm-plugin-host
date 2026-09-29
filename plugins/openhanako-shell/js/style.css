@@ -901,6 +901,52 @@ html[data-platform="linux"] .tb-toggle-right {
     margin-left: 6px;
 }
 
+.sidebarSettingsPanel {
+    margin: 0 10px 8px;
+    padding: 8px;
+    border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 8px;
+    background: rgba(0,0,0,0.018);
+}
+.sidebarSettingsSummary {
+    margin-bottom: 6px;
+    font-size: 10px;
+    color: var(--text-muted);
+}
+.sidebarSettingsProvider {
+    padding: 6px 0;
+    border-top: 1px solid rgba(0,0,0,0.045);
+}
+.sidebarSettingsProviderHeader {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.sidebarSettingsProviderName {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    color: var(--text-primary);
+}
+.sidebarSettingsProviderState {
+    font-size: 9px;
+    color: var(--text-muted);
+}
+.sidebarSettingsProvider[data-configured="true"] .sidebarSettingsProviderState {
+    color: rgba(58,122,77,0.9);
+}
+.sidebarSettingsProviderMeta {
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 9px;
+    color: var(--text-muted);
+}
+
 .sidebarActivityPanel {
     margin: 0 10px 8px;
     padding: 8px;
