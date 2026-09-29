@@ -175,6 +175,9 @@ const host = new El('div');
 shell.render(host);
 
 const root = host.children[0];
+const slotState = studio.require('lib/slots').snapshot();
+check('all openhanako manifest slots mount in the shell',
+  slotState.total === 17 && slotState.mounted === 17);
 check('root .hana-replica', root.className.includes('hana-replica'));
 check('root data-theme=new-warm-paper', root.getAttribute('data-theme') === 'new-warm-paper');
 check('paper-texture enabled', root.className.includes('paper-texture'));
@@ -195,7 +198,7 @@ for (const sel of [
   '.input-bottom-bar', '.input-actions', '.input-controls', '.attach-btn',
   '.plan-mode-btn', '.model-selector', '.model-pill', '.send-btn', '.send-label',
   '.preview-panel', '.jian-sidebar', '.jian-sidebar-inner', '.workspaceShell',
-  '.workspaceCard', '.universal-card', '.workspaceHeader', '.workspaceTitle', '.runtimeSummary',
+  '.workspaceCard', '.universal-card', '.workspaceHeader', '.workspaceTitle', '.runtimeSummary', '.slotSummary',
   '.tabs', '.tabSlider', '.tab', '.tabActive', '.content',
   '.jianDrawer', '.jianHeader', '.jianTitle', '.jianBody', '.jianToggle',
 ]) {

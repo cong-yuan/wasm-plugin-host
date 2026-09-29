@@ -26,7 +26,7 @@ return (function () {
     collapse.onclick = options.onCollapse;
 
     const actions = h('div', { class: 'sidebar-header-actions' }, add, settings, collapse);
-    slots.mount('hana.sidebar.header', actions);
+    slots.mount('openhanako.sidebar.header', actions);
 
     const header = h('div', { class: 'sidebar-header' },
       h('span', { class: 'sidebar-title' }, t('sidebar.title')), actions);
@@ -47,17 +47,20 @@ return (function () {
       svg(ICON.skills), h('span', {}, t('skills.panel.title')));
 
     const activities = h('div', { class: 'hana-slot sidebar-activities-slot' });
-    slots.mount('hana.sidebar.activities', activities);
+    slots.mount('openhanako.sidebar.activities', activities);
 
     // Upstream: <div className="session-list"><SessionList /><SidebarNoticeSlot /></div>
     const scroller = h('div', { class: 'sessionListScroller' });
     const notice = h('div', { class: 'hana-slot sidebar-notice-slot' });
-    slots.mount('hana.sidebar.notice', notice);
+    slots.mount('openhanako.sidebar.notice', notice);
     const list = h('div', { class: 'session-list' }, scroller, notice);
-    slots.mount('hana.sidebar.sessions', list);
+    slots.mount('openhanako.sidebar.sessions', list);
+
+    const footer = h('div', { class: 'hana-slot sidebar-footer-slot' });
+    slots.mount('openhanako.sidebar.footer', footer);
 
     const content = h('div', { class: 'sidebar-chat-content' },
-      header, bridge, activity, automation, skills, activities, list);
+      header, bridge, activity, automation, skills, activities, list, footer);
 
     const root = h('aside', { class: 'sidebar', id: 'sidebar' },
       h('div', { class: 'sidebar-inner' }, content),

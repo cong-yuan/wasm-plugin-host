@@ -49,7 +49,7 @@ return (function () {
       onmousedown: (e) => e.preventDefault(),
     }, svg(ICON_NEW));
     const left = h('div', { class: 'tb-left-group' }, toggleLeft, newSession);
-    slots.mount('hana.titlebar.left', left);
+    slots.mount('openhanako.titlebar.left', left);
 
     // {centerTitle && <div className="tb-center-title">…}
     const titleText = h('span', {}, opts.title || '');
@@ -58,7 +58,7 @@ return (function () {
       'aria-label': t('titlebar.currentChatTitle'),
       title: opts.title || '',
     }, titleText);
-    slots.mount('hana.titlebar.center', center);
+    slots.mount('openhanako.titlebar.center', center);
 
     // <div className="tb-right-group">
     const togglePreview = h('button', {
@@ -74,7 +74,7 @@ return (function () {
       onmousedown: (e) => e.preventDefault(),
     }, svg(ICON_RIGHT));
     const right = h('div', { class: 'tb-right-group' }, togglePreview, toggleRight);
-    slots.mount('hana.titlebar.right', right);
+    slots.mount('openhanako.titlebar.right', right);
 
     // Upstream drives `active` from props; the shell owns the state and calls
     // the setters below, so handlers only report intent.

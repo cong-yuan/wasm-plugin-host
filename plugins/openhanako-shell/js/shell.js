@@ -21,7 +21,7 @@ return (function () {
 
     // ── PreviewPanel (upstream: rendered by AppPages for the chat tab) ──
     const previewBody = h('div', { class: 'preview-panel-body' });
-    slots.mount('hana.preview.panel', previewBody);
+    slots.mount('openhanako.preview.panel', previewBody);
     const previewClose = h('button', { class: 'preview-close-btn', type: 'button' }, '×');
     const preview = h('aside', { class: 'preview-panel collapsed', id: 'previewPanel' },
       h('div', { class: 'resize-handle resize-handle-left' }),
@@ -80,7 +80,7 @@ return (function () {
     const app = h('div', { class: 'app' }, side.root, main, preview, right.root);
 
     const overlay = h('div', { class: 'shell-overlay' });
-    slots.mount('hana.shell.overlay', overlay);
+    slots.mount('openhanako.shell.overlay', overlay);
 
     const root = h('div', {
       class: 'hana-replica app-shell paper-texture',
@@ -101,7 +101,11 @@ return (function () {
     }
     refresh();
 
-    return () => { if (unResize) unResize(); root.remove(); };
+    return () => {
+      if (unResize) unResize();
+      if (right && typeof right.dispose === 'function') right.dispose();
+      root.remove();
+    };
   }
   return { render };
 })();

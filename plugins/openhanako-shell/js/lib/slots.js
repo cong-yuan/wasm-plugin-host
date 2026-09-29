@@ -23,6 +23,35 @@ return (function () {
     { name: 'openhanako.shell.overlay', desc: 'Full-window overlay' },
   ];
 
+  const mounts = new Map();
+  const listeners = new Set();
+  const snapshot = () => {
+    const rows = SLOTS.map((slot) => {
+      const mounted = mounts.get(slot.name) || null;
+      const el = mounted && mounted.el;
+      return {
+        name: slot.name,
+        description: slot.desc,
+        mounted: !!el,
+        visible: !!(el && el.style.display !== 'none'),
+        hasContribution: !!(el && el.dataset.hasContribution === '1'),
+      };
+    });
+    return {
+      total: rows.length,
+      mounted: rows.filter((row) => row.mounted).length,
+      visible: rows.filter((row) => row.visible).length,
+      contributions: rows.filter((row) => row.hasContribution).length,
+      slots: rows,
+    };
+  };
+  const notify = () => {
+    const value = snapshot();
+    listeners.forEach((listener) => {
+      try { listener(value); } catch (_) {}
+    });
+  };
+
   const mount = (slotName, parent) => {
     const box = document.createElement('div');
     box.dataset.hostSlot = slotName;
@@ -45,20 +74,33 @@ return (function () {
       const has = !!box.querySelector('[data-contribution]');
       if (has) box.dataset.hasContribution = '1';
       else delete box.dataset.hasContribution;
+      notify();
     };
     const mo = new MutationObserver(sync);
     mo.observe(box, { childList: true, subtree: true });
     sync();
 
-    return {
+    const mounted = {
       el: box,
       dispose: () => {
         mo.disconnect();
         if (typeof dispose === 'function') dispose();
+        mounts.delete(slotName);
         box.remove();
+        notify();
       },
     };
+    mounts.set(slotName, mounted);
+    notify();
+    return mounted;
   };
 
-  return { SLOTS, mount };
+  const subscribe = (listener) => {
+    if (typeof listener !== 'function') return () => {};
+    listeners.add(listener);
+    listener(snapshot());
+    return () => listeners.delete(listener);
+  };
+
+  return { SLOTS, mount, snapshot, subscribe };
 })();

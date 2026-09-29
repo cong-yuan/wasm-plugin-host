@@ -10934,3 +10934,18 @@ html[data-platform="linux"] .onboarding {
 .runtimeMetricError .runtimeMetricValue {
     color: #a64238;
 }
+
+.slotSummary {
+    margin: -2px 8px 8px;
+    padding: 5px 7px;
+    border-radius: 6px;
+    font-size: var(--fs-hint);
+    line-height: 1.4;
+    color: var(--text-muted);
+    background: rgba(255,255,255,0.22);
+    white-space: normal;
+}
+.slotSummary[data-contributions]:not([data-contributions="0"]) {
+    color: var(--text-primary);
+    background: rgba(var(--accent-rgb), 0.08);
+}

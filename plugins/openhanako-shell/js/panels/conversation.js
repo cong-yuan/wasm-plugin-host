@@ -51,7 +51,7 @@ return (function () {
 
     // ── WelcomeScreen.tsx ──
     const heroSlot = h('div', { class: 'hana-slot' });
-    slots.mount('hana.conversation.hero', heroSlot);
+    slots.mount('openhanako.conversation.hero', heroSlot);
 
     const folderBtn = h('button', { class: 'folderSelectBtn', type: 'button' },
       svg(FOLDER), h('span', {}, t('input.selectWorkspace')), svg(FOLDER_SWAP));
@@ -74,12 +74,12 @@ return (function () {
 
     // ── ChatArea ──
     const stream = h('div', { class: 'message-stream' });
-    slots.mount('hana.conversation.stream', stream);
+    slots.mount('openhanako.conversation.stream', stream);
     const chat = h('div', { class: 'chat-area' }, welcome, stream);
 
     // ── InputArea.tsx ──
     const dock = h('div', { class: 'input-dock hana-slot' });
-    slots.mount('hana.conversation.input.dock', dock);
+    slots.mount('openhanako.conversation.input.dock', dock);
 
     const input = h('div', {
       class: 'input-box', contenteditable: 'true', role: 'textbox',
@@ -91,7 +91,7 @@ return (function () {
     const slash = h('button', { class: 'attach-btn', type: 'button', title: t('input.commandMenu') }, svg(SLASH));
     const plan = h('button', { class: 'plan-mode-btn plan-mode-default', type: 'button' }, svg(PLAN));
     const trailing = h('span', { class: 'input-trailing-slot hana-slot' });
-    slots.mount('hana.conversation.input.right', trailing);
+    slots.mount('openhanako.conversation.input.right', trailing);
 
     const modelPill = h('button', { class: 'model-pill', type: 'button' },
       h('span', { class: 'model-pill-label' }, '—'), svg(CHEVRON_DOWN));
@@ -111,7 +111,7 @@ return (function () {
     const inputArea = h('div', { class: 'input-area' }, surface);
 
     const headerSlot = h('div', { class: 'conversation-header-slot hana-slot' });
-    slots.mount('hana.conversation.header', headerSlot);
+    slots.mount('openhanako.conversation.header', headerSlot);
 
     // MainContent.tsx: <div className={`main-content${welcomeMode ? ' welcome-mode' : ''}`}>
     const root = h('div', { class: 'main-content welcome-mode' }, headerSlot, chat, inputArea);

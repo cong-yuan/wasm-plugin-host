@@ -30,7 +30,7 @@ return (function () {
     const title = h('div', { class: 'workspaceTitle' }, t('desk.title'));
     const header = h('div', { class: 'workspaceHeader' }, title);
     const headerSlot = h('div', { class: 'rail-header-slot' });
-    slots.mount('hana.rail.header', headerSlot);
+    slots.mount('openhanako.rail.header', headerSlot);
 
     // <div className={styles.tabs} role="tablist"> with slider + 2 tabs
     const slider = h('div', {
@@ -55,10 +55,11 @@ return (function () {
 
     // <div className={styles.content} role="tabpanel"> → TabContent
     const runtimeSummary = h('div', { class: 'runtimeSummary' });
+    const slotSummary = h('div', { class: 'slotSummary' });
     const fileList = h('div', { class: 'fileList' });
     const itemsSlot = h('div', { class: 'rail-items-slot' });
-    const content = h('div', { class: 'content', role: 'tabpanel' }, runtimeSummary, fileList, itemsSlot);
-    slots.mount('hana.rail.items', itemsSlot);
+    const content = h('div', { class: 'content', role: 'tabpanel' }, runtimeSummary, slotSummary, fileList, itemsSlot);
+    slots.mount('openhanako.rail.items', itemsSlot);
 
     // <section className={styles.jianDrawer} data-open=…>
     const editor = h('textarea', {
@@ -140,6 +141,9 @@ return (function () {
           h('strong', { class: 'runtimeMetricValue' }, String(value))));
       }
       runtimeSummary.setAttribute('data-runtime-mode', runtime.mode || 'unknown');
+      const slotState = slots.snapshot();
+      slotSummary.textContent = `Slots ${slotState.mounted}/${slotState.total} · visible ${slotState.visible} · contributions ${slotState.contributions}`;
+      slotSummary.setAttribute('data-contributions', String(slotState.contributions));
       clear(fileList);
       if (!tools.length) {
         fileList.appendChild(h('div', { class: 'emptyState' },
@@ -153,7 +157,16 @@ return (function () {
       }
     }
 
-    return { root, update };
+    const unsubscribeSlots = slots.subscribe((slotState) => {
+      slotSummary.textContent = `Slots ${slotState.mounted}/${slotState.total} · visible ${slotState.visible} · contributions ${slotState.contributions}`;
+      slotSummary.setAttribute('data-contributions', String(slotState.contributions));
+    });
+
+    return {
+      root,
+      update,
+      dispose: () => { if (typeof unsubscribeSlots === 'function') unsubscribeSlots(); },
+    };
   }
 
   return { render };
