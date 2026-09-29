@@ -294,12 +294,17 @@ check('4 activity bars', chatContent.children.filter(
   check('session rows expose lightweight status metadata',
     root.querySelectorAll('.sessionItemMeta').length === pinnedRows.length
     && root.querySelectorAll('.sessionItemMeta').every((el) => /idle|running|error/i.test(el.textContent)));
+  check('session rows expose accessibility selection state',
+    root.querySelectorAll('.sessionItem').every((el) => ['true', 'false'].includes(el.getAttribute('aria-selected'))));
   pinnedRows[0]?.querySelector('.sessionDetailsBtn')?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   check('session details expand with identity and runtime metadata',
     root.querySelectorAll('.sessionDetailsPanel').length === 1
     && /Session/.test(root.querySelector('.sessionDetailsPanel')?.textContent || '')
     && /Runtime/.test(root.querySelector('.sessionDetailsPanel')?.textContent || ''));
+  check('session details expose expanded accessibility state',
+    root.querySelector('.sessionDetailsBtn')?.getAttribute('aria-expanded') === 'true'
+    && root.querySelector('.sessionItem')?.getAttribute('aria-expanded') === 'true');
   root.querySelectorAll('.sessionItem')[0]?.querySelector('.sessionRenameBtn')?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   let renameInput = root.querySelector('.sessionRenameInput');
@@ -326,6 +331,9 @@ check('4 activity bars', chatContent.children.filter(
 
 
   const viewButtons = root.querySelectorAll('.sessionViewBtn');
+  check('session view toggle exposes pressed state',
+    viewButtons[0]?.getAttribute('aria-pressed') === 'true'
+    && viewButtons[1]?.getAttribute('aria-pressed') === 'false');
   viewButtons[1]?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   check('archived view lists archived session with restore action',

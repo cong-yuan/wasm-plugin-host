@@ -63,15 +63,15 @@ return (function () {
     const search = h('input', {
       class: 'sessionSearchInput', type: 'search', placeholder: 'Search sessions…', 'aria-label': 'Search sessions',
     });
-    const activeView = h('button', { class: 'sessionViewBtn active', type: 'button' }, 'Active');
-    const archivedView = h('button', { class: 'sessionViewBtn', type: 'button' }, 'Archived');
+    const activeView = h('button', { class: 'sessionViewBtn active', type: 'button', 'aria-pressed': 'true' }, 'Active');
+    const archivedView = h('button', { class: 'sessionViewBtn', type: 'button', 'aria-pressed': 'false' }, 'Archived');
     const viewToggle = h('div', { class: 'sessionViewToggle' }, activeView, archivedView);
     const searchStatus = h('div', { class: 'sessionSearchStatus', 'aria-live': 'polite' }, '');
     const actionStatusText = h('span', { class: 'sessionActionStatusText' }, '');
     const actionRetry = h('button', { class: 'sessionActionRetry', type: 'button' }, 'Retry');
     actionRetry.style.display = 'none';
     const actionStatus = h('div', { class: 'sessionActionStatus', 'aria-live': 'polite' }, actionStatusText, actionRetry);
-    const bulkCount = h('span', { class: 'sessionBulkCount' }, '');
+    const bulkCount = h('span', { class: 'sessionBulkCount', 'aria-live': 'polite' }, '');
     const bulkSelectVisible = h('button', { class: 'sessionBulkSelectVisible', type: 'button' }, 'Select visible');
     const bulkPrimary = h('button', { class: 'sessionBulkPrimary', type: 'button' }, 'Archive selected');
     const bulkDelete = h('button', { class: 'sessionBulkDelete', type: 'button' }, 'Delete selected');
@@ -255,6 +255,8 @@ return (function () {
       updateBridgeStatus(runtime);
       activeView.className = 'sessionViewBtn' + (view.archived ? '' : ' active');
       archivedView.className = 'sessionViewBtn' + (view.archived ? ' active' : '');
+      activeView.setAttribute('aria-pressed', view.archived ? 'false' : 'true');
+      archivedView.setAttribute('aria-pressed', view.archived ? 'true' : 'false');
       view.selectedIds = sessionBulk.pruneSelection(view.selectedIds, allRows.map((row) => row.id));
       refreshBulkBar();
 
@@ -452,6 +454,8 @@ return (function () {
         const detailsToggle = h('button', {
           class: 'sessionDetailsBtn', type: 'button',
           title: view.expanded.has(s.id) ? 'Hide session details' : 'Show session details',
+          'aria-expanded': view.expanded.has(s.id) ? 'true' : 'false',
+          'aria-label': view.expanded.has(s.id) ? 'Hide session details' : 'Show session details',
         }, view.expanded.has(s.id) ? '⌃' : '…');
         rowActions.appendChild(detailsToggle);
         const renaming = view.renamingId === s.id;
@@ -519,6 +523,8 @@ return (function () {
             + (selected === s.id ? ' sessionItemActive' : '')
             + (view.keyboardId === s.id ? ' sessionItemKeyboard' : ''),
           role: 'button', tabindex: '0',
+          'aria-selected': selected === s.id ? 'true' : 'false',
+          'aria-expanded': view.expanded.has(s.id) ? 'true' : 'false',
           ...(s.pinnedAt ? { 'data-pinned': 'true' } : {}),
           'data-session-id': s.id,
           ...(view.archived ? { 'data-archived': 'true' } : {}),
