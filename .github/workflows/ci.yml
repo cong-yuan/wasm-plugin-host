@@ -64,6 +64,47 @@ jobs:
           RUSTFLAGS: -D warnings
         run: cargo build --release -p wasm-plugin-host -p dsh-wasm-host -p plugin-sdk
 
+  windows-rust:
+    name: Windows Rust compatibility
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check host crates
+        shell: pwsh
+        env:
+          RUSTFLAGS: -D warnings
+        run: |
+          cargo check -p wasm-plugin-host --all-targets
+          cargo check -p plugin-sdk --all-targets
+
+      - name: Test host
+        shell: pwsh
+        run: cargo test -p wasm-plugin-host
+
+      - name: Test plugin SDK
+        shell: pwsh
+        run: cargo test -p plugin-sdk
+
   components:
     name: Component Model smoke
     runs-on: ubuntu-latest
