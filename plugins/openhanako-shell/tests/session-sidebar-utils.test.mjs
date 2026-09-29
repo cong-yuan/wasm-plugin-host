@@ -13,6 +13,7 @@ const bulk = load('session-bulk.js');
 const runtime = load('session-runtime.js');
 const row = load('session-row.js');
 const actionLock = load('session-action-lock.js');
+const mutationSource = readFileSync(join(ROOT, 'js/lib/session-mutations.js'), 'utf8');
 const searchControllerSource = readFileSync(join(ROOT, 'js/lib/session-search-controller.js'), 'utf8');
 const searchController = new Function('studio', searchControllerSource)({
   require(name) {
@@ -174,6 +175,34 @@ const check = (label, condition) => { if (!condition) failures.push(label); };
   const finished = await first;
   check('action lock releases after completion',
     finished.value === 'done' && !lock.isPending('bulk:archive') && lock.size() === 0);
+}
+
+{
+  const calls = [];
+  const mutations = new Function('studio', mutationSource)({
+    require() { throw new Error('unexpected dependency'); },
+  }).create({
+    adapter: {
+      async http(method, path, body) {
+        calls.push({ method, path, body });
+        if (path === '/api/sessions/archive') return { ok: false, error: 'archive denied' };
+        return { ok: true, sessionId: body?.sessionId || null };
+      },
+    },
+    api: { cancel: async (id) => calls.push({ cancel: id }) },
+  });
+  const session = { id: 's1', path: 'studio://s1' };
+  await mutations.setPinned(session, true);
+  await mutations.rename(session, 'Renamed');
+  await mutations.stop(session);
+  check('session mutations normalize adapter calls',
+    calls.some((c) => c.path === '/api/sessions/pin' && c.body.pinned === true)
+    && calls.some((c) => c.path === '/api/sessions/rename' && c.body.title === 'Renamed')
+    && calls.some((c) => c.cancel === 's1'));
+  let archiveError = null;
+  try { await mutations.archive(session); } catch (err) { archiveError = err; }
+  check('session mutations normalize failed responses into errors',
+    archiveError?.message === 'archive denied');
 }
 
 if (failures.length) {

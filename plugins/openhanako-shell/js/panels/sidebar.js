@@ -11,6 +11,7 @@ return (function () {
   const sessionRuntime = studio.require('lib/session-runtime');
   const sessionRow = studio.require('lib/session-row');
   const sessionActionLock = studio.require('lib/session-action-lock');
+  const sessionMutations = studio.require('lib/session-mutations');
   const { t } = studio.require('lib/i18n');
 
   // Upstream icon markup, copied unchanged.
@@ -28,6 +29,7 @@ return (function () {
     const view = { archived: false, query: '', searchVersion: 0, expanded: new Set(), selectedIds: new Set(), visibleIds: [], keyboardId: null, renamingId: null, deleteConfirmId: null, bulkDeleteArmed: false };
     const searchController = sessionSearchController.create({ adapter, ttlMs: 15000, maxEntries: 20 });
     const actionLock = sessionActionLock.create();
+    const mutations = sessionMutations.create({ adapter, api });
     let searchTimer = null;
     let lastRuntimeSignature = '';
     const add = h('button', { class: 'sidebar-action-btn', title: t('sidebar.newChat') }, svg(ICON.newChat));
@@ -309,11 +311,7 @@ return (function () {
               restore.disabled = true;
               reportAction('Restoring session…');
               try {
-                const result = await adapter.http('POST', '/api/sessions/restore', { sessionId: s.id, path: s.path });
-                if (!result || result.ok === false || result.error) {
-                  reportAction(result?.error || 'Restore failed', true, () => restore.onclick({ stopPropagation() {} }));
-                  return;
-                }
+                const result = await mutations.restore(s);
                 reportAction('Session restored');
                 view.archived = false;
                 view.query = '';
@@ -345,11 +343,7 @@ return (function () {
               remove.disabled = true;
               reportAction('Deleting archived session…');
               try {
-                const result = await adapter.http('POST', '/api/sessions/archived/delete', { sessionId: s.id, path: s.path });
-                if (!result || result.ok === false || result.error) {
-                  reportAction(result?.error || 'Delete failed', true, () => remove.onclick({ stopPropagation() {} }));
-                  return;
-                }
+                await mutations.deleteArchived(s);
                 view.deleteConfirmId = null;
                 view.expanded.delete(s.id);
                 reportAction('Archived session permanently deleted');
@@ -374,11 +368,7 @@ return (function () {
               const nextPinned = !s.pinnedAt;
               reportAction(nextPinned ? 'Pinning session…' : 'Unpinning session…');
               try {
-                const result = await adapter.http('POST', '/api/sessions/pin', { sessionId: s.id, pinned: nextPinned });
-                if (!result || result.ok === false || result.error) {
-                  reportAction(result?.error || 'Pin update failed', true, () => pin.onclick({ stopPropagation() {} }));
-                  return;
-                }
+                await mutations.setPinned(s, nextPinned);
                 reportAction(nextPinned ? 'Session pinned' : 'Session unpinned');
                 await draw(selected);
               } catch (err) {
@@ -407,11 +397,7 @@ return (function () {
                   if (target < 0 || target >= next.length) return;
                   [next[index], next[target]] = [next[target], next[index]];
                   reportAction('Updating pinned order…');
-                  const result = await adapter.http('POST', '/api/sessions/pin-order', { sessionIds: next });
-                  if (!result || result.ok === false || result.error) {
-                    reportAction(result?.error || 'Pinned order update failed', true);
-                    return;
-                  }
+                  await mutations.reorderPinned(next);
                   reportAction('Pinned order updated');
                   await draw(selected);
                 } finally {
@@ -433,11 +419,7 @@ return (function () {
               archive.disabled = true;
               reportAction('Archiving session…');
               try {
-                const result = await adapter.http('POST', '/api/sessions/archive', { sessionId: s.id });
-                if (!result || result.ok === false || result.error) {
-                  reportAction(result?.error || 'Archive failed', true, () => archive.onclick({ stopPropagation() {} }));
-                  return;
-                }
+                await mutations.archive(s);
                 reportAction('Session archived');
                 if (selected === s.id) options.onNew();
                 else await draw(selected);
@@ -478,13 +460,7 @@ return (function () {
               saveRename.disabled = true;
               reportAction('Renaming session…');
               try {
-                const result = await adapter.http('POST', '/api/sessions/rename', {
-                  sessionId: s.id, path: s.path, title: nextTitle,
-                });
-                if (!result || result.ok === false || result.error) {
-                  reportAction(result?.error || 'Rename failed', true, () => saveRename.onclick({ stopPropagation() {} }));
-                  return;
-                }
+                await mutations.rename(s, nextTitle);
                 view.renamingId = null;
                 searchController.clear();
                 reportAction('Session renamed');
@@ -565,7 +541,7 @@ return (function () {
                 runtimeAction.disabled = true;
                 reportAction('Stopping session…');
                 try {
-                  await api.cancel(s.id);
+                  await mutations.stop(s);
                   reportAction('Stop requested');
                   await draw(selected);
                 } catch (err) {
