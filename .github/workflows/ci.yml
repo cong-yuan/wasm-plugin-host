@@ -20,7 +20,7 @@ env:
 jobs:
   rust:
     name: Rust checks and tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
 
     steps:
@@ -107,7 +107,7 @@ jobs:
 
   components:
     name: Component Model smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
 
     steps:
@@ -292,7 +292,7 @@ jobs:
 
   ui:
     name: UI plugin harnesses
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
