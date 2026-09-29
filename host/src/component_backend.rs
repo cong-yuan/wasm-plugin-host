@@ -249,7 +249,7 @@ impl ComponentInstance {
         component: &wasmtime::component::Component,
         state: HostState,
     ) -> Result<Self> {
-        let linker = component_linker(engine)?;
+        let linker = component_linker(engine, state.policy.trust)?;
         let mut store = wasmtime::Store::new(engine, state);
         store.limiter(|state| &mut state.store_limits);
         crate::runtime::prepare_store_budget(&mut store)?;
@@ -445,9 +445,16 @@ fn component_capabilities_to_internal(
 }
 
 #[allow(dead_code)]
-pub(crate) fn component_linker(engine: &Engine) -> Result<Linker<HostState>> {
+pub(crate) fn component_linker(
+    engine: &Engine,
+    trust: crate::capability::TrustMode,
+) -> Result<Linker<HostState>> {
     let mut linker = Linker::new(engine);
     Plugin::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
+    if trust == crate::capability::TrustMode::Trusted {
+        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
+        wasmtime_wasi_http::p2::add_only_http_to_linker_sync(&mut linker)?;
+    }
     Ok(linker)
 }
 
@@ -479,7 +486,15 @@ mod tests {
     #[test]
     fn component_linker_accepts_existing_host_state_contract() {
         let runtime = crate::runtime::Runtime::new().unwrap();
-        component_linker(runtime.engine()).expect("generated WIT imports should link to HostState");
+        component_linker(runtime.engine(), TrustMode::Sandboxed)
+            .expect("generated WIT imports should link to HostState");
+    }
+
+    #[test]
+    fn trusted_component_linker_composes_preview2_and_http_once() {
+        let runtime = crate::runtime::Runtime::new().unwrap();
+        component_linker(runtime.engine(), TrustMode::Trusted)
+            .expect("trusted Component linker should compose Preview2 + wasi:http without duplicate interfaces");
     }
 
     #[test]

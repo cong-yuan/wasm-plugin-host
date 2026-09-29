@@ -13,6 +13,7 @@ base64 = "0.22"
 cap-std = "3.4.6"
 wasmtime = { version = "44", features = ["cranelift", "pooling-allocator", "cache"] }
 wasmtime-wasi = "44"
+wasmtime-wasi-http = "44"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["io-util"] }

@@ -9,14 +9,22 @@ This demo uses:
 - the repository's shared `wit/plugin.wit`
 - QuickJS synchronous componentization with WASI imports replaced by trap stubs
 
-The last point is intentional: this demo does not call WASI. It validates the
-language-neutral plugin lifecycle and tool path without granting a JS runtime a
-new ambient WASI authority surface.
+The QuickJS build intentionally does not call WASI. It validates the language-neutral plugin lifecycle and tool path without granting a sandboxed JS runtime a new ambient WASI authority surface. A second `build:preview2` target uses the default StarlingMonkey runtime and is supported for trusted Components through the host's Preview2 + WASI HTTP bridge.
 
 ## Build
 
 ```bash
 bash plugins/component-js-demo/build-component.sh
+```
+
+Trusted Preview2 / default StarlingMonkey build:
+
+```bash
+cd plugins/component-js-demo
+npm run build:preview2
+cargo run -p wasm-plugin-host --example component_smoke -- \
+  plugins/component-js-demo/dist/component-js-demo.preview2.component.wasm \
+  js_component_echo
 ```
 
 Equivalent componentization command:
@@ -48,13 +56,6 @@ Expected behavior:
 
 ## WASI boundary
 
-The default StarlingMonkey componentization path imports WASI Preview2
-interfaces (the first observed import was `wasi:io/poll@0.2.12`). The current
-host Component linker intentionally does not provide a general Preview2 WASI
-context yet, so a default JS runtime component is rejected rather than receiving
-ambient authority.
+The default StarlingMonkey componentization path imports WASI Preview2 interfaces, including `wasi:io/*` and `wasi:http/*`. The host now supplies `wasmtime-wasi::p2` plus `wasmtime-wasi-http` only for **trusted** Components, and the default StarlingMonkey artifact has been verified through load → invoke → unload.
 
-Production JS components that need clocks, filesystem, HTTP, random, stdio, or
-other WASI facilities should wait for a dedicated Component-WASI bridge that
-maps those interfaces back into the same capability policy/audit model. Do not
-work around that boundary by granting unrestricted Preview2 WASI.
+Sandboxed Components intentionally do not receive the Preview2 linker. Loading the same StarlingMonkey artifact under a sandboxed policy fails at its first Preview2 resource import (`wasi:io/poll`), rather than receiving ambient WASI authority. Future sandboxed Preview2 support must map filesystem/network/stdio/clocks/random surfaces into explicit capability policy and audit semantics.

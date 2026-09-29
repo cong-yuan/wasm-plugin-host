@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "mkdir -p dist && jco componentize component.js --wit ../../wit -n plugin -o dist/component-js-demo.component.wasm --backend qjs --backend-qjs-disable-async --backend-qjs-stub-wasi"
+    "build": "mkdir -p dist && jco componentize component.js --wit ../../wit -n plugin -o dist/component-js-demo.component.wasm --backend qjs --backend-qjs-disable-async --backend-qjs-stub-wasi",
+    "build:preview2": "mkdir -p dist && jco componentize component.js --wit ../../wit -n plugin -o dist/component-js-demo.preview2.component.wasm"
   },
   "devDependencies": {
     "@bytecodealliance/componentize-js": "0.23.0",

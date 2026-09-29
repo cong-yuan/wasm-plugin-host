@@ -10,8 +10,9 @@ use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicI64, AtomicU8};
 use std::sync::{Arc, Mutex};
+use wasmtime::component::ResourceTable;
 use wasmtime_wasi::p1::WasiP1Ctx;
-use wasmtime_wasi::WasiCtxBuilder;
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 /// Severity of a log line, mirroring the integer levels the ABI uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -211,6 +212,12 @@ impl LogSink {
 /// Per-`Store` host state. `T` in `Store<T>` is this type.
 pub struct HostState {
     pub wasi: WasiP1Ctx,
+    /// Preview2 state for Component guests. The Component linker only exposes
+    /// this to trusted plugins; sandboxed Components remain on the explicit,
+    /// capability-gated host WIT imports.
+    pub component_wasi: WasiCtx,
+    pub component_table: ResourceTable,
+    pub component_http: wasmtime_wasi_http::WasiHttpCtx,
     /// Wasmtime's per-store resource limiter. Sandboxed plugins receive a
     /// finite linear-memory ceiling; trusted mode leaves it unrestricted.
     pub store_limits: wasmtime::StoreLimits,
@@ -359,6 +366,21 @@ impl HostState {
             }
         }
         let ctx = builder.build_p1();
+        let mut component_builder = WasiCtxBuilder::new();
+        component_builder.allow_blocking_current_thread(true);
+        if policy.trust == crate::capability::TrustMode::Trusted {
+            if let Err(e) = component_builder.preopened_dir(
+                "/",
+                "/",
+                wasmtime_wasi::DirPerms::all(),
+                wasmtime_wasi::FilePerms::all(),
+            ) {
+                eprintln!(
+                    "[host] could not preopen / for trusted Component plugin {plugin_name}: {e}"
+                );
+            }
+        }
+        let component_wasi = component_builder.build();
         let mut fs_roots = std::collections::HashMap::new();
         if policy.trust == crate::capability::TrustMode::Sandboxed {
             for path in policy
@@ -414,6 +436,9 @@ impl HostState {
         };
         Self {
             wasi: ctx,
+            component_wasi,
+            component_table: ResourceTable::new(),
+            component_http: wasmtime_wasi_http::WasiHttpCtx::new(),
             store_limits,
             log,
             slot,
@@ -476,6 +501,25 @@ impl HostState {
 
     pub fn resolve_declared_capabilities(&self, requested: &crate::capability::CapabilitySet) {
         self.capability_gate.resolve(&self.policy, requested);
+    }
+}
+
+impl WasiView for HostState {
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.component_wasi,
+            table: &mut self.component_table,
+        }
+    }
+}
+
+impl wasmtime_wasi_http::p2::WasiHttpView for HostState {
+    fn http(&mut self) -> wasmtime_wasi_http::p2::WasiHttpCtxView<'_> {
+        wasmtime_wasi_http::p2::WasiHttpCtxView {
+            ctx: &mut self.component_http,
+            table: &mut self.component_table,
+            hooks: Default::default(),
+        }
     }
 }
 
