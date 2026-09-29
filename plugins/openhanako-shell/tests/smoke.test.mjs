@@ -440,6 +440,20 @@ root.querySelectorAll('.tab')[0].fire('click');
 check('tab switches', root.querySelectorAll('.tabActive').length === 1);
 root.querySelector('.memoryToggleBtn').fire('click');
 
+const skillsButton = root.querySelector('.sidebar-skills-button');
+skillsButton?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('skills button opens host capabilities panel',
+  skillsButton?.getAttribute('aria-expanded') === 'true'
+  && root.querySelector('.sidebarSkillsPanel')?.style?.display !== 'none');
+check('skills panel lists plugins and tools from host api',
+  /openhanako-shell/.test(root.querySelector('.sidebarSkillsPanel')?.textContent || '')
+  && /read_file/.test(root.querySelector('.sidebarSkillsPanel')?.textContent || ''));
+skillsButton?.fire('click');
+check('skills button closes capabilities panel',
+  skillsButton?.getAttribute('aria-expanded') === 'false'
+  && root.querySelector('.sidebarSkillsPanel')?.style?.display === 'none');
+
 // Rapid session switching must keep the newest transcript when an older
 // transcript request resolves later.
 {

@@ -57,8 +57,17 @@ return (function () {
     const automation = h('button', { class: 'sidebar-activity-bar', type: 'button' },
       svg(ICON.automation), h('span', {}, t('automation.title')),
       h('span', { class: 'automation-count-badge' }, ''));
-    const skills = h('button', { class: 'sidebar-activity-bar', type: 'button' },
-      svg(ICON.skills), h('span', {}, t('skills.panel.title')));
+    const skills = h('button', {
+      class: 'sidebar-activity-bar sidebar-skills-button',
+      type: 'button',
+      'aria-expanded': 'false',
+    }, svg(ICON.skills), h('span', {}, t('skills.panel.title')));
+    const skillsPanel = h('div', {
+      class: 'sidebarSkillsPanel',
+      role: 'region',
+      'aria-label': t('skills.panel.title'),
+    });
+    skillsPanel.style.display = 'none';
 
     const activities = h('div', { class: 'hana-slot sidebar-activities-slot' });
     slots.mount('openhanako.sidebar.activities', activities);
@@ -110,11 +119,67 @@ return (function () {
     slots.mount('openhanako.sidebar.footer', footer);
 
     const content = h('div', { class: 'sidebar-chat-content' },
-      header, bridge, activity, automation, skills, activities, list, footer);
+      header, bridge, activity, automation, skills, skillsPanel, activities, list, footer);
 
     const root = h('aside', { class: 'sidebar', id: 'sidebar' },
       h('div', { class: 'sidebar-inner' }, content),
       h('div', { class: 'resize-handle resize-handle-right', id: 'sidebarResizeHandle' }));
+
+    let skillsLoaded = false;
+    let skillsLoading = false;
+    const renderSkillsPanel = (plugins, tools) => {
+      clear(skillsPanel);
+      const pluginRows = Array.from(plugins || []);
+      const toolRows = Array.from(tools || []);
+      const summary = h('div', { class: 'sidebarSkillsSummary' },
+        `${pluginRows.length} plugin${pluginRows.length === 1 ? '' : 's'} · ${toolRows.length} tool${toolRows.length === 1 ? '' : 's'}`);
+      skillsPanel.appendChild(summary);
+
+      const appendSection = (title, rows, kind) => {
+        const section = h('div', { class: 'sidebarSkillsSection' },
+          h('div', { class: 'sidebarSkillsSectionTitle' }, title));
+        if (!rows.length) {
+          section.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, `No ${kind}s available`));
+        } else {
+          rows.forEach((row) => {
+            const name = String(row?.name || row?.id || kind);
+            const description = row?.description || row?.state || '';
+            section.appendChild(h('div', { class: 'sidebarSkillsItem', 'data-kind': kind },
+              h('span', { class: 'sidebarSkillsItemName' }, name),
+              description ? h('span', { class: 'sidebarSkillsItemDescription' }, String(description)) : null));
+          });
+        }
+        skillsPanel.appendChild(section);
+      };
+
+      appendSection('Plugins', pluginRows, 'plugin');
+      appendSection('Tools', toolRows, 'tool');
+    };
+
+    const loadSkillsPanel = async () => {
+      if (skillsLoading) return;
+      skillsLoading = true;
+      clear(skillsPanel);
+      skillsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'Loading capabilities…'));
+      try {
+        const [plugins, tools] = await Promise.all([api.plugins(), api.tools()]);
+        renderSkillsPanel(plugins, tools);
+        skillsLoaded = true;
+      } catch (err) {
+        clear(skillsPanel);
+        skillsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty error' },
+          err?.message || 'Unable to load capabilities'));
+      } finally {
+        skillsLoading = false;
+      }
+    };
+
+    skills.onclick = async () => {
+      const opening = skillsPanel.style.display === 'none';
+      skillsPanel.style.display = opening ? '' : 'none';
+      skills.setAttribute('aria-expanded', opening ? 'true' : 'false');
+      if (opening && !skillsLoaded) await loadSkillsPanel();
+    };
 
     const updateBridgeStatus = (runtime) => {
       const summary = sessionRuntime.summarize(runtime);

@@ -901,6 +901,56 @@ html[data-platform="linux"] .tb-toggle-right {
     margin-left: 6px;
 }
 
+.sidebarSkillsPanel {
+    margin: 0 10px 8px;
+    padding: 8px;
+    border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 8px;
+    background: rgba(0,0,0,0.018);
+}
+.sidebarSkillsSummary {
+    margin-bottom: 7px;
+    font-size: 10px;
+    color: var(--text-muted);
+}
+.sidebarSkillsSection + .sidebarSkillsSection {
+    margin-top: 8px;
+}
+.sidebarSkillsSectionTitle {
+    margin-bottom: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.sidebarSkillsItem {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    padding: 3px 0;
+}
+.sidebarSkillsItemName {
+    flex-shrink: 0;
+    max-width: 48%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    color: var(--text-primary);
+}
+.sidebarSkillsItemDescription,
+.sidebarSkillsEmpty {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 9px;
+    color: var(--text-muted);
+}
+.sidebarSkillsEmpty.error {
+    color: #a64238;
+}
+
 .sessionListControls {
     display: grid;
     gap: 6px;
