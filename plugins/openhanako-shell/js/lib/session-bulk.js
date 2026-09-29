@@ -15,19 +15,29 @@ return (function () {
     return new Set(Array.from(selectedIds || []).filter((id) => available.has(id)));
   };
 
-  const runBatch = async (ids, request) => {
-    let completed = 0;
-    const failed = [];
-    for (const sessionId of ids || []) {
-      try {
-        const result = await request(sessionId);
-        if (!result || result.ok === false || result.error) failed.push(sessionId);
-        else completed += 1;
-      } catch {
-        failed.push(sessionId);
+  const runBatch = async (ids, request, concurrency = 4) => {
+    const source = Array.from(ids || []);
+    const width = Math.max(1, Math.min(source.length || 1, Number(concurrency) || 1));
+    const outcomes = new Array(source.length).fill(false);
+    let cursor = 0;
+
+    const worker = async () => {
+      while (cursor < source.length) {
+        const index = cursor;
+        cursor += 1;
+        const sessionId = source[index];
+        try {
+          const result = await request(sessionId);
+          outcomes[index] = !!(result && result.ok !== false && !result.error);
+        } catch {
+          outcomes[index] = false;
+        }
       }
-    }
-    return { completed, failed };
+    };
+
+    await Promise.all(Array.from({ length: width }, () => worker()));
+    const failed = source.filter((_id, index) => !outcomes[index]);
+    return { completed: source.length - failed.length, failed };
   };
 
   return { toggleVisible, pruneSelection, runBatch };

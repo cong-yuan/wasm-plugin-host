@@ -61,6 +61,18 @@ const check = (label, condition) => { if (!condition) failures.push(label); };
   });
   check('batch runner records partial failures',
     result.completed === 1 && result.failed.join(',') === 'b,c');
+  let active = 0;
+  let maxActive = 0;
+  const concurrent = await bulk.runBatch(['1', '2', '3', '4', '5'], async (id) => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, id === '2' ? 4 : 1));
+    active -= 1;
+    return id === '4' ? { ok: false } : { ok: true };
+  }, 3);
+  check('batch runner uses bounded concurrency', maxActive === 3);
+  check('batch runner preserves failure order under concurrency',
+    concurrent.completed === 4 && concurrent.failed.join(',') === '4');
 }
 
 {
