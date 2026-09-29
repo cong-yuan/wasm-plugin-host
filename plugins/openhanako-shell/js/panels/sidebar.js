@@ -206,6 +206,14 @@ return (function () {
         h('mark', { class: 'sessionSearchHighlight' }, parts.match),
         parts.after);
     };
+    const highlightedSnippet = (text, query) => {
+      const parts = sessionSearch.highlightParts(text, query);
+      if (!parts.match) return h('div', { class: 'sessionSearchSnippet' }, parts.before);
+      return h('div', { class: 'sessionSearchSnippet' },
+        parts.before,
+        h('mark', { class: 'sessionSearchHighlight' }, parts.match),
+        parts.after);
+    };
 
     async function draw(selected) {
       const [activeRows, archivedRows, runtime] = await Promise.all([
@@ -531,7 +539,7 @@ return (function () {
           row.appendChild(panel);
         }
         if (s.searchSnippet) {
-          row.appendChild(h('div', { class: 'sessionSearchSnippet' }, s.searchSnippet));
+          row.appendChild(highlightedSnippet(s.searchSnippet, rawQuery));
         }
 
         detailsToggle.onclick = (event) => {

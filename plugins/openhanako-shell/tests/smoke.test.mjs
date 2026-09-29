@@ -414,6 +414,9 @@ check('4 activity bars', chatContent.children.filter(
   check('session search includes transcript content matches',
     root.querySelectorAll('.sessionSearchSnippet').some((el) => /当前窗口/.test(el.textContent))
     && /title \+ message search/i.test(root.querySelector('.sessionSearchStatus')?.textContent || ''));
+  check('transcript search highlights matching snippet text',
+    root.querySelectorAll('.sessionSearchSnippet .sessionSearchHighlight').length > 0
+    || root.querySelectorAll('.sessionSearchHighlight').some((el) => /当前窗口/.test(el.textContent)));
   search?.fire('input', { target: { value: '' } });
   await new Promise((resolve) => setTimeout(resolve, 220));
 }
