@@ -694,6 +694,45 @@ check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').l
   api.transcript = originalTranscript;
 }
 
+// Repeating the same prompt must not make a shorter stale snapshot look current.
+{
+  const originalProgress = api.sendWithProgress;
+  const originalTranscript = api.transcript;
+
+  const repeatedPromptHost = new El('div');
+  const disposeRepeatedPromptShell = shell.render(repeatedPromptHost);
+  const repeatedPromptRoot = repeatedPromptHost.children[0];
+  for (let i = 0; i < 20 && repeatedPromptRoot.querySelectorAll('.sessionItem').length < 2; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  api.transcript = async () => [
+    { role: 'user', text: 'repeat me' },
+    { role: 'assistant', text: 'old repeated answer' },
+  ];
+  repeatedPromptRoot.querySelector('[data-session-id="sess-welcome"]')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  check('repeated-prompt test starts from existing history',
+    repeatedPromptRoot.querySelectorAll('.md-content').some((el) => /old repeated answer/.test(el.textContent)));
+
+  api.sendWithProgress = async (_agentId, _text, _msgId, onProgress) => {
+    onProgress({ kind: 'text_delta', delta: 'new repeated answer' });
+    return true;
+  };
+
+  const repeatedPromptInput = repeatedPromptRoot.querySelector('.input-box');
+  repeatedPromptInput.textContent = 'repeat me';
+  repeatedPromptRoot.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  check('shorter repeated-prompt snapshot is treated as stale',
+    repeatedPromptRoot.querySelectorAll('.md-content').some((el) => /new repeated answer/.test(el.textContent))
+    && repeatedPromptRoot.querySelectorAll('.md-content').filter((el) => /old repeated answer/.test(el.textContent)).length === 1);
+
+  if (typeof disposeRepeatedPromptShell === 'function') disposeRepeatedPromptShell();
+  api.sendWithProgress = originalProgress;
+  api.transcript = originalTranscript;
+}
+
 // A final transcript refresh failure must not erase content that already
 // arrived through the streaming transport.
 {

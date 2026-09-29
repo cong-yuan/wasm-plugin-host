@@ -315,8 +315,8 @@ return (function () {
       options.onChanged();
     };
 
-    const transcriptIncludesLatestUser = (transcript, text) => {
-      if (!Array.isArray(transcript) || !transcript.length) return false;
+    const transcriptIncludesLatestTurn = (transcript, text, minimumLength) => {
+      if (!Array.isArray(transcript) || transcript.length < minimumLength) return false;
       const latestUser = [...transcript].reverse().find((message) => message?.role === 'user');
       return !!latestUser
         && String(latestUser.text || '').trim() === String(text || '').trim();
@@ -402,8 +402,10 @@ return (function () {
         );
         if (state.epoch === submitEpoch && !sent && !assistant.text) assistant.text = t('error.llmEmptyResponse');
         try {
+          const minimumTranscriptLength = state.turns.length;
           const transcript = await api.transcript(state.id);
-          if (state.epoch === submitEpoch && transcriptIncludesLatestUser(transcript, text)) {
+          if (state.epoch === submitEpoch
+            && transcriptIncludesLatestTurn(transcript, text, minimumTranscriptLength)) {
             state.turns = transcript;
           }
         } catch (err) {
