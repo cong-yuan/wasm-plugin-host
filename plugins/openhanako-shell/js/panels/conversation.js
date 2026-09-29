@@ -394,8 +394,18 @@ return (function () {
           },
         );
         if (state.epoch === submitEpoch && !sent && !assistant.text) assistant.text = t('error.llmEmptyResponse');
-        const transcript = await api.transcript(state.id);
-        if (state.epoch === submitEpoch) state.turns = transcript;
+        try {
+          const transcript = await api.transcript(state.id);
+          if (state.epoch === submitEpoch) state.turns = transcript;
+        } catch (err) {
+          if (state.epoch === submitEpoch
+            && !assistant.text
+            && !assistant.reasoning
+            && !assistant.tool_calls.length
+            && !assistant.tool_results.length) {
+            assistant.text = (err && err.message) ? err.message : String(err);
+          }
+        }
       } catch (err) {
         if (state.epoch === submitEpoch) {
           assistant.text = (err && err.message) ? err.message : String(err);

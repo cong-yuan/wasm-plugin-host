@@ -661,6 +661,36 @@ check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').l
   api.cancel = originalCancel;
 }
 
+// A final transcript refresh failure must not erase content that already
+// arrived through the streaming transport.
+{
+  const originalProgress = api.sendWithProgress;
+  const originalTranscript = api.transcript;
+
+  const transcriptFailureHost = new El('div');
+  const disposeTranscriptFailureShell = shell.render(transcriptFailureHost);
+  const transcriptFailureRoot = transcriptFailureHost.children[0];
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  api.sendWithProgress = async (_agentId, _text, _msgId, onProgress) => {
+    onProgress({ kind: 'text_delta', delta: 'streamed answer survives' });
+    return true;
+  };
+  api.transcript = async () => { throw new Error('transcript refresh failed'); };
+
+  const transcriptFailureInput = transcriptFailureRoot.querySelector('.input-box');
+  transcriptFailureInput.textContent = 'transcript failure smoke';
+  transcriptFailureRoot.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  check('streamed answer survives transcript refresh failure',
+    transcriptFailureRoot.querySelectorAll('.md-content').some((el) => /streamed answer survives/.test(el.textContent))
+    && !transcriptFailureRoot.querySelectorAll('.md-content').some((el) => /transcript refresh failed/.test(el.textContent)));
+
+  if (typeof disposeTranscriptFailureShell === 'function') disposeTranscriptFailureShell();
+  api.sendWithProgress = originalProgress;
+  api.transcript = originalTranscript;
+}
+
 // Busy chat exposes Stop, calls cancel_agent, and suppresses progress that races
 // in after cancellation was requested.
 {
