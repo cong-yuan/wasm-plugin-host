@@ -83,6 +83,7 @@ const ASSETS: &[(&str, &str)] = &[
     ("lib/api.js", include_str!("../js/lib/api.js")),
     ("lib/hana-adapter.js", include_str!("../js/lib/hana-adapter.js")),
     ("lib/session-search.js", include_str!("../js/lib/session-search.js")),
+    ("lib/session-search-controller.js", include_str!("../js/lib/session-search-controller.js")),
     ("lib/session-bulk.js", include_str!("../js/lib/session-bulk.js")),
     ("lib/session-runtime.js", include_str!("../js/lib/session-runtime.js")),
     ("lib/session-row.js", include_str!("../js/lib/session-row.js")),

@@ -6,6 +6,7 @@ return (function () {
   const api = studio.require('lib/api');
   const adapter = studio.require('lib/hana-adapter');
   const sessionSearch = studio.require('lib/session-search');
+  const sessionSearchController = studio.require('lib/session-search-controller');
   const sessionBulk = studio.require('lib/session-bulk');
   const sessionRuntime = studio.require('lib/session-runtime');
   const sessionRow = studio.require('lib/session-row');
@@ -24,7 +25,7 @@ return (function () {
 
   function render(options) {
     const view = { archived: false, query: '', searchVersion: 0, expanded: new Set(), selectedIds: new Set(), visibleIds: [], keyboardId: null, renamingId: null, deleteConfirmId: null, bulkDeleteArmed: false };
-    const searchCache = new Map();
+    const searchController = sessionSearchController.create({ adapter, ttlMs: 15000, maxEntries: 20 });
     let searchTimer = null;
     let lastRuntimeSignature = '';
     const add = h('button', { class: 'sidebar-action-btn', title: t('sidebar.newChat') }, svg(ICON.newChat));
@@ -209,31 +210,16 @@ return (function () {
       let rows = sessionSearch.localFilter(allRows, query);
       if (query && !view.archived) {
         const mySearchVersion = ++view.searchVersion;
-        const cacheKey = rawQuery.toLocaleLowerCase();
-        const cached = searchCache.get(cacheKey);
-        if (cached && Date.now() - cached.at < 15_000) {
-          rows = cached.rows.map((row) => ({ ...row }));
+        searchStatus.textContent = 'Searching titles and messages…';
+        try {
+          const result = await searchController.search(rawQuery);
+          if (mySearchVersion !== view.searchVersion) return;
+          rows = result.rows;
           searchStatus.textContent = rows.length
-            ? `${rows.length} result${rows.length === 1 ? '' : 's'} · cached title + message search`
+            ? `${rows.length} result${rows.length === 1 ? '' : 's'} · ${result.cached ? 'cached ' : ''}title + message search`
             : 'No title or message matches';
-        } else {
-          searchStatus.textContent = 'Searching titles and messages…';
-          try {
-            const encoded = encodeURIComponent(rawQuery);
-            const [titleData, contentData] = await Promise.all([
-              adapter.http('GET', `/api/sessions/search?q=${encoded}&phase=title&limit=20`),
-              adapter.http('GET', `/api/sessions/search?q=${encoded}&phase=content&limit=20`),
-            ]);
-            if (mySearchVersion !== view.searchVersion) return;
-            rows = sessionSearch.mergeResults(titleData, contentData);
-            searchCache.set(cacheKey, { at: Date.now(), rows: rows.map((row) => ({ ...row })) });
-            if (searchCache.size > 20) searchCache.delete(searchCache.keys().next().value);
-            searchStatus.textContent = rows.length
-              ? `${rows.length} result${rows.length === 1 ? '' : 's'} · title + message search`
-              : 'No title or message matches';
-          } catch {
-            searchStatus.textContent = 'Message search unavailable · showing local title matches';
-          }
+        } catch {
+          searchStatus.textContent = 'Message search unavailable · showing local title matches';
         }
       } else {
         view.searchVersion += 1;
@@ -443,7 +429,7 @@ return (function () {
                 return;
               }
               view.renamingId = null;
-              searchCache.clear();
+              searchController.clear();
               reportAction('Session renamed');
               await draw(selected);
             } catch (err) {

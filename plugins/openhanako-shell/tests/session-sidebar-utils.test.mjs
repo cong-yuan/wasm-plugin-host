@@ -12,6 +12,13 @@ const search = load('session-search.js');
 const bulk = load('session-bulk.js');
 const runtime = load('session-runtime.js');
 const row = load('session-row.js');
+const searchControllerSource = readFileSync(join(ROOT, 'js/lib/session-search-controller.js'), 'utf8');
+const searchController = new Function('studio', searchControllerSource)({
+  require(name) {
+    if (name === 'lib/session-search') return search;
+    throw new Error(`unexpected dependency: ${name}`);
+  },
+});
 
 const failures = [];
 const check = (label, condition) => { if (!condition) failures.push(label); };
@@ -85,6 +92,29 @@ const check = (label, condition) => { if (!condition) failures.push(label); };
   check('row keyboard navigation stays within visible bounds',
     row.nextKeyboardId(['a', 'b'], 'a', 'ArrowDown') === 'b'
     && row.nextKeyboardId(['a', 'b'], 'a', 'ArrowUp') === 'a');
+}
+
+{
+  let calls = 0;
+  const controller = searchController.create({
+    adapter: {
+      async http(_method, path) {
+        calls += 1;
+        if (path.includes('phase=title')) {
+          return { results: [{ sessionId: 'x', title: 'Example', matchKind: 'title' }] };
+        }
+        return { results: [{ sessionId: 'x', title: 'Example', matchKind: 'content', snippet: 'hello world' }] };
+      },
+    },
+    ttlMs: 10000,
+    maxEntries: 2,
+  });
+  const first = await controller.search('Example');
+  const second = await controller.search('example');
+  check('search controller merges remote phases', first.rows[0]?.searchSnippet === 'hello world');
+  check('search controller reuses case-insensitive cache', calls === 2 && second.cached === true);
+  controller.clear();
+  check('search controller clear drops cache', controller.size() === 0);
 }
 
 if (failures.length) {
