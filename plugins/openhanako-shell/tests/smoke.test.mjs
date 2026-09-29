@@ -308,6 +308,72 @@ check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').l
   api.cancel = originalCancel;
 }
 
+// Model pill is a real selector: new sessions update the pending model, while
+// opened sessions use the adapter's rebind-aware switch endpoint.
+{
+  const adapter = studio.require('lib/hana-adapter');
+  const originalHttp = adapter.http;
+  const modelCalls = [];
+  adapter.http = async (method, path, body) => {
+    if (method === 'GET' && path === '/api/models') {
+      return {
+        models: [
+          { id: 'model-1', name: 'Model One', provider: 'provider-a', isCurrent: true },
+          { id: 'model-2', name: 'Model Two', provider: 'provider-a', isCurrent: false },
+        ],
+        activeModel: { id: 'model-1', provider: 'provider-a' },
+      };
+    }
+    if (method === 'POST' && (path === '/api/models/set' || path === '/api/models/switch')) {
+      modelCalls.push({ method, path, body });
+      return {
+        ok: true,
+        model: {
+          id: body.modelId,
+          name: body.modelId === 'model-2' ? 'Model Two' : 'Model One',
+          provider: body.provider,
+        },
+      };
+    }
+    return originalHttp(method, path, body);
+  };
+
+  const modelHost = new El('div');
+  const disposeModelShell = shell.render(modelHost);
+  const modelRoot = modelHost.children[0];
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const modelPill = modelRoot.querySelector('.model-pill');
+  check('model pill loads current model label', /Model One/.test(modelPill.textContent));
+
+  modelPill.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('model dropdown opens with available models',
+    modelRoot.querySelector('.model-selector').classList.contains('open')
+    && modelRoot.querySelectorAll('.model-option').length === 2);
+  modelRoot.querySelectorAll('.model-option')[1].fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('new-session model selection uses pending-model endpoint',
+    modelCalls.some((call) => call.path === '/api/models/set'
+      && call.body.modelId === 'model-2'
+      && call.body.provider === 'provider-a'));
+  check('model label updates after selection', /Model Two/.test(modelPill.textContent));
+
+  const firstSession = modelRoot.querySelector('.sessionItem');
+  firstSession?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  modelPill.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  modelRoot.querySelectorAll('.model-option')[1].fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('opened-session model selection uses rebind-aware switch endpoint',
+    modelCalls.some((call) => call.path === '/api/models/switch'
+      && /^studio:\/\//.test(call.body.sessionPath || '')
+      && call.body.modelId === 'model-2'));
+
+  if (typeof disposeModelShell === 'function') disposeModelShell();
+  adapter.http = originalHttp;
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));

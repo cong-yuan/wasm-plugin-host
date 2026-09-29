@@ -5,6 +5,7 @@ return (function () {
   const { h, svg, clear } = studio.require('lib/dom');
   const slots = studio.require('lib/slots');
   const api = studio.require('lib/api');
+  const adapter = studio.require('lib/hana-adapter');
   const avatar = studio.require('lib/avatar');
   const { t } = studio.require('lib/i18n');
 
@@ -93,9 +94,10 @@ return (function () {
     const trailing = h('span', { class: 'input-trailing-slot hana-slot' });
     slots.mount('openhanako.conversation.input.right', trailing);
 
-    const modelPill = h('button', { class: 'model-pill', type: 'button' },
+    const modelPill = h('button', { class: 'model-pill', type: 'button', 'data-open': 'false' },
       h('span', { class: 'model-pill-label' }, '—'), svg(CHEVRON_DOWN));
-    const modelSelector = h('div', { class: 'model-selector' }, modelPill);
+    const modelDropdown = h('div', { class: 'model-dropdown' });
+    const modelSelector = h('div', { class: 'model-selector' }, modelPill, modelDropdown);
 
     const send = h('button', { class: 'send-btn', type: 'button' },
       h('span', { class: 'send-label' }, svg(SEND_ENTER), h('span', {}, t('chat.send'))));
@@ -116,6 +118,8 @@ return (function () {
         send.appendChild(h('span', { class: 'send-label' },
           svg(SEND_ENTER), h('span', {}, t('chat.send'))));
       }
+      modelPill.disabled = !!state.busy;
+      modelPill.classList.toggle('model-pill-disabled', !!state.busy);
     }
 
     const controlBar = h('div', { class: 'input-bottom-bar' },
@@ -137,6 +141,64 @@ return (function () {
     function setModelLabel(label) {
       modelPill.firstChild.textContent = label || '—';
     }
+
+    const closeModels = () => {
+      modelSelector.classList.remove('open');
+      modelPill.setAttribute('data-open', 'false');
+    };
+
+    const chooseModel = async (model) => {
+      if (!model || state.busy) return;
+      const payload = { modelId: model.id, provider: model.provider };
+      const result = state.id
+        ? await adapter.http('POST', '/api/models/switch', {
+            ...payload,
+            sessionPath: 'studio://' + state.id,
+          })
+        : await adapter.http('POST', '/api/models/set', payload);
+      const selected = result && result.model ? result.model : model;
+      setModelLabel(selected.name || selected.id || model.id);
+      closeModels();
+      options.onChanged();
+    };
+
+    const refreshModels = async () => {
+      const result = await adapter.http('GET', '/api/models');
+      const models = result && Array.isArray(result.models) ? result.models : [];
+      clear(modelDropdown);
+      for (const model of models) {
+        const active = !!model.isCurrent
+          || !!(result.activeModel
+            && result.activeModel.id === model.id
+            && result.activeModel.provider === model.provider);
+        const option = h('button', {
+          class: 'model-option' + (active ? ' active' : ''),
+          type: 'button',
+          title: model.provider ? `${model.provider} / ${model.id}` : model.id,
+        }, model.name || model.id);
+        option.onclick = () => chooseModel(model).catch((err) => {
+          option.title = (err && err.message) ? err.message : String(err);
+        });
+        modelDropdown.appendChild(option);
+        if (active) setModelLabel(model.name || model.id);
+      }
+      if (!models.length) {
+        modelDropdown.appendChild(h('div', { class: 'model-option model-pill-disabled' }, 'No models'));
+      }
+      return result;
+    };
+
+    modelPill.onclick = async () => {
+      if (state.busy) return;
+      const opening = !modelSelector.classList.contains('open');
+      if (!opening) {
+        closeModels();
+        return;
+      }
+      await refreshModels().catch(() => {});
+      modelSelector.classList.add('open');
+      modelPill.setAttribute('data-open', 'true');
+    };
 
     function draw() {
       clear(stream);
@@ -204,6 +266,7 @@ return (function () {
         if (resumed && (resumed.id || typeof resumed === 'string')) state.id = resumed.id || resumed;
       }
       state.turns = await api.transcript(state.id);
+      await refreshModels().catch(() => {});
       draw();
       options.onOpened(state.id);
     }
@@ -313,6 +376,7 @@ return (function () {
     });
 
     renderSendState();
+    refreshModels().catch(() => {});
     draw();
     return {
       root, open, setModelLabel,
