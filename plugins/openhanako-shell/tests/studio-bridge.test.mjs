@@ -725,6 +725,12 @@ check('host bridge correlates requestId',
   check('archived session is listed', archivedRows.some((row) => row.sessionId === 'agent-1'));
   const activeRows = await adapter.http('GET', '/api/sessions');
   check('archived session is hidden from active list', !activeRows.some((row) => row.sessionId === 'agent-1'));
+  const runtimeAfterArchive = await adapter.http('GET', '/api/runtime-state');
+  check('archived session is hidden from runtime activity',
+    !runtimeAfterArchive.sessions.some((row) => row.sessionId === 'agent-1'));
+  const archivedRuntimeLookup = await adapter.http('GET', '/api/runtime-state/agent-1');
+  check('single runtime lookup treats archived session as unavailable',
+    archivedRuntimeLookup?.code === 'session_not_found');
 
   calls.length = 0;
   const restored = await adapter.http('POST', '/api/sessions/restore', { sessionId: 'agent-1' });

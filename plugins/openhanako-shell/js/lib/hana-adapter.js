@@ -1362,7 +1362,7 @@ return (function () {
     }
 
     if (pathname === '/api/runtime-state' && verb === 'GET') {
-      const rows = await api.sessions();
+      const rows = (await api.sessions()).filter((row) => !archivedRecord(row.id));
       const liveIds = new Set(rows.map((row) => row.id));
       for (const id of runtimeTranscriptCache.keys()) {
         if (!liveIds.has(id)) runtimeTranscriptCache.delete(id);
@@ -1377,7 +1377,7 @@ return (function () {
     if (runtimeSessionMatch && verb === 'GET') {
       const sessionId = idFrom(decodeURIComponent(runtimeSessionMatch[1]));
       const rows = await api.sessions();
-      const row = rows.find((item) => item.id === sessionId);
+      const row = rows.find((item) => item.id === sessionId && !archivedRecord(item.id));
       if (!row) return { error: 'session not found', code: 'session_not_found' };
       return runtimeProjection(row);
     }
