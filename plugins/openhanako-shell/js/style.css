@@ -975,9 +975,29 @@ html[data-platform="linux"] .tb-toggle-right {
     background: rgba(0,0,0,0.018);
 }
 .sidebarActivitySummary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     margin-bottom: 6px;
     font-size: 10px;
     color: var(--text-muted);
+}
+.sidebarActivitySummary > span {
+    flex: 1;
+}
+.sidebarActivityRefresh {
+    border: 0;
+    border-radius: 5px;
+    padding: 2px 6px;
+    font: inherit;
+    font-size: 9px;
+    cursor: pointer;
+    color: var(--text-muted);
+    background: rgba(0,0,0,0.045);
+}
+.sidebarActivityRefresh:hover {
+    color: var(--text-primary);
+    background: rgba(0,0,0,0.075);
 }
 .sidebarActivityItem {
     padding: 5px 0;

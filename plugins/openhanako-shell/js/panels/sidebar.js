@@ -214,8 +214,11 @@ return (function () {
       const rows = Array.from(runtime?.sessions || []);
       const running = rows.filter((row) => row.status === 'running' || row.isStreaming);
       const errors = rows.filter((row) => row.status === 'error' || row.error);
+      const refresh = h('button', { class: 'sidebarActivityRefresh', type: 'button' }, 'Refresh');
+      refresh.onclick = () => loadActivityPanel();
       activityPanel.appendChild(h('div', { class: 'sidebarActivitySummary' },
-        `${rows.length} session${rows.length === 1 ? '' : 's'} · ${running.length} running · ${errors.length} error${errors.length === 1 ? '' : 's'}`));
+        h('span', {}, `${rows.length} session${rows.length === 1 ? '' : 's'} · ${running.length} running · ${errors.length} error${errors.length === 1 ? '' : 's'}`),
+        refresh));
       if (!rows.length) {
         activityPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'No runtime sessions'));
         return;

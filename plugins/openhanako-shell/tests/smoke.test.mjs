@@ -495,6 +495,17 @@ check('activity button opens runtime panel',
 check('activity panel lists runtime sessions',
   /session/.test(root.querySelector('.sidebarActivityPanel')?.textContent || '')
   && /Welcome|Page design sketch/.test(root.querySelector('.sidebarActivityPanel')?.textContent || ''));
+const adapterForActivity = studio.require('lib/hana-adapter');
+const originalActivityHttp = adapterForActivity.http;
+let activityRefreshCalls = 0;
+adapterForActivity.http = async (method, path, body) => {
+  if (method === 'GET' && path === '/api/runtime-state') activityRefreshCalls += 1;
+  return originalActivityHttp(method, path, body);
+};
+root.querySelector('.sidebarActivityRefresh')?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('activity refresh reloads runtime snapshot', activityRefreshCalls === 1);
+adapterForActivity.http = originalActivityHttp;
 skillsButton?.fire('click');
 await new Promise((resolve) => setTimeout(resolve, 0));
 check('skills and activity panels are mutually exclusive',
