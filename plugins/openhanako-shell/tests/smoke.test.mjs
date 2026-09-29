@@ -425,6 +425,16 @@ check('4 activity bars', chatContent.children.filter(
   check('transcript search highlights matching snippet text',
     root.querySelectorAll('.sessionSearchSnippet .sessionSearchHighlight').length > 0
     || root.querySelectorAll('.sessionSearchHighlight').some((el) => /当前窗口/.test(el.textContent)));
+  const visibleBox = root.querySelector('.sessionSelectBox');
+  if (visibleBox) {
+    visibleBox.checked = true;
+    visibleBox.fire('click');
+  }
+  search?.fire('input', { target: { value: 'no-such-session-visibility-smoke' } });
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  check('empty filtered list clears visible bulk selection',
+    /0 visible/i.test(root.querySelector('.sessionBulkCount')?.textContent || '')
+    && root.querySelector('.sessionBulkPrimary')?.style?.display === 'none');
   search?.fire('input', { target: { value: '' } });
   await new Promise((resolve) => setTimeout(resolve, 220));
 }

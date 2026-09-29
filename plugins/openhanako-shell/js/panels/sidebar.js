@@ -301,7 +301,8 @@ return (function () {
       archivedView.className = 'sessionViewBtn' + (view.archived ? ' active' : '');
       activeView.setAttribute('aria-pressed', view.archived ? 'false' : 'true');
       archivedView.setAttribute('aria-pressed', view.archived ? 'true' : 'false');
-      view.selectedIds = sessionBulk.pruneSelection(view.selectedIds, allRows.map((row) => row.id));
+      view.visibleIds = rows.map((row) => row.id);
+      view.selectedIds = sessionBulk.pruneSelection(view.selectedIds, view.visibleIds);
       refreshBulkBar();
 
       clear(scroller);
@@ -310,9 +311,6 @@ return (function () {
           query ? 'No matching sessions' : view.archived ? 'No archived sessions' : t('sidebar.empty')));
         return;
       }
-      view.visibleIds = rows.map((row) => row.id);
-      refreshBulkBar();
-
       const pinnedIds = allRows.filter((row) => !!row.pinnedAt).map((row) => row.id);
       rows.forEach((s) => {
         const state = runtimeById.get(s.id) || null;
