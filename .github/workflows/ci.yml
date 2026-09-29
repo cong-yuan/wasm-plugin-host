@@ -93,13 +93,17 @@ jobs:
             ~/.cargo/git
             target
             plugins/component-rust-demo/target
+            plugins/component-rust-demo-v2/target
             plugins/component-rust-demo/componentize/target
-          key: ${{ runner.os }}-component-cargo-${{ hashFiles('Cargo.lock', 'plugins/component-rust-demo/**/Cargo.lock') }}
+          key: ${{ runner.os }}-component-cargo-${{ hashFiles('Cargo.lock', 'plugins/component-rust-demo/**/Cargo.lock', 'plugins/component-rust-demo-v2/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-component-cargo-
 
       - name: Build Rust Component
         run: bash plugins/component-rust-demo/build-component.sh
+
+      - name: Build Rust WIT 0.2 Component
+        run: bash plugins/component-rust-demo-v2/build-component.sh
 
       - name: Build core plugin fixture
         run: cargo build -p hello-rust --target wasm32-wasip1
@@ -114,9 +118,30 @@ jobs:
           cargo run -p wasm-plugin-host -- plugin-check \
             plugins/component-rust-demo/target/component-rust-demo.component.wasm --json | python3 -m json.tool >/dev/null
 
+      - name: Validate Rust WIT 0.2 Component artifact
+        run: |
+          cargo run -p wasm-plugin-host -- plugin-check \
+            plugins/component-rust-demo-v2/target/component-rust-demo-v2.component.wasm --json \
+            > /tmp/component-v2-report.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open('/tmp/component-v2-report.json'))
+          assert report['tool_dependencies']['component_echo_v2'] == ['component_base_v2']
+          PY
+
       - name: Smoke Rust Component
         run: |
-          cargo run -p wasm-plugin-host --example component_smoke --             plugins/component-rust-demo/target/component-rust-demo.component.wasm             component_echo             sandboxed
+          cargo run -p wasm-plugin-host --example component_smoke -- \
+            plugins/component-rust-demo/target/component-rust-demo.component.wasm \
+            component_echo \
+            sandboxed
+
+      - name: Smoke Rust WIT 0.2 Component
+        run: |
+          cargo run -p wasm-plugin-host --example component_smoke -- \
+            plugins/component-rust-demo-v2/target/component-rust-demo-v2.component.wasm \
+            component_echo_v2 \
+            sandboxed
 
       - name: Install JS Component toolchain
         working-directory: plugins/component-js-demo
@@ -133,7 +158,10 @@ jobs:
 
       - name: Smoke sandbox-safe JS Component
         run: |
-          cargo run -p wasm-plugin-host --example component_smoke --             plugins/component-js-demo/dist/component-js-demo.component.wasm             js_component_echo             sandboxed
+          cargo run -p wasm-plugin-host --example component_smoke -- \
+            plugins/component-js-demo/dist/component-js-demo.component.wasm \
+            js_component_echo \
+            sandboxed
 
       - name: Build trusted Preview2 JS Component
         working-directory: plugins/component-js-demo
@@ -146,7 +174,9 @@ jobs:
 
       - name: Smoke trusted Preview2 JS Component
         run: |
-          cargo run -p wasm-plugin-host --example component_smoke --             plugins/component-js-demo/dist/component-js-demo.preview2.component.wasm             js_component_echo
+          cargo run -p wasm-plugin-host --example component_smoke -- \
+            plugins/component-js-demo/dist/component-js-demo.preview2.component.wasm \
+            js_component_echo
 
   ui:
     name: UI plugin harnesses

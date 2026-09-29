@@ -1,4 +1,4 @@
-//! Component Model backend bindings generated from `wit/plugin.wit`.
+//! Component Model backend bindings for the versioned WIT 0.1 / 0.2 contracts.
 //!
 //! This module is deliberately separate from the core-module linker. Both
 //! backends share `HostState`, CapabilityGate and AuditSink.
@@ -6,13 +6,20 @@
 use crate::state::{HostState, LogLevel, LogRecord};
 use anyhow::Result;
 use std::sync::atomic::Ordering;
-use wasmtime::component::{HasSelf, Linker};
 use wasmtime::Engine;
+use wasmtime::component::{HasSelf, Linker};
 
 wasmtime::component::bindgen!({
     path: "../wit",
     world: "plugin",
 });
+
+mod v2 {
+    wasmtime::component::bindgen!({
+        path: "../wit-v0.2",
+        world: "plugin",
+    });
+}
 
 impl wasm_plugin_host::plugin::types::Host for HostState {}
 
@@ -203,7 +210,136 @@ impl wasm_plugin_host::plugin::host_services::Host for HostState {
     }
 }
 
-#[allow(dead_code)] // Phase E: used once Component lifecycle is routed by Plugin.
+impl v2::wasm_plugin_host::plugin::types::Host for HostState {}
+
+impl v2::wasm_plugin_host::plugin::host_log::Host for HostState {
+    fn log(&mut self, level: v2::wasm_plugin_host::plugin::types::LogLevel, message: String) {
+        let level = match level {
+            v2::wasm_plugin_host::plugin::types::LogLevel::Debug => {
+                wasm_plugin_host::plugin::types::LogLevel::Debug
+            }
+            v2::wasm_plugin_host::plugin::types::LogLevel::Info => {
+                wasm_plugin_host::plugin::types::LogLevel::Info
+            }
+            v2::wasm_plugin_host::plugin::types::LogLevel::Warn => {
+                wasm_plugin_host::plugin::types::LogLevel::Warn
+            }
+            v2::wasm_plugin_host::plugin::types::LogLevel::Error => {
+                wasm_plugin_host::plugin::types::LogLevel::Error
+            }
+        };
+        <HostState as wasm_plugin_host::plugin::host_log::Host>::log(self, level, message);
+    }
+
+    fn now_ms(&mut self) -> u64 {
+        <HostState as wasm_plugin_host::plugin::host_log::Host>::now_ms(self)
+    }
+}
+
+impl v2::wasm_plugin_host::plugin::host_config::Host for HostState {
+    fn get_config(&mut self) -> String {
+        <HostState as wasm_plugin_host::plugin::host_config::Host>::get_config(self)
+    }
+
+    fn config_version(&mut self) -> u64 {
+        <HostState as wasm_plugin_host::plugin::host_config::Host>::config_version(self)
+    }
+}
+
+impl v2::wasm_plugin_host::plugin::host_network::Host for HostState {
+    fn http_fetch(
+        &mut self,
+        request: v2::wasm_plugin_host::plugin::types::HttpRequest,
+    ) -> std::result::Result<v2::wasm_plugin_host::plugin::types::HttpResponse, String> {
+        let request = wasm_plugin_host::plugin::types::HttpRequest {
+            url: request.url,
+            method: request.method,
+            headers: request
+                .headers
+                .into_iter()
+                .map(|header| wasm_plugin_host::plugin::types::HttpHeader {
+                    name: header.name,
+                    value: header.value,
+                })
+                .collect(),
+            body: request.body,
+        };
+        let response =
+            <HostState as wasm_plugin_host::plugin::host_network::Host>::http_fetch(self, request)?;
+        Ok(v2::wasm_plugin_host::plugin::types::HttpResponse {
+            status: response.status,
+            headers: response
+                .headers
+                .into_iter()
+                .map(|header| v2::wasm_plugin_host::plugin::types::HttpHeader {
+                    name: header.name,
+                    value: header.value,
+                })
+                .collect(),
+            body: response.body,
+        })
+    }
+}
+
+impl v2::wasm_plugin_host::plugin::host_filesystem::Host for HostState {
+    fn read_file(&mut self, root: String, path: String) -> std::result::Result<Vec<u8>, String> {
+        <HostState as wasm_plugin_host::plugin::host_filesystem::Host>::read_file(self, root, path)
+    }
+
+    fn write_file(
+        &mut self,
+        root: String,
+        path: String,
+        data: Vec<u8>,
+    ) -> std::result::Result<(), String> {
+        <HostState as wasm_plugin_host::plugin::host_filesystem::Host>::write_file(
+            self, root, path, data,
+        )
+    }
+
+    fn create_file(
+        &mut self,
+        root: String,
+        path: String,
+        data: Vec<u8>,
+    ) -> std::result::Result<(), String> {
+        <HostState as wasm_plugin_host::plugin::host_filesystem::Host>::create_file(
+            self, root, path, data,
+        )
+    }
+
+    fn delete_file(&mut self, root: String, path: String) -> std::result::Result<(), String> {
+        <HostState as wasm_plugin_host::plugin::host_filesystem::Host>::delete_file(
+            self, root, path,
+        )
+    }
+
+    fn create_dir(&mut self, root: String, path: String) -> std::result::Result<(), String> {
+        <HostState as wasm_plugin_host::plugin::host_filesystem::Host>::create_dir(self, root, path)
+    }
+
+    fn delete_dir(&mut self, root: String, path: String) -> std::result::Result<(), String> {
+        <HostState as wasm_plugin_host::plugin::host_filesystem::Host>::delete_dir(self, root, path)
+    }
+}
+
+impl v2::wasm_plugin_host::plugin::host_services::Host for HostState {
+    fn has_service(&mut self, service: String) -> bool {
+        <HostState as wasm_plugin_host::plugin::host_services::Host>::has_service(self, service)
+    }
+
+    fn call_service(
+        &mut self,
+        service: String,
+        op: String,
+        args_json: String,
+    ) -> std::result::Result<String, String> {
+        <HostState as wasm_plugin_host::plugin::host_services::Host>::call_service(
+            self, service, op, args_json,
+        )
+    }
+}
+
 fn component_fs_mutation(
     state: &HostState,
     op: &str,
@@ -230,13 +366,22 @@ fn component_fs_mutation(
     }
 }
 
-#[allow(dead_code)] // Phase E staged backend; runtime dispatch is the next step.
-pub(crate) struct ComponentInstance {
-    pub(crate) store: wasmtime::Store<HostState>,
-    pub(crate) bindings: Plugin,
+enum ComponentBindings {
+    V1(Plugin),
+    V2(v2::Plugin),
 }
 
-#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComponentContract {
+    V1,
+    V2,
+}
+
+pub(crate) struct ComponentInstance {
+    pub(crate) store: wasmtime::Store<HostState>,
+    bindings: ComponentBindings,
+}
+
 impl ComponentInstance {
     fn prepare_guest_call(&mut self) -> Result<()> {
         crate::runtime::prepare_store_budget(&mut self.store)
@@ -246,68 +391,89 @@ impl ComponentInstance {
         component: &wasmtime::component::Component,
         state: HostState,
     ) -> Result<Self> {
-        let linker = component_linker(engine)?;
+        let contract = component_contract(engine, component)?;
+        let linker = component_linker(engine, contract)?;
         let mut store = wasmtime::Store::new(engine, state);
         store.limiter(|state| &mut state.store_limits);
         crate::runtime::prepare_store_budget(&mut store)?;
-        let bindings = Plugin::instantiate(&mut store, component, &linker)?;
+        let bindings = match contract {
+            ComponentContract::V1 => {
+                ComponentBindings::V1(Plugin::instantiate(&mut store, component, &linker)?)
+            }
+            ComponentContract::V2 => {
+                ComponentBindings::V2(v2::Plugin::instantiate(&mut store, component, &linker)?)
+            }
+        };
         Ok(Self { store, bindings })
     }
 
     pub(crate) fn abi_version(&mut self) -> Result<u32> {
         self.prepare_guest_call()?;
-        Ok(self
-            .bindings
-            .wasm_plugin_host_plugin_lifecycle()
-            .call_abi_version(&mut self.store)?)
+        Ok(match &self.bindings {
+            ComponentBindings::V1(bindings) => bindings
+                .wasm_plugin_host_plugin_lifecycle()
+                .call_abi_version(&mut self.store)?,
+            ComponentBindings::V2(bindings) => bindings
+                .wasm_plugin_host_plugin_lifecycle()
+                .call_abi_version(&mut self.store)?,
+        })
     }
 
     pub(crate) fn init(&mut self) -> Result<()> {
         self.prepare_guest_call()?;
-        self.bindings
-            .wasm_plugin_host_plugin_lifecycle()
-            .call_init(&mut self.store)?
-            .map_err(anyhow::Error::msg)
+        match &self.bindings {
+            ComponentBindings::V1(bindings) => bindings
+                .wasm_plugin_host_plugin_lifecycle()
+                .call_init(&mut self.store)?
+                .map_err(anyhow::Error::msg),
+            ComponentBindings::V2(bindings) => bindings
+                .wasm_plugin_host_plugin_lifecycle()
+                .call_init(&mut self.store)?
+                .map_err(anyhow::Error::msg),
+        }
     }
 
     pub(crate) fn configure(&mut self, config_json: &str) -> Result<()> {
         self.prepare_guest_call()?;
         let config_json = config_json.to_string();
-        self.bindings
-            .wasm_plugin_host_plugin_lifecycle()
-            .call_configure(&mut self.store, &config_json)?
-            .map_err(anyhow::Error::msg)
-    }
-
-    pub(crate) fn describe(&mut self) -> Result<wasm_plugin_host::plugin::types::PluginDecl> {
-        self.prepare_guest_call()?;
-        let decl = self
-            .bindings
-            .wasm_plugin_host_plugin_lifecycle()
-            .call_describe(&mut self.store)?;
-        let bytes = component_decl_output_bytes(&decl);
-        enforce_component_output_limit(self.store.data(), "describe", bytes)?;
-        Ok(decl)
+        match &self.bindings {
+            ComponentBindings::V1(bindings) => bindings
+                .wasm_plugin_host_plugin_lifecycle()
+                .call_configure(&mut self.store, &config_json)?
+                .map_err(anyhow::Error::msg),
+            ComponentBindings::V2(bindings) => bindings
+                .wasm_plugin_host_plugin_lifecycle()
+                .call_configure(&mut self.store, &config_json)?
+                .map_err(anyhow::Error::msg),
+        }
     }
 
     pub(crate) fn describe_internal(&mut self) -> Result<crate::plugin::PluginDecl> {
-        component_decl_to_internal(self.describe()?)
-    }
-
-    pub(crate) fn invoke(
-        &mut self,
-        op: &str,
-        args_json: &str,
-    ) -> Result<wasm_plugin_host::plugin::types::InvokeResult> {
         self.prepare_guest_call()?;
-        let args_json = args_json.to_string();
-        let result = self
-            .bindings
-            .wasm_plugin_host_plugin_lifecycle()
-            .call_invoke(&mut self.store, op, &args_json)?;
-        let bytes = component_invoke_output_bytes(&result);
-        enforce_component_output_limit(self.store.data(), "invoke", bytes)?;
-        Ok(result)
+        match &self.bindings {
+            ComponentBindings::V1(bindings) => {
+                let decl = bindings
+                    .wasm_plugin_host_plugin_lifecycle()
+                    .call_describe(&mut self.store)?;
+                enforce_component_output_limit(
+                    self.store.data(),
+                    "describe",
+                    component_decl_output_bytes(&decl),
+                )?;
+                component_decl_to_internal(decl)
+            }
+            ComponentBindings::V2(bindings) => {
+                let decl = bindings
+                    .wasm_plugin_host_plugin_lifecycle()
+                    .call_describe(&mut self.store)?;
+                enforce_component_output_limit(
+                    self.store.data(),
+                    "describe",
+                    component_decl_output_bytes_v2(&decl),
+                )?;
+                component_decl_to_internal_v2(decl)
+            }
+        }
     }
 
     pub(crate) fn invoke_internal(
@@ -315,18 +481,34 @@ impl ComponentInstance {
         op: &str,
         args_json: &str,
     ) -> Result<crate::plugin::InvokeResult> {
-        match self.invoke(op, args_json)? {
-            wasm_plugin_host::plugin::types::InvokeResult::Success(success) => {
-                Ok(crate::plugin::InvokeResult::Success {
-                    content: success.content,
-                    value: parse_json_value(&success.value_json, "component invoke value")?,
-                })
+        self.prepare_guest_call()?;
+        let args_json = args_json.to_string();
+        match &self.bindings {
+            ComponentBindings::V1(bindings) => {
+                let result = bindings.wasm_plugin_host_plugin_lifecycle().call_invoke(
+                    &mut self.store,
+                    op,
+                    &args_json,
+                )?;
+                enforce_component_output_limit(
+                    self.store.data(),
+                    "invoke",
+                    component_invoke_output_bytes(&result),
+                )?;
+                invoke_result_to_internal(result)
             }
-            wasm_plugin_host::plugin::types::InvokeResult::Error(error) => {
-                Ok(crate::plugin::InvokeResult::Error {
-                    message: error.message,
-                    code: error.code,
-                })
+            ComponentBindings::V2(bindings) => {
+                let result = bindings.wasm_plugin_host_plugin_lifecycle().call_invoke(
+                    &mut self.store,
+                    op,
+                    &args_json,
+                )?;
+                enforce_component_output_limit(
+                    self.store.data(),
+                    "invoke",
+                    component_invoke_output_bytes_v2(&result),
+                )?;
+                invoke_result_to_internal_v2(result)
             }
         }
     }
@@ -336,24 +518,53 @@ impl ComponentInstance {
         op: &str,
         args_json: &str,
     ) -> Result<serde_json::Value> {
-        match self.invoke(op, args_json)? {
-            wasm_plugin_host::plugin::types::InvokeResult::Success(success) => {
-                parse_json_value(&success.value_json, "component raw invoke value")
+        self.prepare_guest_call()?;
+        let args_json = args_json.to_string();
+        match &self.bindings {
+            ComponentBindings::V1(bindings) => {
+                let result = bindings.wasm_plugin_host_plugin_lifecycle().call_invoke(
+                    &mut self.store,
+                    op,
+                    &args_json,
+                )?;
+                enforce_component_output_limit(
+                    self.store.data(),
+                    "invoke",
+                    component_invoke_output_bytes(&result),
+                )?;
+                invoke_result_to_raw(result)
             }
-            wasm_plugin_host::plugin::types::InvokeResult::Error(error) => Ok(serde_json::json!({
-                "kind": "error",
-                "message": error.message,
-                "code": error.code,
-            })),
+            ComponentBindings::V2(bindings) => {
+                let result = bindings.wasm_plugin_host_plugin_lifecycle().call_invoke(
+                    &mut self.store,
+                    op,
+                    &args_json,
+                )?;
+                enforce_component_output_limit(
+                    self.store.data(),
+                    "invoke",
+                    component_invoke_output_bytes_v2(&result),
+                )?;
+                invoke_result_to_raw_v2(result)
+            }
         }
     }
 
     pub(crate) fn shutdown(&mut self) -> Result<()> {
         self.prepare_guest_call()?;
-        Ok(self
-            .bindings
-            .wasm_plugin_host_plugin_lifecycle()
-            .call_shutdown(&mut self.store)?)
+        match &self.bindings {
+            ComponentBindings::V1(bindings) => {
+                bindings
+                    .wasm_plugin_host_plugin_lifecycle()
+                    .call_shutdown(&mut self.store)?;
+            }
+            ComponentBindings::V2(bindings) => {
+                bindings
+                    .wasm_plugin_host_plugin_lifecycle()
+                    .call_shutdown(&mut self.store)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -390,6 +601,90 @@ fn component_invoke_output_bytes(result: &wasm_plugin_host::plugin::types::Invok
     }
 }
 
+fn component_invoke_output_bytes_v2(
+    result: &v2::wasm_plugin_host::plugin::types::InvokeResult,
+) -> usize {
+    match result {
+        v2::wasm_plugin_host::plugin::types::InvokeResult::Success(success) => success
+            .content
+            .len()
+            .saturating_add(success.value_json.len()),
+        v2::wasm_plugin_host::plugin::types::InvokeResult::Error(error) => error
+            .code
+            .len()
+            .saturating_add(error.message.len())
+            .saturating_add(error.value_json.len()),
+    }
+}
+
+fn invoke_result_to_internal(
+    result: wasm_plugin_host::plugin::types::InvokeResult,
+) -> Result<crate::plugin::InvokeResult> {
+    match result {
+        wasm_plugin_host::plugin::types::InvokeResult::Success(success) => {
+            Ok(crate::plugin::InvokeResult::Success {
+                content: success.content,
+                value: parse_json_value(&success.value_json, "component invoke value")?,
+            })
+        }
+        wasm_plugin_host::plugin::types::InvokeResult::Error(error) => {
+            Ok(crate::plugin::InvokeResult::Error {
+                message: error.message,
+                code: error.code,
+            })
+        }
+    }
+}
+
+fn invoke_result_to_internal_v2(
+    result: v2::wasm_plugin_host::plugin::types::InvokeResult,
+) -> Result<crate::plugin::InvokeResult> {
+    match result {
+        v2::wasm_plugin_host::plugin::types::InvokeResult::Success(success) => {
+            Ok(crate::plugin::InvokeResult::Success {
+                content: success.content,
+                value: parse_json_value(&success.value_json, "component invoke value")?,
+            })
+        }
+        v2::wasm_plugin_host::plugin::types::InvokeResult::Error(error) => {
+            Ok(crate::plugin::InvokeResult::Error {
+                message: error.message,
+                code: error.code,
+            })
+        }
+    }
+}
+
+fn invoke_result_to_raw(
+    result: wasm_plugin_host::plugin::types::InvokeResult,
+) -> Result<serde_json::Value> {
+    match result {
+        wasm_plugin_host::plugin::types::InvokeResult::Success(success) => {
+            parse_json_value(&success.value_json, "component raw invoke value")
+        }
+        wasm_plugin_host::plugin::types::InvokeResult::Error(error) => Ok(serde_json::json!({
+            "kind": "error",
+            "message": error.message,
+            "code": error.code,
+        })),
+    }
+}
+
+fn invoke_result_to_raw_v2(
+    result: v2::wasm_plugin_host::plugin::types::InvokeResult,
+) -> Result<serde_json::Value> {
+    match result {
+        v2::wasm_plugin_host::plugin::types::InvokeResult::Success(success) => {
+            parse_json_value(&success.value_json, "component raw invoke value")
+        }
+        v2::wasm_plugin_host::plugin::types::InvokeResult::Error(error) => Ok(serde_json::json!({
+            "kind": "error",
+            "message": error.message,
+            "code": error.code,
+        })),
+    }
+}
+
 fn component_decl_output_bytes(decl: &wasm_plugin_host::plugin::types::PluginDecl) -> usize {
     let mut bytes = decl.name.len();
     for tool in &decl.tools {
@@ -398,6 +693,55 @@ fn component_decl_output_bytes(decl: &wasm_plugin_host::plugin::types::PluginDec
             .saturating_add(tool.description.len())
             .saturating_add(tool.parameters_json.len())
             .saturating_add(tool.exec.len());
+    }
+    for hook in &decl.hooks {
+        bytes = bytes
+            .saturating_add(hook.on.len())
+            .saturating_add(hook.exec.len());
+    }
+    for value in decl.injects.iter().chain(decl.provides.iter()) {
+        bytes = bytes.saturating_add(value.len());
+    }
+    let caps = &decl.capabilities;
+    for value in caps
+        .filesystem
+        .read
+        .iter()
+        .chain(caps.filesystem.write.iter())
+        .chain(caps.filesystem.create.iter())
+        .chain(caps.filesystem.delete.iter())
+        .chain(caps.network.allow.iter())
+        .chain(caps.network.methods.iter())
+        .chain(caps.agent.observe.iter())
+        .chain(caps.agent.rewrite.iter())
+        .chain(caps.agent.veto.iter())
+        .chain(caps.services.consume.iter())
+        .chain(caps.services.provide.iter())
+        .chain(caps.ui.slots.iter())
+        .chain(caps.ui.routes.iter())
+        .chain(caps.ui.adjusts.iter())
+        .chain(caps.ui.backend_commands.iter())
+        .chain(caps.ui.host_events.iter())
+    {
+        bytes = bytes.saturating_add(value.len());
+    }
+    if let Some(ui) = &decl.ui_json {
+        bytes = bytes.saturating_add(ui.len());
+    }
+    bytes
+}
+
+fn component_decl_output_bytes_v2(decl: &v2::wasm_plugin_host::plugin::types::PluginDecl) -> usize {
+    let mut bytes = decl.name.len();
+    for tool in &decl.tools {
+        bytes = bytes
+            .saturating_add(tool.name.len())
+            .saturating_add(tool.description.len())
+            .saturating_add(tool.parameters_json.len())
+            .saturating_add(tool.exec.len());
+        for required in &tool.requires {
+            bytes = bytes.saturating_add(required.len());
+        }
     }
     for hook in &decl.hooks {
         bytes = bytes
@@ -531,10 +875,126 @@ fn component_capabilities_to_internal(
     }
 }
 
-#[allow(dead_code)]
-pub(crate) fn component_linker(engine: &Engine) -> Result<Linker<HostState>> {
+fn component_decl_to_internal_v2(
+    decl: v2::wasm_plugin_host::plugin::types::PluginDecl,
+) -> Result<crate::plugin::PluginDecl> {
+    use self::v2::wasm_plugin_host::plugin::types as wit;
+
+    let tools = decl
+        .tools
+        .into_iter()
+        .map(|tool| {
+            Ok(crate::plugin::ToolDecl {
+                name: tool.name,
+                description: tool.description,
+                parameters: parse_json_value(&tool.parameters_json, "tool parameters")?,
+                exec: tool.exec,
+                requires: tool.requires,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let hooks = decl
+        .hooks
+        .into_iter()
+        .map(|hook| crate::plugin::HookDecl {
+            on: hook.on,
+            exec: hook.exec,
+            mode: match hook.mode {
+                wit::HookMode::Observe => crate::plugin::HookMode::Observe,
+                wit::HookMode::Waterfall => crate::plugin::HookMode::Waterfall,
+            },
+            priority: hook.priority,
+        })
+        .collect();
+
+    let ui = match decl.ui_json {
+        Some(raw) => Some(
+            serde_json::from_str(&raw)
+                .map_err(|e| anyhow::anyhow!("invalid component ui-json ({e}): {raw}"))?,
+        ),
+        None => None,
+    };
+
+    Ok(crate::plugin::PluginDecl {
+        name: decl.name,
+        abi: i32::try_from(decl.abi)
+            .map_err(|_| anyhow::anyhow!("component ABI value does not fit i32"))?,
+        tools,
+        hooks,
+        injects: decl.injects,
+        provides: decl.provides,
+        ui,
+        capabilities: component_capabilities_to_internal_v2(decl.capabilities),
+    })
+}
+
+fn component_capabilities_to_internal_v2(
+    caps: v2::wasm_plugin_host::plugin::types::CapabilityRequest,
+) -> crate::capability::CapabilitySet {
+    crate::capability::CapabilitySet {
+        filesystem: crate::capability::FilesystemCapabilities {
+            read: caps.filesystem.read,
+            write: caps.filesystem.write,
+            create: caps.filesystem.create,
+            delete: caps.filesystem.delete,
+        },
+        network: crate::capability::NetworkCapabilities {
+            allow: caps.network.allow,
+            methods: caps.network.methods,
+        },
+        agent: crate::capability::AgentCapabilities {
+            observe: caps.agent.observe,
+            rewrite: caps.agent.rewrite,
+            veto: caps.agent.veto,
+        },
+        services: crate::capability::ServiceCapabilities {
+            consume: caps.services.consume,
+            provide: caps.services.provide,
+        },
+        ui: crate::capability::UiCapabilities {
+            slots: caps.ui.slots,
+            routes: caps.ui.routes,
+            windows: caps.ui.windows,
+            theme: caps.ui.theme,
+            adjusts: caps.ui.adjusts,
+            backend_commands: caps.ui.backend_commands,
+            host_events: caps.ui.host_events,
+        },
+    }
+}
+
+fn component_contract(
+    engine: &Engine,
+    component: &wasmtime::component::Component,
+) -> Result<ComponentContract> {
+    const V1_LIFECYCLE: &str = "wasm-plugin-host:plugin/lifecycle@0.1.0";
+    const V2_LIFECYCLE: &str = "wasm-plugin-host:plugin/lifecycle@0.2.0";
+
+    let ty = component.component_type();
+    let has_v1 = ty.get_export(engine, V1_LIFECYCLE).is_some();
+    let has_v2 = ty.get_export(engine, V2_LIFECYCLE).is_some();
+    match (has_v1, has_v2) {
+        (true, false) => Ok(ComponentContract::V1),
+        (false, true) => Ok(ComponentContract::V2),
+        (true, true) => anyhow::bail!(
+            "Component exports both WIT 0.1 and 0.2 lifecycle interfaces; choose exactly one"
+        ),
+        (false, false) => {
+            anyhow::bail!("Component exports neither {V1_LIFECYCLE} nor {V2_LIFECYCLE}")
+        }
+    }
+}
+fn component_linker(engine: &Engine, contract: ComponentContract) -> Result<Linker<HostState>> {
     let mut linker = Linker::new(engine);
-    Plugin::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
+    match contract {
+        ComponentContract::V1 => {
+            Plugin::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
+        }
+        ComponentContract::V2 => {
+            v2::Plugin::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
+        }
+    }
     // Preview2 is linked for all Component guests so language runtimes such as
     // StarlingMonkey can instantiate. Authority comes from HostState: sandboxed
     // contexts get only read preopens, raw sockets stay denied, and wasi:http
@@ -574,14 +1034,20 @@ mod tests {
     #[test]
     fn component_linker_accepts_existing_host_state_contract() {
         let runtime = crate::runtime::Runtime::new().unwrap();
-        component_linker(runtime.engine()).expect("generated WIT imports should link to HostState");
+        component_linker(runtime.engine(), ComponentContract::V1)
+            .expect("generated WIT 0.1 imports should link to HostState");
+        component_linker(runtime.engine(), ComponentContract::V2)
+            .expect("generated WIT 0.2 imports should link to HostState");
     }
 
     #[test]
     fn trusted_component_linker_composes_preview2_and_http_once() {
         let runtime = crate::runtime::Runtime::new().unwrap();
-        component_linker(runtime.engine()).expect(
-            "Component linker should compose Preview2 + wasi:http without duplicate interfaces",
+        component_linker(runtime.engine(), ComponentContract::V1).expect(
+            "WIT 0.1 Component linker should compose Preview2 + wasi:http without duplicate interfaces",
+        );
+        component_linker(runtime.engine(), ComponentContract::V2).expect(
+            "WIT 0.2 Component linker should compose Preview2 + wasi:http without duplicate interfaces",
         );
     }
 

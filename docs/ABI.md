@@ -254,10 +254,7 @@ chains converge automatically when providers appear and unwind when they
 disappear. Declared tool names stay reserved even while dependency-blocked, and
 a tool may not require itself.
 
-The core/internal ABI accepts `requires` as an additive optional field. The
-current Component WIT 0.1 `tool-decl` intentionally remains unchanged, so
-Component tools currently map to an empty dependency list. A future WIT 0.2 can
-type this field without silently changing the 0.1 Component contract.
+The core/internal ABI accepts `requires` as an additive optional field. Component WIT 0.1 intentionally remains unchanged, so 0.1 Component tools map to an empty dependency list. `wit-v0.2/plugin.wit` defines the version-bumped typed field `requires: list<string>`. The host inspects the Component's versioned lifecycle export and loads 0.1 or 0.2 with separate generated bindings/linkers, then converts both into the same internal `PluginDecl`.
 
 ### Capability declaration
 

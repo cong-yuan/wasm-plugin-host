@@ -74,15 +74,15 @@ The `0.1.0` world intentionally keeps JSON strings where the payload is genuinel
 
 The first three are not accidental transport debt: the host tool/service model is JSON-Schema-driven and event payloads are polymorphic. Converting them to one giant WIT variant would duplicate the host schema system without adding authority or validation.
 
-`ui-json` is different: the UI declaration now has a stable internal schema and is a reasonable candidate for a typed WIT record. However, changing `plugin-decl` in-place would change the canonical ABI of already-built `wasm-plugin-host:plugin@0.1.0` Components. Therefore wire-shape changes such as typed UI declarations or a dedicated typed hook-decision export belong in a new WIT package/world version (for example `0.2.x`), while Registry identity, policy and lifecycle semantics remain unchanged.
+`ui-json` is different: the UI declaration now has a stable internal schema and is a reasonable candidate for a typed WIT record. However, changing `plugin-decl` in-place would change the canonical ABI of already-built `wasm-plugin-host:plugin@0.1.0` Components. Therefore wire-shape changes such as typed UI declarations or a dedicated typed hook-decision export belong in a new WIT package/world version, while Registry identity, policy and lifecycle semantics remain unchanged.
 
 Compatibility rule for `0.1.0`: do not add/reorder required record fields or required exports in-place. Additive host implementation behavior is fine; guest-visible canonical ABI changes require a WIT version bump.
 
+`../wit-v0.2` is the first parallel version-bumped contract. Its initial wire change is typed `tool-decl.requires: list<string>`, matching the internal `ToolDecl.requires[]` dependency graph. `host/tests/wit_contract.rs` compiles both 0.1 and 0.2 bindings, and the runtime detects the versioned lifecycle export to dispatch the matching Component backend while preserving one internal Registry model.
+
 ## Validation
 
-`host/tests/wit_contract.rs` invokes Wasmtime's `component::bindgen!` against
-this directory. Therefore normal `cargo check --all-targets` validates the WIT
-package without requiring a separate `wasm-tools` CLI.
+`host/tests/wit_contract.rs` invokes Wasmtime's `component::bindgen!` against both `../wit` (0.1) and `../wit-v0.2` (0.2). Therefore normal `cargo check --all-targets` validates both WIT packages without requiring a separate `wasm-tools` CLI.
 
 ## Runtime status
 
@@ -102,4 +102,5 @@ The generated lifecycle exports are wrapped as typed calls and converted back in
 ## Remaining producer / ABI work
 
 - Python/componentize-py producer validation remains blocked on the current runner: even componentize-py's minimal hello-world is terminated by the OS with SIGKILL, across tested versions. This is tracked as an environment validation item rather than a Host runtime blocker.
-- A future WIT `0.2.x` may type the stable UI declaration and/or introduce a dedicated typed hook-decision surface. It should coexist with `0.1.0` rather than silently changing the existing canonical ABI.
+- WIT `0.2.0` exists in parallel, types tool dependencies, and is runtime-loadable alongside 0.1.
+- Later 0.2 additions may type the stable UI declaration and/or introduce a dedicated typed hook-decision surface before 0.2 is treated as stable.
