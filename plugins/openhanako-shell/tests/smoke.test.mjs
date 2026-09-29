@@ -302,11 +302,17 @@ check('4 activity bars', chatContent.children.filter(
     && /Runtime/.test(root.querySelector('.sessionDetailsPanel')?.textContent || ''));
   root.querySelectorAll('.sessionItem')[0]?.querySelector('.sessionRenameBtn')?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
-  const renameInput = root.querySelector('.sessionRenameInput');
+  let renameInput = root.querySelector('.sessionRenameInput');
   check('rename action opens inline editor', !!renameInput && root.querySelectorAll('.sessionRenameSave').length === 1);
+  renameInput?.fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('escape cancels inline rename', root.querySelectorAll('.sessionRenameInput').length === 0);
+  root.querySelectorAll('.sessionItem')[0]?.querySelector('.sessionRenameBtn')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  renameInput = root.querySelector('.sessionRenameInput');
   const renamedTitle = 'Renamed smoke session';
   if (renameInput) renameInput.value = renamedTitle;
-  root.querySelector('.sessionRenameSave')?.fire('click');
+  renameInput?.fire('keydown', { key: 'Enter', preventDefault() {}, stopPropagation() {} });
   await new Promise((resolve) => setTimeout(resolve, 0));
   check('inline rename persists through adapter',
     root.querySelectorAll('.sessionItemTitle').some((el) => el.textContent === renamedTitle)

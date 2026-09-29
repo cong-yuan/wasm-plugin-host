@@ -487,6 +487,19 @@ return (function () {
             view.renamingId = null;
             draw(selected);
           };
+          renameInput.onkeydown = (event) => {
+            if (event?.key === 'Enter') {
+              event?.preventDefault?.();
+              saveRename.onclick(event);
+            } else if (event?.key === 'Escape') {
+              event?.preventDefault?.();
+              cancelRename.onclick(event);
+            }
+          };
+          setTimeout(() => {
+            renameInput.focus?.();
+            renameInput.select?.();
+          }, 0);
           titleNode.appendChild(renameInput);
           titleNode.appendChild(saveRename);
           titleNode.appendChild(cancelRename);
