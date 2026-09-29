@@ -250,6 +250,25 @@ check('4 activity bars', chatContent.children.filter(
     beforeRows.length >= 2
     && root.querySelectorAll('.sessionPinBtn').length === beforeRows.length
     && root.querySelectorAll('.sessionArchiveBtn').length === beforeRows.length);
+  check('sidebar exposes multi-select controls',
+    root.querySelectorAll('.sessionSelectBox').length === beforeRows.length);
+  const firstTwo = beforeRows.slice(0, 2);
+  firstTwo.forEach((row) => {
+    const box = row.querySelector('.sessionSelectBox');
+    if (box) {
+      box.checked = true;
+      box.fire('click');
+    }
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('multi-select shows bulk archive action',
+    /2 selected/i.test(root.querySelector('.sessionBulkCount')?.textContent || '')
+    && /archive selected/i.test(root.querySelector('.sessionBulkPrimary')?.textContent || ''));
+  root.querySelector('.sessionBulkClear')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('bulk selection can be cleared',
+    root.querySelector('.sessionBulkBar')?.style?.display === 'none');
+
   const target = beforeRows[beforeRows.length - 1];
   let targetTitle = target.querySelector('.sessionItemTitle')?.textContent || '';
   target.querySelector('.sessionPinBtn')?.fire('click');
@@ -315,12 +334,43 @@ check('4 activity bars', chatContent.children.filter(
   check('restore action reports completion',
     /session restored/i.test(root.querySelector('.sessionActionStatus')?.textContent || ''));
 
+  const activeForBulk = root.querySelectorAll('.sessionItem').slice(0, 2);
+  activeForBulk.forEach((row) => {
+    const box = row.querySelector('.sessionSelectBox');
+    if (box) {
+      box.checked = true;
+      box.fire('click');
+    }
+  });
+  root.querySelector('.sessionBulkPrimary')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('bulk archive moves selected sessions out of active list',
+    /sessions archived/i.test(root.querySelector('.sessionActionStatus')?.textContent || ''));
+  viewButtons[1]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('archived view offers bulk restore',
+    /restore selected/i.test(root.querySelector('.sessionBulkPrimary')?.textContent || '')
+    || root.querySelectorAll('.sessionSelectBox').length >= 2);
+  root.querySelectorAll('.sessionSelectBox').slice(0, 2).forEach((box) => {
+    box.checked = true;
+    box.fire('click');
+  });
+  root.querySelector('.sessionBulkPrimary')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('bulk restore returns to clean archived selection state',
+    /sessions restored/i.test(root.querySelector('.sessionActionStatus')?.textContent || '')
+    && root.querySelector('.sessionBulkBar')?.style?.display === 'none');
+  viewButtons[0]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
   const search = root.querySelector('.sessionSearchInput');
   search?.fire('input', { target: { value: 'Welcome' } });
   await new Promise((resolve) => setTimeout(resolve, 220));
   check('session search filters active rows',
     root.querySelectorAll('.sessionItemTitle').length >= 1
     && root.querySelectorAll('.sessionItemTitle').every((el) => /welcome/i.test(el.textContent)));
+  check('session search highlights matching title text',
+    root.querySelectorAll('.sessionSearchHighlight').some((el) => /welcome/i.test(el.textContent)));
   search?.fire('input', { target: { value: '当前窗口' } });
   await new Promise((resolve) => setTimeout(resolve, 220));
   await new Promise((resolve) => setTimeout(resolve, 0));

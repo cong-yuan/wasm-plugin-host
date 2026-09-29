@@ -19,7 +19,7 @@ return (function () {
   };
 
   function render(options) {
-    const view = { archived: false, query: '', searchVersion: 0, expanded: new Set(), renamingId: null, deleteConfirmId: null };
+    const view = { archived: false, query: '', searchVersion: 0, expanded: new Set(), selectedIds: new Set(), renamingId: null, deleteConfirmId: null };
     const searchCache = new Map();
     let searchTimer = null;
     const add = h('button', { class: 'sidebar-action-btn', title: t('sidebar.newChat') }, svg(ICON.newChat));
@@ -63,7 +63,12 @@ return (function () {
     const actionRetry = h('button', { class: 'sessionActionRetry', type: 'button' }, 'Retry');
     actionRetry.style.display = 'none';
     const actionStatus = h('div', { class: 'sessionActionStatus', 'aria-live': 'polite' }, actionStatusText, actionRetry);
-    const sessionControls = h('div', { class: 'sessionListControls' }, search, viewToggle, searchStatus, actionStatus);
+    const bulkCount = h('span', { class: 'sessionBulkCount' }, '');
+    const bulkPrimary = h('button', { class: 'sessionBulkPrimary', type: 'button' }, 'Archive selected');
+    const bulkClear = h('button', { class: 'sessionBulkClear', type: 'button' }, 'Clear');
+    const bulkBar = h('div', { class: 'sessionBulkBar' }, bulkCount, bulkPrimary, bulkClear);
+    bulkBar.style.display = 'none';
+    const sessionControls = h('div', { class: 'sessionListControls' }, search, viewToggle, searchStatus, actionStatus, bulkBar);
     let actionStatusTimer = null;
     const reportAction = (message, isError = false, retry = null) => {
       if (actionStatusTimer) clearTimeout(actionStatusTimer);
@@ -97,6 +102,58 @@ return (function () {
     const root = h('aside', { class: 'sidebar', id: 'sidebar' },
       h('div', { class: 'sidebar-inner' }, content),
       h('div', { class: 'resize-handle resize-handle-right', id: 'sidebarResizeHandle' }));
+
+    const refreshBulkBar = () => {
+      const count = view.selectedIds.size;
+      bulkBar.style.display = count ? '' : 'none';
+      bulkCount.textContent = count ? `${count} selected` : '';
+      bulkPrimary.textContent = view.archived ? 'Restore selected' : 'Archive selected';
+    };
+
+    bulkClear.onclick = () => {
+      view.selectedIds.clear();
+      refreshBulkBar();
+      draw(options.selected);
+    };
+
+    bulkPrimary.onclick = async () => {
+      const ids = Array.from(view.selectedIds);
+      if (!ids.length) return;
+      const operation = view.archived ? 'Restoring' : 'Archiving';
+      reportAction(`${operation} ${ids.length} sessions…`);
+      let completed = 0;
+      const failed = [];
+      for (const sessionId of ids) {
+        try {
+          const result = await adapter.http('POST', view.archived ? '/api/sessions/restore' : '/api/sessions/archive', { sessionId });
+          if (!result || result.ok === false || result.error) failed.push(sessionId);
+          else completed += 1;
+        } catch {
+          failed.push(sessionId);
+        }
+      }
+      view.selectedIds = new Set(failed);
+      refreshBulkBar();
+      if (failed.length) {
+        reportAction(`${completed} completed · ${failed.length} failed`, true, () => bulkPrimary.onclick());
+      } else {
+        reportAction(`${completed} sessions ${view.archived ? 'restored' : 'archived'}`);
+      }
+      await draw(options.selected);
+    };
+
+    const highlightedText = (text, query) => {
+      const value = String(text || '');
+      const needle = String(query || '').trim();
+      if (!needle) return h('span', { class: 'sessionItemTitle' }, value);
+      const lower = value.toLocaleLowerCase();
+      const at = lower.indexOf(needle.toLocaleLowerCase());
+      if (at < 0) return h('span', { class: 'sessionItemTitle' }, value);
+      return h('span', { class: 'sessionItemTitle' },
+        value.slice(0, at),
+        h('mark', { class: 'sessionSearchHighlight' }, value.slice(at, at + needle.length)),
+        value.slice(at + needle.length));
+    };
 
     async function draw(selected) {
       const [activeRows, archivedRows, runtime] = await Promise.all([
@@ -187,6 +244,10 @@ return (function () {
       bridgeDot.className = 'sidebar-bridge-dot' + (errorCount ? ' error' : runningCount ? ' running' : ' connected');
       activeView.className = 'sessionViewBtn' + (view.archived ? '' : ' active');
       archivedView.className = 'sessionViewBtn' + (view.archived ? ' active' : '');
+      for (const id of Array.from(view.selectedIds)) {
+        if (!allRows.some((row) => row.id === id)) view.selectedIds.delete(id);
+      }
+      refreshBulkBar();
 
       clear(scroller);
       if (!rows.length) {
@@ -208,6 +269,17 @@ return (function () {
           ? h('button', { class: 'sessionStopBtn', type: 'button', title: 'Stop session' }, '■')
           : isError ? h('button', { class: 'sessionRetryBtn', type: 'button', title: 'Retry session' }, '↻') : null;
         const rowActions = h('span', { class: 'sessionItemActions' });
+        const selectBox = h('input', {
+          class: 'sessionSelectBox', type: 'checkbox',
+          'aria-label': `Select ${s.title || 'session'}`,
+        });
+        selectBox.checked = view.selectedIds.has(s.id);
+        selectBox.onclick = (event) => {
+          event?.stopPropagation?.();
+          if (selectBox.checked) view.selectedIds.add(s.id);
+          else view.selectedIds.delete(s.id);
+          refreshBulkBar();
+        };
 
         const rename = h('button', { class: 'sessionRenameBtn', type: 'button', title: 'Rename session' }, '✎');
         rename.onclick = (event) => {
@@ -346,7 +418,7 @@ return (function () {
         const renaming = view.renamingId === s.id;
         const titleNode = renaming
           ? h('span', { class: 'sessionRenameEditor' })
-          : h('span', { class: 'sessionItemTitle' }, s.title || t('session.untitled'));
+          : highlightedText(s.title || t('session.untitled'), rawQuery);
         if (renaming) {
           const renameInput = h('input', { class: 'sessionRenameInput', type: 'text', 'aria-label': 'Session title' });
           renameInput.value = s.title || '';
@@ -392,6 +464,7 @@ return (function () {
           ...(view.archived ? { 'data-archived': 'true' } : {}),
           ...(isError ? { 'data-runtime-state': 'error' } : isRunning ? { 'data-runtime-state': 'running' } : {}),
         }, h('div', { class: 'sessionItemHeader' },
+          selectBox,
           isRunning ? h('span', { class: 'sessionStreamingDot', 'data-state': 'running' }) : null,
           titleNode,
           statusNode, runtimeAction, rowActions));
@@ -451,6 +524,13 @@ return (function () {
           };
         }
         if (!view.archived && !renaming) row.onclick = () => options.onSelect(s);
+        if (!view.archived && !renaming) {
+          row.onkeydown = (event) => {
+            if (event?.key !== 'Enter' && event?.key !== ' ') return;
+            event?.preventDefault?.();
+            options.onSelect(s);
+          };
+        }
         scroller.appendChild(row);
       });
     }
@@ -462,19 +542,33 @@ return (function () {
     };
     activeView.onclick = () => {
       view.archived = false;
+      view.selectedIds.clear();
       view.deleteConfirmId = null;
       view.renamingId = null;
       draw(options.selected);
     };
     archivedView.onclick = () => {
       view.archived = true;
+      view.selectedIds.clear();
       view.deleteConfirmId = null;
       view.renamingId = null;
       draw(options.selected);
     };
     draw(options.selected);
     bridge.onclick = () => draw(options.selected);
-    return { root, refresh: draw };
+    const runtimeRefreshTimer = setInterval(() => {
+      if (!view.archived && !view.query.trim() && !view.renamingId) draw(options.selected);
+    }, 3000);
+    runtimeRefreshTimer?.unref?.();
+    return {
+      root,
+      refresh: draw,
+      destroy() {
+        clearInterval(runtimeRefreshTimer);
+        if (searchTimer) clearTimeout(searchTimer);
+        if (actionStatusTimer) clearTimeout(actionStatusTimer);
+      },
+    };
   }
   return { render };
 })();
