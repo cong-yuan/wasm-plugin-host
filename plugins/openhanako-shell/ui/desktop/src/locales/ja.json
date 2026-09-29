@@ -341,7 +341,8 @@
       "done": "✓ 完了",
       "failed": "✗ 失敗",
       "aborted": "⊘ 停止"
-    }
+    },
+    "sendFailed": "メッセージの送信に失敗しました"
   },
   "time": {
     "justNow": "たった今",

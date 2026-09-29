@@ -341,7 +341,8 @@
       "done": "✓ 已完成",
       "failed": "✗ 失败",
       "aborted": "⊘ 已终止"
-    }
+    },
+    "sendFailed": "訊息傳送失敗"
   },
   "time": {
     "justNow": "剛剛",

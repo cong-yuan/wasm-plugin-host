@@ -156,6 +156,54 @@ describe('chat-slice', () => {
     });
   });
 
+  it('keeps the exact retry payload across failed → pending and clears it on confirmation', () => {
+    const payload = {
+      type: 'prompt',
+      clientMessageId: 'u-local',
+      text: 'full prompt',
+      sessionId: 'sess-a',
+      sessionPath: '/a',
+      sessionFileRefs: [{ fileId: 'file-1' }],
+    };
+    slice.initSession('/a', [], false);
+    slice.appendOptimisticUserMessage('/a', {
+      id: 'u-local',
+      role: 'user',
+      text: 'hello',
+      sendStatus: 'pending',
+    });
+
+    expect(slice.markOptimisticUserMessageFailed('/a', 'u-local', 'socket down', payload)).toBe(true);
+    let item = slice.chatSessions['/a']?.items[0];
+    expect(item?.type).toBe('message');
+    if (item?.type === 'message') {
+      expect(item.data.sendStatus).toBe('failed');
+      expect(item.data.sendError).toBe('socket down');
+      expect(item.data.retryPayload).toEqual(payload);
+    }
+
+    expect(slice.markOptimisticUserMessagePending('/a', 'u-local')).toBe(true);
+    item = slice.chatSessions['/a']?.items[0];
+    if (item?.type === 'message') {
+      expect(item.data.sendStatus).toBe('pending');
+      expect(item.data.sendError).toBeUndefined();
+      expect(item.data.retryPayload).toEqual(payload);
+    }
+
+    expect(slice.confirmOptimisticUserMessage('/a', 'u-local', {
+      id: 'persisted-user',
+      sourceEntryId: 'entry-user',
+      role: 'user',
+      text: 'hello',
+    })).toBe(true);
+    item = slice.chatSessions['/a']?.items[0];
+    if (item?.type === 'message') {
+      expect(item.data.sendStatus).toBeUndefined();
+      expect(item.data.sendError).toBeUndefined();
+      expect(item.data.retryPayload).toBeUndefined();
+    }
+  });
+
   describe('bumpLoadMessagesVersion', () => {
     it('第一次返回 1，后续递增', () => {
       expect(slice.bumpLoadMessagesVersion('/a')).toBe(1);

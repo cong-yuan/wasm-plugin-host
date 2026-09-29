@@ -6,6 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UserMessage } from '../../components/chat/UserMessage';
 import { useStore } from '../../stores';
 
+const { wsSendMock } = vi.hoisted(() => ({
+  wsSendMock: vi.fn(),
+}));
+
+vi.mock('../../services/websocket', () => ({
+  getWebSocket: () => ({ send: wsSendMock }),
+}));
+
 const retryMock = vi.fn(async (_sessionPath: string, _target: unknown, _options?: unknown) => true);
 const forkMock = vi.fn(async (_sessionPath: string, _target: unknown) => ({
   sessionId: 'sess_fork',
@@ -28,6 +36,7 @@ describe('UserMessage Codex-style actions', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    wsSendMock.mockReset();
     Object.assign(window, {
       t: (key: string) => ({
         'common.me': '我',
@@ -40,6 +49,9 @@ describe('UserMessage Codex-style actions', () => {
         'common.edit': '编辑',
         'common.cancel': '取消',
         'common.confirm': '确认',
+        'common.retry': '重试',
+        'common.loading': '加载中...',
+        'chat.sendFailed': '消息发送失败',
       }[key] || key),
     });
     Object.assign(navigator, {
@@ -60,6 +72,62 @@ describe('UserMessage Codex-style actions', () => {
         },
       },
     } as never);
+  });
+
+  it('shows a failed-send affordance and replays the exact websocket payload', () => {
+    const retryPayload = {
+      type: 'prompt',
+      clientMessageId: 'u-failed',
+      text: '完整 prompt',
+      sessionId: 'sess-a',
+      sessionPath: '/session/a.jsonl',
+      displayMessage: { text: '发送失败' },
+      sessionFileRefs: [{ fileId: 'file-1' }],
+    };
+    const message = {
+      id: 'u-failed',
+      role: 'user' as const,
+      text: '发送失败',
+      textHtml: '<p>发送失败</p>',
+      sendStatus: 'failed' as const,
+      sendError: 'websocket_unavailable',
+      retryPayload,
+    };
+    useStore.setState({
+      streamingSessions: [],
+      chatSessions: {
+        '/session/a.jsonl': {
+          hasMore: false,
+          loadingMore: false,
+          items: [{ type: 'message', data: message }],
+        },
+      },
+    } as never);
+
+    render(
+      <UserMessage
+        viewerIdentity={{ name: '小黎', avatarUrl: null }}
+        isStreaming={false}
+        isSelected={false}
+        message={message}
+        showAvatar={false}
+        sessionPath="/session/a.jsonl"
+        isLatestUserMessage
+      />,
+    );
+
+    expect(screen.getByText('消息发送失败')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+
+    expect(wsSendMock).toHaveBeenCalledWith(JSON.stringify(retryPayload));
+    const stored = useStore.getState().chatSessions['/session/a.jsonl']?.items[0];
+    expect(stored?.type).toBe('message');
+    if (stored?.type === 'message') {
+      expect(stored.data.sendStatus).toBe('pending');
+      expect(stored.data.sendError).toBeUndefined();
+      expect(stored.data.retryPayload).toEqual(retryPayload);
+    }
+    expect(useStore.getState().streamingSessions).toContain('/session/a.jsonl');
   });
 
   it('shows retry and fork for every persisted user message while keeping edit latest-only', () => {

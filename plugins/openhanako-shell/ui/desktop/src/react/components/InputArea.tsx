@@ -2053,6 +2053,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
           sessionPathForSend,
           clientMessageId,
           'websocket_unavailable',
+          wsMsg,
         );
         return;
       }
@@ -2074,7 +2075,12 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
 
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        useStore.getState().markOptimisticUserMessageFailed(sessionPathForSend, clientMessageId, message);
+        useStore.getState().markOptimisticUserMessageFailed(
+          sessionPathForSend,
+          clientMessageId,
+          message,
+          wsMsg,
+        );
 
         // Roll back optimistic streaming lock on send failure.
         if (type === 'prompt' && sessionPathForSend) {

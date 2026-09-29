@@ -341,7 +341,8 @@
       "done": "✓ 완료",
       "failed": "✗ 실패",
       "aborted": "⊘ 중단"
-    }
+    },
+    "sendFailed": "메시지를 보내지 못했습니다"
   },
   "time": {
     "justNow": "방금",

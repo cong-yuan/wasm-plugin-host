@@ -28,7 +28,13 @@ export interface ChatSlice {
   appendItem: (path: string, item: ChatListItem) => void;
   appendOptimisticUserMessage: (path: string, message: ChatMessage) => void;
   confirmOptimisticUserMessage: (path: string, clientMessageId: string, message: ChatMessage) => boolean;
-  markOptimisticUserMessageFailed: (path: string, clientMessageId: string, error: string) => boolean;
+  markOptimisticUserMessageFailed: (
+    path: string,
+    clientMessageId: string,
+    error: string,
+    retryPayload?: Record<string, unknown>,
+  ) => boolean;
+  markOptimisticUserMessagePending: (path: string, clientMessageId: string) => boolean;
   updateLastMessage: (path: string, updater: (msg: ChatMessage) => ChatMessage) => void;
   updateMessageById: (path: string, messageId: string, updater: (msg: ChatMessage) => ChatMessage) => boolean;
   bindPersistedTurnEntries: (path: string, entries: {
@@ -210,6 +216,7 @@ export const createChatSlice = (
       };
       delete nextData.sendStatus;
       delete nextData.sendError;
+      delete nextData.retryPayload;
       items[targetIdx] = { type: 'message', data: nextData };
       consumed = true;
       return {
@@ -219,7 +226,7 @@ export const createChatSlice = (
     return consumed;
   },
 
-  markOptimisticUserMessageFailed: (path, clientMessageId, error) => {
+  markOptimisticUserMessageFailed: (path, clientMessageId, error, retryPayload) => {
     let consumed = false;
     set((s) => {
       const session = scopedMapValue<SessionMessages>(s as any, s.chatSessions, path);
@@ -239,8 +246,35 @@ export const createChatSlice = (
           ...current.data,
           sendStatus: 'failed',
           sendError: error,
+          retryPayload: retryPayload ?? current.data.retryPayload,
         },
       };
+      consumed = true;
+      return {
+        chatSessions: putScopedMapValue(s as any, s.chatSessions, path, { ...session, items }),
+      };
+    });
+    if (consumed) bumpMessageLiveVersion(path);
+    return consumed;
+  },
+
+  markOptimisticUserMessagePending: (path, clientMessageId) => {
+    let consumed = false;
+    set((s) => {
+      const session = scopedMapValue<SessionMessages>(s as any, s.chatSessions, path);
+      if (!session) return {};
+      const targetIdx = session.items.findIndex((item) =>
+        item.type === 'message' &&
+        item.data.role === 'user' &&
+        item.data.id === clientMessageId,
+      );
+      if (targetIdx < 0) return {};
+      const items = [...session.items];
+      const current = items[targetIdx];
+      if (current.type !== 'message' || current.data.role !== 'user') return {};
+      const data: ChatMessage = { ...current.data, sendStatus: 'pending' };
+      delete data.sendError;
+      items[targetIdx] = { type: 'message', data };
       consumed = true;
       return {
         chatSessions: putScopedMapValue(s as any, s.chatSessions, path, { ...session, items }),

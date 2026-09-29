@@ -12,6 +12,7 @@ import { FileKindIcon } from '../shared/FileKindIcon';
 import { FolderIcon } from '../shared/FolderIcon';
 import type { ChatMessage, UserAttachment, DeskContext } from '../../stores/chat-types';
 import { useStore } from '../../stores';
+import { getWebSocket } from '../../services/websocket';
 import { selectSelectedIdsBySession } from '../../stores/session-selectors';
 import { extractSelectedTexts } from '../../utils/message-text';
 import { openFilePreview } from '../../utils/file-preview';
@@ -75,6 +76,7 @@ export const UserMessage = memo(function UserMessage({
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.text || '');
   const [editBusy, setEditBusy] = useState(false);
+  const [sendRetryBusy, setSendRetryBusy] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
@@ -119,7 +121,41 @@ export const UserMessage = memo(function UserMessage({
     onForkCreated,
     disabled: isStreaming,
   });
-  const busy = editBusy || nodeActionBusy;
+  const failedSend = message.sendStatus === 'failed';
+  const canRetryFailedSend = failedSend && !!message.retryPayload && !readOnly && !isStreaming;
+  const handleRetryFailedSend = useCallback(() => {
+    if (!canRetryFailedSend || sendRetryBusy || !message.retryPayload) return;
+    const payload = message.retryPayload;
+    const ws = getWebSocket();
+    if (!ws) {
+      useStore.getState().markOptimisticUserMessageFailed(
+        sessionPath,
+        message.id,
+        'websocket_unavailable',
+        payload,
+      );
+      return;
+    }
+
+    setSendRetryBusy(true);
+    useStore.getState().markOptimisticUserMessagePending(sessionPath, message.id);
+    try {
+      ws.send(JSON.stringify(payload));
+      if (payload.type === 'prompt') {
+        const state = useStore.getState();
+        const active = Array.isArray(state.streamingSessions) ? state.streamingSessions : [];
+        if (!active.includes(sessionPath)) {
+          useStore.setState({ streamingSessions: [...active, sessionPath] });
+        }
+      }
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      useStore.getState().markOptimisticUserMessageFailed(sessionPath, message.id, text, payload);
+    } finally {
+      setSendRetryBusy(false);
+    }
+  }, [canRetryFailedSend, message.id, message.retryPayload, sendRetryBusy, sessionPath]);
+  const busy = editBusy || nodeActionBusy || sendRetryBusy;
 
   const handleEdit = useCallback(() => {
     if (busy || isStreaming) return;
@@ -259,6 +295,21 @@ export const UserMessage = memo(function UserMessage({
       )}
       {message.agentReview && <AgentReviewCard review={message.agentReview} />}
       {message.agentReviewRequest && <AgentReviewRequestCard request={message.agentReviewRequest} />}
+      {failedSend && (
+        <div className={styles.userSendFailure} role="alert" data-user-send-failure="">
+          <span title={message.sendError || undefined}>{t('chat.sendFailed')}</span>
+          {canRetryFailedSend && (
+            <button
+              type="button"
+              className={styles.userSendRetryButton}
+              onClick={handleRetryFailedSend}
+              disabled={sendRetryBusy}
+            >
+              {sendRetryBusy ? t('common.loading') : t('common.retry')}
+            </button>
+          )}
+        </div>
+      )}
       {(timeText || messageActions.length > 0 || footerActions.length > 0) && (
         <MessageFooterActions
           align="right"

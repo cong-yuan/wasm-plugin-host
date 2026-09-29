@@ -341,7 +341,8 @@
       "done": "✓ Done",
       "failed": "✗ Failed",
       "aborted": "⊘ Stopped"
-    }
+    },
+    "sendFailed": "Message failed to send"
   },
   "time": {
     "justNow": "Just now",
