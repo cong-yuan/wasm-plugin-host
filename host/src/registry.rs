@@ -25,6 +25,21 @@ use crate::plugin::{Plugin, PluginState, ToolDecl};
 use crate::runtime::Runtime;
 use crate::service::Shared;
 
+/// Stable, transport-agnostic summary returned by plugin artifact validation.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ValidationReport {
+    /// `core` for the legacy core-module ABI, `component` for Component Model.
+    pub artifact: String,
+    pub plugin: String,
+    pub abi: i32,
+    pub tools: Vec<String>,
+    pub hooks: Vec<String>,
+    pub injects: Vec<String>,
+    pub provides: Vec<String>,
+    pub has_ui: bool,
+    pub requested_capabilities: crate::capability::CapabilitySet,
+}
+
 /// A tool as the flow sees it: keyed by `name`, bound to a slot.
 #[derive(Clone)]
 pub struct RegisteredTool {
@@ -646,16 +661,35 @@ impl Registry {
 
     /// Validate a build without loading it.
     pub fn validate(&self, path: &Path) -> Result<(String, Vec<String>)> {
+        let report = self.validate_report(path)?;
+        Ok((report.plugin, report.tools))
+    }
+
+    /// Validate a build without loading it and return the declaration summary
+    /// developers need to review before granting capabilities.
+    pub fn validate_report(&self, path: &Path) -> Result<ValidationReport> {
+        let artifact = match crate::runtime::Runtime::artifact_kind(path)? {
+            crate::runtime::WasmArtifactKind::CoreModule => "core",
+            crate::runtime::WasmArtifactKind::Component => "component",
+        }
+        .to_string();
         let p = self.build_plugin(
             "<validate>",
             path,
             serde_json::Value::Null,
             crate::capability::PluginPolicy::trusted(),
         )?;
-        Ok((
-            p.decl.name.clone(),
-            p.tools().iter().map(|t| t.name.clone()).collect(),
-        ))
+        Ok(ValidationReport {
+            artifact,
+            plugin: p.decl.name.clone(),
+            abi: p.decl.abi,
+            tools: p.tools().iter().map(|t| t.name.clone()).collect(),
+            hooks: p.decl.hooks.iter().map(|h| h.on.clone()).collect(),
+            injects: p.decl.injects.clone(),
+            provides: p.decl.provides.clone(),
+            has_ui: p.decl.ui.is_some(),
+            requested_capabilities: p.decl.capabilities.clone(),
+        })
     }
 
     /// Call a tool by name — the flow entry point.

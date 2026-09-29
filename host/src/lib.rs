@@ -35,7 +35,7 @@ pub use plugin::{
     AdjustAction, HookDecl, HookMode, Plugin, PluginDecl, PluginState, RouteDecl, SlotDecl,
     SlotInject, ToolDecl, UiAdjust, UiDecl, WindowContent, WindowDecl, WindowOpen,
 };
-pub use registry::{LoadedReport, Registry, ReloadReport};
+pub use registry::{LoadedReport, Registry, ReloadReport, ValidationReport};
 pub use runtime::{AllocationStrategy, CacheStats, CompiledArtifact, Runtime, WasmArtifactKind};
 pub use service::{Convergence, Shared};
 pub use state::{LogHook, LogLevel, LogRecord, LogSink};

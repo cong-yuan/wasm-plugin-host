@@ -76,7 +76,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-          rustup target add wasm32-unknown-unknown
+          rustup target add wasm32-unknown-unknown wasm32-wasip1
 
       - name: Install Node
         uses: actions/setup-node@v4
@@ -101,6 +101,19 @@ jobs:
       - name: Build Rust Component
         run: bash plugins/component-rust-demo/build-component.sh
 
+      - name: Build core plugin fixture
+        run: cargo build -p hello-rust --target wasm32-wasip1
+
+      - name: Validate core plugin artifact
+        run: |
+          cargo run -p wasm-plugin-host -- plugin-check \
+            target/wasm32-wasip1/debug/hello_rust.wasm --json | python3 -m json.tool >/dev/null
+
+      - name: Validate Rust Component artifact
+        run: |
+          cargo run -p wasm-plugin-host -- plugin-check \
+            plugins/component-rust-demo/target/component-rust-demo.component.wasm --json | python3 -m json.tool >/dev/null
+
       - name: Smoke Rust Component
         run: |
           cargo run -p wasm-plugin-host --example component_smoke --             plugins/component-rust-demo/target/component-rust-demo.component.wasm             component_echo             sandboxed
@@ -113,6 +126,11 @@ jobs:
         working-directory: plugins/component-js-demo
         run: npm run build
 
+      - name: Validate sandbox-safe JS Component artifact
+        run: |
+          cargo run -p wasm-plugin-host -- plugin-check \
+            plugins/component-js-demo/dist/component-js-demo.component.wasm --json | python3 -m json.tool >/dev/null
+
       - name: Smoke sandbox-safe JS Component
         run: |
           cargo run -p wasm-plugin-host --example component_smoke --             plugins/component-js-demo/dist/component-js-demo.component.wasm             js_component_echo             sandboxed
@@ -120,6 +138,11 @@ jobs:
       - name: Build trusted Preview2 JS Component
         working-directory: plugins/component-js-demo
         run: npm run build:preview2
+
+      - name: Validate Preview2 JS Component artifact
+        run: |
+          cargo run -p wasm-plugin-host -- plugin-check \
+            plugins/component-js-demo/dist/component-js-demo.preview2.component.wasm --json | python3 -m json.tool >/dev/null
 
       - name: Smoke trusted Preview2 JS Component
         run: |

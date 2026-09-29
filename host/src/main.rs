@@ -20,6 +20,7 @@
 //!   plugin-host --config c.json      REPL bound to a config
 //!   plugin-host --config c.json --validate      validate a config and exit
 //!   plugin-host --config c.json --supervise   run the watcher loop (no REPL)
+//!   plugin-host plugin-check plugin.wasm [--json]  validate one plugin artifact
 
 use anyhow::Result;
 use std::io::{BufRead, Write};
@@ -292,6 +293,50 @@ fn run_command(host: &mut Host, parts: &[String]) -> Result<()> {
             );
             println!("  tools: {}", r.tools.join(", "));
         }
+        "plugin-check" => {
+            let path = parts
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("usage: plugin-check <path.wasm> [--json]"))?;
+            let report = reg.validate_report(std::path::Path::new(path))?;
+            if parts.iter().any(|part| part == "--json") {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "{}: OK  artifact={} abi={} plugin={}",
+                    path, report.artifact, report.abi, report.plugin
+                );
+                println!(
+                    "  tools: {}",
+                    if report.tools.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        report.tools.join(", ")
+                    }
+                );
+                println!(
+                    "  hooks: {}",
+                    if report.hooks.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        report.hooks.join(", ")
+                    }
+                );
+                println!(
+                    "  services: inject=[{}] provide=[{}]",
+                    report.injects.join(", "),
+                    report.provides.join(", ")
+                );
+                println!("  ui: {}", if report.has_ui { "yes" } else { "no" });
+                if report.requested_capabilities.is_empty() {
+                    println!("  capabilities: (none)");
+                } else {
+                    println!(
+                        "  capabilities: {}",
+                        serde_json::to_string(&report.requested_capabilities)?
+                    );
+                }
+            }
+        }
         "unload" => {
             let slot = parts.get(1).ok_or_else(|| anyhow::anyhow!("usage: unload <slot>"))?;
             let t = Instant::now();
@@ -478,6 +523,7 @@ fn run_command(host: &mut Host, parts: &[String]) -> Result<()> {
             println!("  watch [on|off] | plugins | tools | call <tool> <json>");
             println!("  logs [slot] [n] | clear-logs | status | config | quit");
             println!("  cache | validate | log-level <debug|info|warn|error>");
+            println!("  plugin-check <path.wasm> [--json]");
         }
         other => anyhow::bail!("unknown command: {other}"),
     }

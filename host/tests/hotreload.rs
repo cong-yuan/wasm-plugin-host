@@ -190,6 +190,25 @@ fn validate_compiles_without_swapping() {
     assert!(reg.is_loaded("slot"));
 }
 
+#[test]
+fn validation_report_exposes_artifact_and_declaration_summary() {
+    let dir = tmpdir("validate-report");
+    let wasm = dir.join("alpha.wasm");
+    write(&wasm, &wasm_bytes("alpha", "v1"));
+
+    let reg = Registry::new(Runtime::new().unwrap());
+    let report = reg.validate_report(&wasm).unwrap();
+    assert_eq!(report.artifact, "core");
+    assert_eq!(report.plugin, "alpha");
+    assert_eq!(report.abi, 1);
+    assert_eq!(report.tools, vec!["alpha_tool"]);
+    assert!(report.hooks.is_empty());
+    assert!(report.injects.is_empty());
+    assert!(report.provides.is_empty());
+    assert!(!report.has_ui);
+    assert!(report.requested_capabilities.is_empty());
+}
+
 // ---------- config diffing ----------
 //
 // These tests use a plugin that exports `plugin_configure` and
