@@ -290,7 +290,9 @@ return (function () {
           draw();
           return;
         }
-        state.id = await api.create(provider, provider === 'mock' ? 'mock-1' : provider);
+        state.id = provider === 'mock'
+          ? await api.create(provider, 'mock-1')
+          : await api.create(provider);
         options.onCreated(state.id);
       }
       const assistant = {

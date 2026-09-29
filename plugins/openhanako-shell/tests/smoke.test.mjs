@@ -451,6 +451,38 @@ check('streamed assistant response reaches DOM',
   root.querySelectorAll('.md-content').some((el) => /mock fallback/.test(el.textContent)));
 check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').length > 0);
 
+// New live sessions pass only the selected provider so api.create can resolve
+// the configured current model instead of treating the provider name as a model.
+{
+  const originalPickProvider = api.pickProvider;
+  const originalCreate = api.create;
+  const originalProgress = api.sendWithProgress;
+  let createArgs = null;
+  api.pickProvider = async () => 'deepseek';
+  api.create = async (...args) => {
+    createArgs = args;
+    return 'provider-model-session';
+  };
+  api.sendWithProgress = async () => true;
+
+  const providerHost = new El('div');
+  const disposeProviderShell = shell.render(providerHost);
+  const providerRoot = providerHost.children[0];
+  const providerInput = providerRoot.querySelector('.input-box');
+  providerInput.textContent = 'provider model smoke';
+  providerRoot.querySelector('.send-btn').fire('click');
+  for (let i = 0; i < 20 && !createArgs; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  check('new session lets api.create resolve configured model',
+    createArgs?.[0] === 'deepseek' && createArgs.length === 1);
+
+  if (typeof disposeProviderShell === 'function') disposeProviderShell();
+  api.pickProvider = originalPickProvider;
+  api.create = originalCreate;
+  api.sendWithProgress = originalProgress;
+}
+
 // Busy chat exposes Stop, calls cancel_agent, and suppresses progress that races
 // in after cancellation was requested.
 {
