@@ -791,7 +791,7 @@ export async function switchSession(path: string): Promise<void> {
   const abortController = new AbortController();
   _switchAbortController = abortController;
   const targetSessionId = sessionIdForPathFromState(s as Record<string, any>, path);
-  const hasData = !!sessionScopedValue(
+  const hadDataAtStart = !!sessionScopedValue(
     useStore.getState() as Record<string, any>,
     useStore.getState().chatSessions,
     path,
@@ -801,7 +801,7 @@ export async function switchSession(path: string): Promise<void> {
   const previousPendingNewSession = s.pendingNewSession;
   let showedCachedSession = false;
 
-  if (hasData) {
+  if (hadDataAtStart) {
     if (previousSessionPath) {
       useStore.setState(prev => ({
         attachedFilesBySession: putSessionScopedStateValue(
@@ -920,7 +920,12 @@ export async function switchSession(path: string): Promise<void> {
     // 一旦 currentSessionPath 指向新 session，主窗口 WebSocket 会将该 session 的流式事件
     // 路由到 streamBufferManager，触发 bumpMessageLiveVersion，导致 loadMessages 的
     // 竞态守卫跳过 hydrate，store 丢失完整历史。提前加载可避免此竞态。
-    if (!hasData) {
+    const hasDataBeforeHydrate = !!sessionScopedValue(
+      useStore.getState() as Record<string, any>,
+      useStore.getState().chatSessions,
+      path,
+    );
+    if (!hasDataBeforeHydrate) {
       await loadMessages(path);
       if (myVersion !== _switchVersion) return;
     }
@@ -962,7 +967,7 @@ export async function switchSession(path: string): Promise<void> {
     // 缓存命中跳过了 loadMessages 时，校验修订点：会话在后台期间（如 Bridge /rc
     // 接管 + 本端 WS 断连）磁盘可能已前进，缓存不能直接当真相（issue #1610）。
     // fire-and-forget：先呈现缓存内容，补拉结果通过 store 更新自然落地。
-    if (hasData) {
+    if (hadDataAtStart) {
       void reconcileCurrentSessionMessages('session_switch');
     }
 

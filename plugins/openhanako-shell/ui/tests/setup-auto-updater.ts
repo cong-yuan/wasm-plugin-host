@@ -18,6 +18,61 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 
+// ── Stable Web Storage for jsdom / Node 22+ ─────────────────────────────────
+//
+// Some Node/Vitest combinations expose a partial global localStorage when
+// --localstorage-file has no usable path. jsdom then inherits that object and
+// React tests fail with "getItem/setItem is not a function". Keep product code
+// untouched and normalize only the test environment. Tests that provide a real
+// Storage implementation are left alone.
+function ensureWebStorage() {
+  const current = globalThis.localStorage;
+  if (
+    current
+    && typeof current.getItem === "function"
+    && typeof current.setItem === "function"
+    && typeof current.removeItem === "function"
+    && typeof current.clear === "function"
+  ) {
+    return;
+  }
+
+  const values = new Map();
+  const storage = {
+    get length() {
+      return values.size;
+    },
+    clear() {
+      values.clear();
+    },
+    getItem(key) {
+      return values.get(String(key)) ?? null;
+    },
+    key(index) {
+      return [...values.keys()][index] ?? null;
+    },
+    removeItem(key) {
+      values.delete(String(key));
+    },
+    setItem(key, value) {
+      values.set(String(key), String(value));
+    },
+  };
+
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: storage,
+  });
+  if (typeof window !== "undefined") {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: storage,
+    });
+  }
+}
+
+ensureWebStorage();
+
 // ── Helper: inject a stub module into require.cache ──────────────────────────
 
 function injectCjsStub(moduleId, stubExports) {
@@ -86,6 +141,7 @@ try {
 // in auto-updater.cjs gets the same object.
 
 beforeEach(async () => {
+  ensureWebStorage();
   // Import electron-updater through vitest's ESM mock system.
   // If a vi.mock("electron-updater", factory) is registered in the test file,
   // this returns { autoUpdater: mockAutoUpdater } — the exact mock object.

@@ -237,6 +237,32 @@ const chatContent = root.querySelector('.sidebar-chat-content');
 check('4 activity bars', chatContent.children.filter(
   (c) => c._classes().includes('sidebar-activity-bar')).length === 4);
 
+// Session management is wired to the adapter: pinning reorders the list and
+// archive removes the session from the live sidebar.
+{
+  for (let i = 0; i < 20 && root.querySelectorAll('.sessionItem').length < 2; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  const beforeRows = root.querySelectorAll('.sessionItem');
+  check('sidebar exposes session management actions',
+    beforeRows.length >= 2
+    && root.querySelectorAll('.sessionPinBtn').length === beforeRows.length
+    && root.querySelectorAll('.sessionArchiveBtn').length === beforeRows.length);
+  const target = beforeRows[beforeRows.length - 1];
+  const targetTitle = target.querySelector('.sessionItemTitle')?.textContent || '';
+  target.querySelector('.sessionPinBtn')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const pinnedRows = root.querySelectorAll('.sessionItem');
+  check('pinning moves the session to the top',
+    pinnedRows[0]?.querySelector('.sessionItemTitle')?.textContent === targetTitle
+    && pinnedRows[0]?.querySelector('.sessionPinBtn')?._classes().includes('active'));
+
+  pinnedRows[0]?.querySelector('.sessionArchiveBtn')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('archive removes the session from sidebar',
+    !root.querySelectorAll('.sessionItemTitle').some((el) => el.textContent === targetTitle));
+}
+
 // Interactions must not throw.
 root.querySelector('.tb-toggle-left').fire('click');
 root.querySelector('.tb-toggle-right').fire('click');

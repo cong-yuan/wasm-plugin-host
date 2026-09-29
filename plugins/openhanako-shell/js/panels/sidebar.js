@@ -67,10 +67,33 @@ return (function () {
       h('div', { class: 'resize-handle resize-handle-right', id: 'sidebarResizeHandle' }));
 
     async function draw(selected) {
-      const [rows, runtime] = await Promise.all([
-        api.sessions(),
+      const [projectedRows, runtime] = await Promise.all([
+        adapter.http('GET', '/api/sessions').catch(async () => (await api.sessions()).map((row) => ({
+          sessionId: row.id,
+          title: row.title,
+          busy: row.busy,
+          live: row.live,
+          status: row.status,
+          error: row.error,
+          pinnedAt: null,
+          pinOrder: null,
+        }))),
         adapter.http('GET', '/api/runtime-state').catch(() => ({ mode: api.mode(), sessions: [] })),
       ]);
+      const rows = (projectedRows || []).map((row) => ({
+        ...row,
+        id: row.sessionId || row.id,
+      })).sort((a, b) => {
+        const ap = !!a.pinnedAt;
+        const bp = !!b.pinnedAt;
+        if (ap !== bp) return ap ? -1 : 1;
+        if (ap && bp) {
+          const ao = Number.isFinite(a.pinOrder) ? a.pinOrder : Number.MAX_SAFE_INTEGER;
+          const bo = Number.isFinite(b.pinOrder) ? b.pinOrder : Number.MAX_SAFE_INTEGER;
+          if (ao !== bo) return ao - bo;
+        }
+        return String(b.modified || '').localeCompare(String(a.modified || ''));
+      });
       const runtimeById = new Map((runtime.sessions || []).map((state) => [state.sessionId, state]));
       const runtimeRows = Array.from(runtimeById.values());
       const errorCount = runtimeRows.filter((state) => state.status === 'error').length;
@@ -100,15 +123,28 @@ return (function () {
         const retry = isError
           ? h('button', { class: 'sessionRetryBtn', type: 'button', title: 'Retry session' }, '↻')
           : null;
+        const pin = h('button', {
+          class: 'sessionPinBtn' + (s.pinnedAt ? ' active' : ''),
+          type: 'button',
+          title: s.pinnedAt ? 'Unpin session' : 'Pin session',
+        }, s.pinnedAt ? '★' : '☆');
+        const archive = h('button', {
+          class: 'sessionArchiveBtn',
+          type: 'button',
+          title: 'Archive session',
+        }, '×');
+        const rowActions = h('span', { class: 'sessionItemActions' }, pin, archive);
         const row = h('div', {
           class: 'sessionItem sessionItemSingleLine' + (selected === s.id ? ' sessionItemActive' : ''),
           role: 'button', tabindex: '0',
+          ...(s.pinnedAt ? { 'data-pinned': 'true' } : {}),
           ...(isError ? { 'data-runtime-state': 'error' } : isRunning ? { 'data-runtime-state': 'running' } : {}),
         }, h('div', { class: 'sessionItemHeader' },
           isRunning ? h('span', { class: 'sessionStreamingDot', 'data-state': 'running' }) : null,
           h('span', { class: 'sessionItemTitle' }, s.title || t('session.untitled')),
           statusNode,
-          retry));
+          retry,
+          rowActions));
         if (retry) {
           retry.onclick = (event) => {
             event?.stopPropagation?.();
@@ -116,6 +152,20 @@ return (function () {
             else options.onSelect(s);
           };
         }
+        pin.onclick = async (event) => {
+          event?.stopPropagation?.();
+          await adapter.http('POST', '/api/sessions/pin', {
+            sessionId: s.id,
+            pinned: !s.pinnedAt,
+          });
+          await draw(selected);
+        };
+        archive.onclick = async (event) => {
+          event?.stopPropagation?.();
+          await adapter.http('POST', '/api/sessions/archive', { sessionId: s.id });
+          if (selected === s.id) options.onNew();
+          else await draw(selected);
+        };
         row.onclick = () => options.onSelect(s);
         scroller.appendChild(row);
       });

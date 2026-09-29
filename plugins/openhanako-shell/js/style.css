@@ -944,6 +944,57 @@ html[data-platform="linux"] .tb-toggle-right {
     background: rgba(190,80,70,0.08);
     color: #a64238;
 }
+.sessionItemActions {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: 2px;
+    opacity: 0;
+    transition: opacity var(--duration-fast);
+}
+.sessionItem:hover .sessionItemActions,
+.sessionItem[data-pinned="true"] .sessionItemActions,
+.sessionItemActive .sessionItemActions {
+    opacity: 1;
+}
+.sessionPinBtn,
+.sessionArchiveBtn {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    line-height: 1;
+    color: var(--text-muted);
+    background: transparent;
+    cursor: pointer;
+}
+.sessionPinBtn:hover,
+.sessionArchiveBtn:hover {
+    background: rgba(0,0,0,0.045);
+    color: var(--text-primary);
+}
+.sessionPinBtn.active {
+    color: #a4742f;
+}
+.sessionArchiveBtn:hover {
+    color: #a64238;
+    background: rgba(190,80,70,0.08);
+}
+.sessionItem[data-pinned="true"] .sessionItemTitle::before {
+    content: "";
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #a4742f;
+    margin-right: 5px;
+    vertical-align: middle;
+}
 .sessionItem[data-runtime-state="error"] .sessionItemTitle {
     color: color-mix(in srgb, var(--text-primary) 72%, #b84238);
 }
