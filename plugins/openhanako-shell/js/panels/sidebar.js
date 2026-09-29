@@ -5,6 +5,9 @@ return (function () {
   const slots = studio.require('lib/slots');
   const api = studio.require('lib/api');
   const adapter = studio.require('lib/hana-adapter');
+  const sessionSearch = studio.require('lib/session-search');
+  const sessionBulk = studio.require('lib/session-bulk');
+  const sessionRuntime = studio.require('lib/session-runtime');
   const { t } = studio.require('lib/i18n');
 
   // Upstream icon markup, copied unchanged.
@@ -106,25 +109,10 @@ return (function () {
       h('div', { class: 'sidebar-inner' }, content),
       h('div', { class: 'resize-handle resize-handle-right', id: 'sidebarResizeHandle' }));
 
-    const runtimeSignature = (runtime) => (runtime?.sessions || [])
-      .map((state) => [
-        state.sessionId,
-        state.status || '',
-        state.isStreaming ? 1 : 0,
-        Number(state.activeToolCount) || 0,
-        state.error || '',
-      ].join(':'))
-      .sort()
-      .join('|');
-
     const updateBridgeStatus = (runtime) => {
-      const runtimeRows = Array.from(runtime?.sessions || []);
-      const errorCount = runtimeRows.filter((state) => state.status === 'error').length;
-      const runningCount = runtimeRows.filter((state) => state.status === 'running' || state.isStreaming).length;
-      bridgeStatus.textContent = errorCount
-        ? `${errorCount} error${errorCount === 1 ? '' : 's'}`
-        : runningCount ? `${runningCount} running` : (runtime?.mode === 'mock' ? 'Mock' : 'Connected');
-      bridgeDot.className = 'sidebar-bridge-dot' + (errorCount ? ' error' : runningCount ? ' running' : ' connected');
+      const summary = sessionRuntime.summarize(runtime);
+      bridgeStatus.textContent = summary.text;
+      bridgeDot.className = 'sidebar-bridge-dot ' + summary.state;
     };
 
     const refreshBulkBar = () => {
@@ -142,12 +130,7 @@ return (function () {
     };
 
     bulkSelectVisible.onclick = () => {
-      const visible = view.visibleIds || [];
-      const allSelected = visible.length > 0 && visible.every((id) => view.selectedIds.has(id));
-      visible.forEach((id) => {
-        if (allSelected) view.selectedIds.delete(id);
-        else view.selectedIds.add(id);
-      });
+      view.selectedIds = sessionBulk.toggleVisible(view.selectedIds, view.visibleIds);
       view.bulkDeleteArmed = false;
       refreshBulkBar();
       draw(options.selected);
@@ -165,17 +148,8 @@ return (function () {
       if (!ids.length) return;
       const operation = view.archived ? 'Restoring' : 'Archiving';
       reportAction(`${operation} ${ids.length} sessions…`);
-      let completed = 0;
-      const failed = [];
-      for (const sessionId of ids) {
-        try {
-          const result = await adapter.http('POST', view.archived ? '/api/sessions/restore' : '/api/sessions/archive', { sessionId });
-          if (!result || result.ok === false || result.error) failed.push(sessionId);
-          else completed += 1;
-        } catch {
-          failed.push(sessionId);
-        }
-      }
+      const { completed, failed } = await sessionBulk.runBatch(ids, (sessionId) =>
+        adapter.http('POST', view.archived ? '/api/sessions/restore' : '/api/sessions/archive', { sessionId }));
       view.selectedIds = new Set(failed);
       refreshBulkBar();
       if (failed.length) {
@@ -197,17 +171,8 @@ return (function () {
         return;
       }
       reportAction(`Deleting ${ids.length} archived sessions…`);
-      let completed = 0;
-      const failed = [];
-      for (const sessionId of ids) {
-        try {
-          const result = await adapter.http('POST', '/api/sessions/archived/delete', { sessionId });
-          if (!result || result.ok === false || result.error) failed.push(sessionId);
-          else completed += 1;
-        } catch {
-          failed.push(sessionId);
-        }
-      }
+      const { completed, failed } = await sessionBulk.runBatch(ids, (sessionId) =>
+        adapter.http('POST', '/api/sessions/archived/delete', { sessionId }));
       view.selectedIds = new Set(failed);
       view.bulkDeleteArmed = false;
       refreshBulkBar();
@@ -220,16 +185,12 @@ return (function () {
     };
 
     const highlightedText = (text, query) => {
-      const value = String(text || '');
-      const needle = String(query || '').trim();
-      if (!needle) return h('span', { class: 'sessionItemTitle' }, value);
-      const lower = value.toLocaleLowerCase();
-      const at = lower.indexOf(needle.toLocaleLowerCase());
-      if (at < 0) return h('span', { class: 'sessionItemTitle' }, value);
+      const parts = sessionSearch.highlightParts(text, query);
+      if (!parts.match) return h('span', { class: 'sessionItemTitle' }, parts.before);
       return h('span', { class: 'sessionItemTitle' },
-        value.slice(0, at),
-        h('mark', { class: 'sessionSearchHighlight' }, value.slice(at, at + needle.length)),
-        value.slice(at + needle.length));
+        parts.before,
+        h('mark', { class: 'sessionSearchHighlight' }, parts.match),
+        parts.after);
     };
 
     async function draw(selected) {
@@ -243,23 +204,8 @@ return (function () {
       ]);
       const rawQuery = view.query.trim();
       const query = rawQuery.toLocaleLowerCase();
-      const allRows = (view.archived ? archivedRows : activeRows).map((row) => ({
-        ...row, id: row.sessionId || row.id,
-      }));
-      allRows.sort((a, b) => {
-        if (view.archived) return String(b.archivedAt || '').localeCompare(String(a.archivedAt || ''));
-        const ap = !!a.pinnedAt;
-        const bp = !!b.pinnedAt;
-        if (ap !== bp) return ap ? -1 : 1;
-        if (ap && bp) {
-          const ao = Number.isFinite(a.pinOrder) ? a.pinOrder : Number.MAX_SAFE_INTEGER;
-          const bo = Number.isFinite(b.pinOrder) ? b.pinOrder : Number.MAX_SAFE_INTEGER;
-          if (ao !== bo) return ao - bo;
-        }
-        return String(b.modified || b.updated_at || '').localeCompare(String(a.modified || a.updated_at || ''));
-      });
-      let rows = allRows.filter((row) => !query
-        || `${row.title || ''} ${row.sessionId || row.id || ''}`.toLocaleLowerCase().includes(query));
+      const allRows = sessionSearch.sortRows(view.archived ? archivedRows : activeRows, view.archived);
+      let rows = sessionSearch.localFilter(allRows, query);
       if (query && !view.archived) {
         const mySearchVersion = ++view.searchVersion;
         const cacheKey = rawQuery.toLocaleLowerCase();
@@ -278,23 +224,7 @@ return (function () {
               adapter.http('GET', `/api/sessions/search?q=${encoded}&phase=content&limit=20`),
             ]);
             if (mySearchVersion !== view.searchVersion) return;
-            const merged = new Map();
-            for (const result of [...(titleData?.results || []), ...(contentData?.results || [])]) {
-              const id = result.sessionId || result.id;
-              if (!id) continue;
-              const existing = merged.get(id);
-              merged.set(id, {
-                ...(existing || result),
-                ...result,
-                id,
-                title: result.title || existing?.title || null,
-                searchSnippet: result.matchKind === 'content' && result.snippet
-                  ? result.snippet
-                  : existing?.searchSnippet || '',
-                searchMatchKind: result.matchKind || existing?.searchMatchKind || null,
-              });
-            }
-            rows = Array.from(merged.values());
+            rows = sessionSearch.mergeResults(titleData, contentData);
             searchCache.set(cacheKey, { at: Date.now(), rows: rows.map((row) => ({ ...row })) });
             if (searchCache.size > 20) searchCache.delete(searchCache.keys().next().value);
             searchStatus.textContent = rows.length
@@ -312,13 +242,11 @@ return (function () {
       }
 
       const runtimeById = new Map((runtime.sessions || []).map((state) => [state.sessionId, state]));
-      lastRuntimeSignature = runtimeSignature(runtime);
+      lastRuntimeSignature = sessionRuntime.signature(runtime);
       updateBridgeStatus(runtime);
       activeView.className = 'sessionViewBtn' + (view.archived ? '' : ' active');
       archivedView.className = 'sessionViewBtn' + (view.archived ? ' active' : '');
-      for (const id of Array.from(view.selectedIds)) {
-        if (!allRows.some((row) => row.id === id)) view.selectedIds.delete(id);
-      }
+      view.selectedIds = sessionBulk.pruneSelection(view.selectedIds, allRows.map((row) => row.id));
       refreshBulkBar();
 
       clear(scroller);
@@ -656,7 +584,7 @@ return (function () {
       if (view.archived || view.query.trim() || view.renamingId) return;
       try {
         const runtime = await adapter.http('GET', '/api/runtime-state');
-        const nextSignature = runtimeSignature(runtime);
+        const nextSignature = sessionRuntime.signature(runtime);
         updateBridgeStatus(runtime);
         if (nextSignature !== lastRuntimeSignature) {
           lastRuntimeSignature = nextSignature;

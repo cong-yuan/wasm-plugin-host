@@ -82,6 +82,9 @@ const ASSETS: &[(&str, &str)] = &[
     ("lib/tauri-invoke.js", include_str!("../js/lib/tauri-invoke.js")),
     ("lib/api.js", include_str!("../js/lib/api.js")),
     ("lib/hana-adapter.js", include_str!("../js/lib/hana-adapter.js")),
+    ("lib/session-search.js", include_str!("../js/lib/session-search.js")),
+    ("lib/session-bulk.js", include_str!("../js/lib/session-bulk.js")),
+    ("lib/session-runtime.js", include_str!("../js/lib/session-runtime.js")),
     ("lib/host-bridge.js", include_str!("../js/lib/host-bridge.js")),
     ("entry.js", include_str!("../js/entry.js")),
 ];
