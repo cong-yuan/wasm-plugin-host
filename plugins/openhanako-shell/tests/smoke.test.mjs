@@ -208,7 +208,8 @@ for (const sel of [
   '.titlebar', '.tb-left-group', '.tb-toggle-left', '.tb-center-title', '.tb-right-group',
   '.app', '.sidebar', '.sidebar-inner', '.sidebar-chat-content', '.sidebar-header',
   '.sidebar-title', '.sidebar-header-actions', '.sidebar-activity-bar', '.sidebar-bridge-card',
-  '.sidebar-bridge-dot', '.sidebar-bridge-status', '.session-list', '.sessionListScroller', '.resize-handle',
+  '.sidebar-bridge-dot', '.sidebar-bridge-status', '.session-list', '.sessionListControls',
+  '.sessionSearchInput', '.sessionViewToggle', '.sessionViewBtn', '.sessionListScroller', '.resize-handle',
   '.main-content', '.chat-area', '.welcome', '.welcomeAvatar', '.welcomeText',
   '.folderSelectWrap', '.folderSelectBtn', '.memoryToggleBtn',
   '.input-area', '.input-surface', '.input-stack', '.input-wrapper', '.input-box',
@@ -261,6 +262,28 @@ check('4 activity bars', chatContent.children.filter(
   await new Promise((resolve) => setTimeout(resolve, 0));
   check('archive removes the session from sidebar',
     !root.querySelectorAll('.sessionItemTitle').some((el) => el.textContent === targetTitle));
+
+
+  const viewButtons = root.querySelectorAll('.sessionViewBtn');
+  viewButtons[1]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('archived view lists archived session with restore action',
+    root.querySelectorAll('.sessionItemTitle').some((el) => el.textContent === targetTitle)
+    && root.querySelectorAll('.sessionRestoreBtn').length >= 1);
+  root.querySelector('.sessionRestoreBtn')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('restore returns archived session to active view',
+    root.querySelectorAll('.sessionItemTitle').some((el) => el.textContent === targetTitle)
+    && root.querySelectorAll('.sessionRestoreBtn').length === 0);
+
+  const search = root.querySelector('.sessionSearchInput');
+  search?.fire('input', { target: { value: 'Welcome' } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('session search filters active rows',
+    root.querySelectorAll('.sessionItemTitle').length >= 1
+    && root.querySelectorAll('.sessionItemTitle').every((el) => /welcome/i.test(el.textContent)));
+  search?.fire('input', { target: { value: '' } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 // Interactions must not throw.

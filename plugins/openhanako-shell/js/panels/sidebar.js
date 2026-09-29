@@ -19,6 +19,7 @@ return (function () {
   };
 
   function render(options) {
+    const view = { archived: false, query: '' };
     const add = h('button', { class: 'sidebar-action-btn', title: t('sidebar.newChat') }, svg(ICON.newChat));
     const settings = h('button', { class: 'sidebar-action-btn', title: t('settings.title') }, svg(ICON.settings));
     const collapse = h('button', { class: 'sidebar-action-btn', title: t('sidebar.collapse') }, svg(ICON.collapse));
@@ -49,11 +50,19 @@ return (function () {
     const activities = h('div', { class: 'hana-slot sidebar-activities-slot' });
     slots.mount('openhanako.sidebar.activities', activities);
 
+    const search = h('input', {
+      class: 'sessionSearchInput', type: 'search', placeholder: 'Search sessions…', 'aria-label': 'Search sessions',
+    });
+    const activeView = h('button', { class: 'sessionViewBtn active', type: 'button' }, 'Active');
+    const archivedView = h('button', { class: 'sessionViewBtn', type: 'button' }, 'Archived');
+    const viewToggle = h('div', { class: 'sessionViewToggle' }, activeView, archivedView);
+    const sessionControls = h('div', { class: 'sessionListControls' }, search, viewToggle);
+
     // Upstream: <div className="session-list"><SessionList /><SidebarNoticeSlot /></div>
     const scroller = h('div', { class: 'sessionListScroller' });
     const notice = h('div', { class: 'hana-slot sidebar-notice-slot' });
     slots.mount('openhanako.sidebar.notice', notice);
-    const list = h('div', { class: 'session-list' }, scroller, notice);
+    const list = h('div', { class: 'session-list' }, sessionControls, scroller, notice);
     slots.mount('openhanako.sidebar.sessions', list);
 
     const footer = h('div', { class: 'hana-slot sidebar-footer-slot' });
@@ -67,23 +76,20 @@ return (function () {
       h('div', { class: 'resize-handle resize-handle-right', id: 'sidebarResizeHandle' }));
 
     async function draw(selected) {
-      const [projectedRows, runtime] = await Promise.all([
+      const [activeRows, archivedRows, runtime] = await Promise.all([
         adapter.http('GET', '/api/sessions').catch(async () => (await api.sessions()).map((row) => ({
-          sessionId: row.id,
-          title: row.title,
-          busy: row.busy,
-          live: row.live,
-          status: row.status,
-          error: row.error,
-          pinnedAt: null,
-          pinOrder: null,
+          sessionId: row.id, title: row.title, busy: row.busy, live: row.live,
+          status: row.status, error: row.error, pinnedAt: null, pinOrder: null,
         }))),
+        view.archived ? adapter.http('GET', '/api/sessions/archived').catch(() => []) : Promise.resolve([]),
         adapter.http('GET', '/api/runtime-state').catch(() => ({ mode: api.mode(), sessions: [] })),
       ]);
-      const rows = (projectedRows || []).map((row) => ({
-        ...row,
-        id: row.sessionId || row.id,
-      })).sort((a, b) => {
+      const query = view.query.trim().toLocaleLowerCase();
+      const allRows = (view.archived ? archivedRows : activeRows).map((row) => ({
+        ...row, id: row.sessionId || row.id,
+      }));
+      allRows.sort((a, b) => {
+        if (view.archived) return String(b.archivedAt || '').localeCompare(String(a.archivedAt || ''));
         const ap = !!a.pinnedAt;
         const bp = !!b.pinnedAt;
         if (ap !== bp) return ap ? -1 : 1;
@@ -92,84 +98,136 @@ return (function () {
           const bo = Number.isFinite(b.pinOrder) ? b.pinOrder : Number.MAX_SAFE_INTEGER;
           if (ao !== bo) return ao - bo;
         }
-        return String(b.modified || '').localeCompare(String(a.modified || ''));
+        return String(b.modified || b.updated_at || '').localeCompare(String(a.modified || a.updated_at || ''));
       });
+      const rows = allRows.filter((row) => !query
+        || `${row.title || ''} ${row.sessionId || row.id || ''}`.toLocaleLowerCase().includes(query));
+
       const runtimeById = new Map((runtime.sessions || []).map((state) => [state.sessionId, state]));
       const runtimeRows = Array.from(runtimeById.values());
       const errorCount = runtimeRows.filter((state) => state.status === 'error').length;
       const runningCount = runtimeRows.filter((state) => state.status === 'running' || state.isStreaming).length;
       bridgeStatus.textContent = errorCount
         ? `${errorCount} error${errorCount === 1 ? '' : 's'}`
-        : runningCount
-          ? `${runningCount} running`
-          : (runtime.mode === 'mock' ? 'Mock' : 'Connected');
-      bridgeDot.className = 'sidebar-bridge-dot'
-        + (errorCount ? ' error' : runningCount ? ' running' : ' connected');
+        : runningCount ? `${runningCount} running` : (runtime.mode === 'mock' ? 'Mock' : 'Connected');
+      bridgeDot.className = 'sidebar-bridge-dot' + (errorCount ? ' error' : runningCount ? ' running' : ' connected');
+      activeView.className = 'sessionViewBtn' + (view.archived ? '' : ' active');
+      archivedView.className = 'sessionViewBtn' + (view.archived ? ' active' : '');
+
       clear(scroller);
       if (!rows.length) {
-        scroller.appendChild(h('div', { class: 'sessionEmpty' }, t('sidebar.empty')));
+        scroller.appendChild(h('div', { class: 'sessionEmpty' },
+          query ? 'No matching sessions' : view.archived ? 'No archived sessions' : t('sidebar.empty')));
         return;
       }
+
+      const pinnedIds = allRows.filter((row) => !!row.pinnedAt).map((row) => row.id);
       rows.forEach((s) => {
         const state = runtimeById.get(s.id) || null;
-        const isRunning = !!(s.busy || state?.isStreaming || state?.status === 'running');
-        const isError = state?.status === 'error' || !!state?.error;
+        const isRunning = !view.archived && !!(s.busy || state?.isStreaming || state?.status === 'running');
+        const isError = !view.archived && (state?.status === 'error' || !!state?.error);
         const toolCount = Number(state?.activeToolCount) || 0;
         const statusNode = toolCount > 0
           ? h('span', { class: 'sessionToolCount', title: `${toolCount} active tool${toolCount === 1 ? '' : 's'}` }, String(toolCount))
-          : isError
-            ? h('span', { class: 'sessionErrorDot', title: state?.error || 'Session error' })
-            : null;
-        const retry = isError
-          ? h('button', { class: 'sessionRetryBtn', type: 'button', title: 'Retry session' }, '↻')
-          : null;
-        const pin = h('button', {
-          class: 'sessionPinBtn' + (s.pinnedAt ? ' active' : ''),
-          type: 'button',
-          title: s.pinnedAt ? 'Unpin session' : 'Pin session',
-        }, s.pinnedAt ? '★' : '☆');
-        const archive = h('button', {
-          class: 'sessionArchiveBtn',
-          type: 'button',
-          title: 'Archive session',
-        }, '×');
-        const rowActions = h('span', { class: 'sessionItemActions' }, pin, archive);
+          : isError ? h('span', { class: 'sessionErrorDot', title: state?.error || 'Session error' }) : null;
+        const runtimeAction = isRunning
+          ? h('button', { class: 'sessionStopBtn', type: 'button', title: 'Stop session' }, '■')
+          : isError ? h('button', { class: 'sessionRetryBtn', type: 'button', title: 'Retry session' }, '↻') : null;
+        const rowActions = h('span', { class: 'sessionItemActions' });
+
+        if (view.archived) {
+          const restore = h('button', { class: 'sessionRestoreBtn', type: 'button', title: 'Restore session' }, '↩');
+          restore.onclick = async (event) => {
+            event?.stopPropagation?.();
+            const result = await adapter.http('POST', '/api/sessions/restore', { sessionId: s.id, path: s.path });
+            if (result && result.ok !== false && !result.error) {
+              view.archived = false;
+              view.query = '';
+              search.value = '';
+              await draw(result.sessionId || selected);
+            }
+          };
+          rowActions.appendChild(restore);
+        } else {
+          const pin = h('button', {
+            class: 'sessionPinBtn' + (s.pinnedAt ? ' active' : ''),
+            type: 'button', title: s.pinnedAt ? 'Unpin session' : 'Pin session',
+          }, s.pinnedAt ? '★' : '☆');
+          pin.onclick = async (event) => {
+            event?.stopPropagation?.();
+            await adapter.http('POST', '/api/sessions/pin', { sessionId: s.id, pinned: !s.pinnedAt });
+            await draw(selected);
+          };
+          rowActions.appendChild(pin);
+
+          if (s.pinnedAt && pinnedIds.length > 1) {
+            const index = pinnedIds.indexOf(s.id);
+            const up = h('button', { class: 'sessionPinMoveBtn', type: 'button', title: 'Move pinned session up' }, '↑');
+            const down = h('button', { class: 'sessionPinMoveBtn', type: 'button', title: 'Move pinned session down' }, '↓');
+            up.disabled = index <= 0;
+            down.disabled = index < 0 || index >= pinnedIds.length - 1;
+            const move = async (delta, event) => {
+              event?.stopPropagation?.();
+              const next = pinnedIds.slice();
+              const target = index + delta;
+              if (target < 0 || target >= next.length) return;
+              [next[index], next[target]] = [next[target], next[index]];
+              await adapter.http('POST', '/api/sessions/pin-order', { sessionIds: next });
+              await draw(selected);
+            };
+            up.onclick = (event) => move(-1, event);
+            down.onclick = (event) => move(1, event);
+            rowActions.appendChild(up);
+            rowActions.appendChild(down);
+          }
+
+          const archive = h('button', { class: 'sessionArchiveBtn', type: 'button', title: 'Archive session' }, '×');
+          archive.onclick = async (event) => {
+            event?.stopPropagation?.();
+            await adapter.http('POST', '/api/sessions/archive', { sessionId: s.id });
+            if (selected === s.id) options.onNew();
+            else await draw(selected);
+          };
+          rowActions.appendChild(archive);
+        }
+
         const row = h('div', {
           class: 'sessionItem sessionItemSingleLine' + (selected === s.id ? ' sessionItemActive' : ''),
           role: 'button', tabindex: '0',
           ...(s.pinnedAt ? { 'data-pinned': 'true' } : {}),
+          ...(view.archived ? { 'data-archived': 'true' } : {}),
           ...(isError ? { 'data-runtime-state': 'error' } : isRunning ? { 'data-runtime-state': 'running' } : {}),
         }, h('div', { class: 'sessionItemHeader' },
           isRunning ? h('span', { class: 'sessionStreamingDot', 'data-state': 'running' }) : null,
           h('span', { class: 'sessionItemTitle' }, s.title || t('session.untitled')),
-          statusNode,
-          retry,
-          rowActions));
-        if (retry) {
-          retry.onclick = (event) => {
+          statusNode, runtimeAction, rowActions));
+
+        if (runtimeAction) {
+          runtimeAction.onclick = async (event) => {
             event?.stopPropagation?.();
-            if (typeof options.onRetry === 'function') options.onRetry(s);
+            if (isRunning) {
+              await api.cancel(s.id);
+              await draw(selected);
+            } else if (typeof options.onRetry === 'function') options.onRetry(s);
             else options.onSelect(s);
           };
         }
-        pin.onclick = async (event) => {
-          event?.stopPropagation?.();
-          await adapter.http('POST', '/api/sessions/pin', {
-            sessionId: s.id,
-            pinned: !s.pinnedAt,
-          });
-          await draw(selected);
-        };
-        archive.onclick = async (event) => {
-          event?.stopPropagation?.();
-          await adapter.http('POST', '/api/sessions/archive', { sessionId: s.id });
-          if (selected === s.id) options.onNew();
-          else await draw(selected);
-        };
-        row.onclick = () => options.onSelect(s);
+        if (!view.archived) row.onclick = () => options.onSelect(s);
         scroller.appendChild(row);
       });
     }
+    search.oninput = (event) => {
+      view.query = event?.target?.value || '';
+      draw(options.selected);
+    };
+    activeView.onclick = () => {
+      view.archived = false;
+      draw(options.selected);
+    };
+    archivedView.onclick = () => {
+      view.archived = true;
+      draw(options.selected);
+    };
     draw(options.selected);
     bridge.onclick = () => draw(options.selected);
     return { root, refresh: draw };
