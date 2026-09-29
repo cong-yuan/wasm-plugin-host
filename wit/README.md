@@ -80,6 +80,8 @@ Compatibility rule for `0.1.0`: do not add/reorder required record fields or req
 
 `../wit-v0.2` is the first parallel version-bumped contract. Its initial wire change is typed `tool-decl.requires: list<string>`, matching the internal `ToolDecl.requires[]` dependency graph. `host/tests/wit_contract.rs` compiles both 0.1 and 0.2 bindings, and the runtime detects the versioned lifecycle export to dispatch the matching Component backend while preserving one internal Registry model.
 
+`../wit-v0.3` is the next parallel contract. It keeps 0.2 tool dependencies and replaces `ui-json` with typed `ui: option<ui-decl>` records for slots, assets, windows, routes and adjustments. Runtime dispatch supports all three lifecycle package versions side-by-side and converts each wire revision into the same internal `PluginDecl` / `UiDecl` model.
+
 ## Validation
 
 `host/tests/wit_contract.rs` invokes Wasmtime's `component::bindgen!` against both `../wit` (0.1) and `../wit-v0.2` (0.2). Therefore normal `cargo check --all-targets` validates both WIT packages without requiring a separate `wasm-tools` CLI.
@@ -102,5 +104,6 @@ The generated lifecycle exports are wrapped as typed calls and converted back in
 ## Remaining producer / ABI work
 
 - Python/componentize-py producer validation remains blocked on the current runner: even componentize-py's minimal hello-world is terminated by the OS with SIGKILL, across tested versions. This is tracked as an environment validation item rather than a Host runtime blocker.
-- WIT `0.2.0` exists in parallel, types tool dependencies, and is runtime-loadable alongside 0.1.
-- Later 0.2 additions may type the stable UI declaration and/or introduce a dedicated typed hook-decision surface before 0.2 is treated as stable.
+- WIT `0.2.0` types tool dependencies and remains runtime-loadable alongside 0.1.
+- WIT `0.3.0` types the stable UI declaration and is runtime-loadable alongside 0.1/0.2.
+- A later wire revision may introduce a dedicated typed hook-decision surface; it should continue the same side-by-side versioning model.
