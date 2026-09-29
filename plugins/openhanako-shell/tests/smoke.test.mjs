@@ -506,6 +506,37 @@ root.querySelector('.sidebarActivityRefresh')?.fire('click');
 await new Promise((resolve) => setTimeout(resolve, 0));
 check('activity refresh reloads runtime snapshot', activityRefreshCalls === 1);
 adapterForActivity.http = originalActivityHttp;
+const runtimeResolvers = [];
+adapterForActivity.http = async (method, path, body) => {
+  if (method === 'GET' && path === '/api/runtime-state') {
+    const index = runtimeResolvers.length;
+    return new Promise((resolve) => {
+      runtimeResolvers.push(() => resolve({
+        mode: 'mock',
+        sessions: [{
+          sessionId: `race-${index}`,
+          title: index === 0 ? 'Old runtime snapshot' : 'New runtime snapshot',
+          status: 'idle',
+        }],
+      }));
+    });
+  }
+  return originalActivityHttp(method, path, body);
+};
+root.querySelector('.sidebarActivityRefresh')?.fire('click');
+activityButton?.fire('click');
+activityButton?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+runtimeResolvers[1]?.();
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('newer activity request wins race',
+  /New runtime snapshot/.test(root.querySelector('.sidebarActivityPanel')?.textContent || ''));
+runtimeResolvers[0]?.();
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('stale activity request cannot overwrite newer snapshot',
+  /New runtime snapshot/.test(root.querySelector('.sidebarActivityPanel')?.textContent || '')
+  && !/Old runtime snapshot/.test(root.querySelector('.sidebarActivityPanel')?.textContent || ''));
+adapterForActivity.http = originalActivityHttp;
 skillsButton?.fire('click');
 await new Promise((resolve) => setTimeout(resolve, 0));
 check('skills and activity panels are mutually exclusive',

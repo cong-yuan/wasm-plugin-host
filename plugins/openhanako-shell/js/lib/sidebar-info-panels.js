@@ -18,8 +18,16 @@ return (function () {
       'aria-label': labels.skills || 'Skills',
     });
     [settingsPanel, activityPanel, skillsPanel].forEach((panel) => { panel.style.display = 'none'; });
+    const requestVersion = { settings: 0, activity: 0, skills: 0 };
+    const panelKey = (panel) => (
+      panel === settingsPanel ? 'settings'
+        : panel === activityPanel ? 'activity'
+          : panel === skillsPanel ? 'skills' : null
+    );
 
     const close = (panel, button) => {
+      const key = panelKey(panel);
+      if (key) requestVersion[key] += 1;
       panel.style.display = 'none';
       button?.setAttribute?.('aria-expanded', 'false');
     };
@@ -63,6 +71,7 @@ return (function () {
     };
 
     const loadSettings = async () => {
+      const version = ++requestVersion.settings;
       clear(settingsPanel);
       settingsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'Loading providers…'));
       try {
@@ -70,15 +79,17 @@ return (function () {
           adapter.http('GET', '/api/providers/summary'),
           api.status(),
         ]);
+        if (version !== requestVersion.settings) return;
         renderSettings(summaryData, status);
       } catch (err) {
+        if (version !== requestVersion.settings) return;
         clear(settingsPanel);
         settingsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty error' },
           err?.message || 'Unable to load provider settings'));
       }
     };
 
-    const renderActivity = (runtime) => {
+    const renderActivityContent = (runtime) => {
       clear(activityPanel);
       const rows = Array.from(runtime?.sessions || []);
       const running = rows.filter((row) => row.status === 'running' || row.isStreaming);
@@ -110,19 +121,27 @@ return (function () {
       });
     };
 
+    const renderActivity = (runtime) => {
+      requestVersion.activity += 1;
+      renderActivityContent(runtime);
+    };
+
     const loadActivity = async () => {
+      const version = ++requestVersion.activity;
       clear(activityPanel);
       activityPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'Loading runtime…'));
       try {
-        renderActivity(await adapter.http('GET', '/api/runtime-state'));
+        const runtime = await adapter.http('GET', '/api/runtime-state');
+        if (version !== requestVersion.activity) return;
+        renderActivityContent(runtime);
       } catch (err) {
+        if (version !== requestVersion.activity) return;
         clear(activityPanel);
         activityPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty error' },
           err?.message || 'Unable to load runtime activity'));
       }
     };
 
-    let skillsLoading = false;
     const renderSkills = (plugins, tools) => {
       clear(skillsPanel);
       const pluginRows = Array.from(plugins || []);
@@ -154,19 +173,18 @@ return (function () {
     };
 
     const loadSkills = async () => {
-      if (skillsLoading) return;
-      skillsLoading = true;
+      const version = ++requestVersion.skills;
       clear(skillsPanel);
       skillsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'Loading capabilities…'));
       try {
         const [plugins, tools] = await Promise.all([api.plugins(), api.tools()]);
+        if (version !== requestVersion.skills) return;
         renderSkills(plugins, tools);
       } catch (err) {
+        if (version !== requestVersion.skills) return;
         clear(skillsPanel);
         skillsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty error' },
           err?.message || 'Unable to load capabilities'));
-      } finally {
-        skillsLoading = false;
       }
     };
 
