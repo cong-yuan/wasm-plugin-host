@@ -1,0 +1,16 @@
+[package]
+name = "plugin-sdk"
+version = "0.1.0"
+edition = "2021"
+
+# Not a `cdylib`: this is a library plugins depend on, not a plugin itself.
+# It builds for both `wasm32-wasip1` (where the `host.*` imports are real) and
+# the native target (where they are stubbed, so the logic stays unit-testable).
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde_json = "1"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

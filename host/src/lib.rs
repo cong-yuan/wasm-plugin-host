@@ -14,6 +14,7 @@ pub mod pipe;
 pub mod plugin;
 pub mod registry;
 pub mod runtime;
+pub mod scaffold;
 pub mod service;
 pub mod state;
 pub mod supervisor;
@@ -37,6 +38,7 @@ pub use plugin::{
 };
 pub use registry::{LoadedReport, Registry, ReloadReport, ValidationReport};
 pub use runtime::{AllocationStrategy, CacheStats, CompiledArtifact, Runtime, WasmArtifactKind};
+pub use scaffold::{create_plugin_scaffold, ScaffoldKind, ScaffoldReport};
 pub use service::{Convergence, Shared};
 pub use state::{LogHook, LogLevel, LogRecord, LogSink};
 /// Back-compat: the supervisor's event type used to be exported as `Event`.

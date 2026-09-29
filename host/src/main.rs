@@ -21,6 +21,7 @@
 //!   plugin-host --config c.json --validate      validate a config and exit
 //!   plugin-host --config c.json --supervise   run the watcher loop (no REPL)
 //!   plugin-host plugin-check plugin.wasm [--json]  validate one plugin artifact
+//!   plugin-host plugin-new dir [--kind rust-component|rust-core|js-component]
 
 use anyhow::Result;
 use std::io::{BufRead, Write};
@@ -87,6 +88,11 @@ fn main() -> Result<()> {
             eprintln!("  - {issue}");
         }
         std::process::exit(2);
+    }
+
+    // Project scaffolding is a true one-shot and does not need Wasmtime.
+    if rest.first().map(String::as_str) == Some("plugin-new") {
+        return run_plugin_new(&rest);
     }
 
     // Load the config (if any) *before* building the runtime, so the runtime
@@ -191,6 +197,40 @@ fn main() -> Result<()> {
     run_command(&mut host, &rest).map(|_| ())
 }
 
+fn run_plugin_new(parts: &[String]) -> Result<()> {
+    let target = parts
+        .get(1)
+        .ok_or_else(|| anyhow::anyhow!("usage: plugin-new <dir> [--kind rust-component|rust-core|js-component]"))?;
+
+    let kind_raw = match parts.get(2).map(String::as_str) {
+        None => "rust-component",
+        Some("--kind") => parts
+            .get(3)
+            .map(String::as_str)
+            .ok_or_else(|| anyhow::anyhow!("--kind requires rust-component, rust-core, or js-component"))?,
+        Some(value) => value,
+    };
+    if parts.len() > 4 || (parts.len() == 4 && parts.get(2).map(String::as_str) != Some("--kind")) {
+        anyhow::bail!("usage: plugin-new <dir> [--kind rust-component|rust-core|js-component]");
+    }
+    let kind = wasm_plugin_host::ScaffoldKind::parse(kind_raw).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown scaffold kind `{kind_raw}`; expected rust-component, rust-core, or js-component"
+        )
+    })?;
+    let report = wasm_plugin_host::create_plugin_scaffold(std::path::Path::new(target), kind)?;
+    println!(
+        "created {} plugin `{}` at {}",
+        report.kind.as_str(),
+        report.name,
+        report.path.display()
+    );
+    for file in report.files {
+        println!("  {}", file.display());
+    }
+    Ok(())
+}
+
 fn repl(host: &mut Host) -> Result<()> {
     println!("wasm-plugin-host — `help` for commands, `quit` to exit");
     if let Some(sup) = &host.sup {
@@ -293,6 +333,7 @@ fn run_command(host: &mut Host, parts: &[String]) -> Result<()> {
             );
             println!("  tools: {}", r.tools.join(", "));
         }
+        "plugin-new" => return run_plugin_new(parts),
         "plugin-check" => {
             let path = parts
                 .get(1)
@@ -527,6 +568,7 @@ fn run_command(host: &mut Host, parts: &[String]) -> Result<()> {
             println!("  logs [slot] [n] | clear-logs | status | config | quit");
             println!("  cache | validate | log-level <debug|info|warn|error>");
             println!("  plugin-check <path.wasm> [--json]");
+            println!("  plugin-new <dir> [--kind rust-component|rust-core|js-component]");
         }
         other => anyhow::bail!("unknown command: {other}"),
     }

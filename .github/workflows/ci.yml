@@ -203,6 +203,28 @@ jobs:
             plugins/component-js-demo/dist/component-js-demo.preview2.component.wasm \
             js_component_echo
 
+      - name: Smoke generated plugin scaffolds
+        run: |
+          rm -rf /tmp/generated-core /tmp/generated-rust /tmp/generated-js
+          cargo run -p wasm-plugin-host -- plugin-new /tmp/generated-core --kind rust-core
+          cargo run -p wasm-plugin-host -- plugin-new /tmp/generated-rust --kind rust-component
+          cargo run -p wasm-plugin-host -- plugin-new /tmp/generated-js --kind js-component
+
+          (cd /tmp/generated-core && cargo build --release --target wasm32-wasip1)
+          cargo run -p wasm-plugin-host -- plugin-check \
+            /tmp/generated-core/target/wasm32-wasip1/release/generated_core.wasm --json \
+            | python3 -m json.tool >/dev/null
+
+          (cd /tmp/generated-rust && ./build-component.sh)
+          cargo run -p wasm-plugin-host -- plugin-check \
+            /tmp/generated-rust/target/plugin.component.wasm --json \
+            | python3 -m json.tool >/dev/null
+
+          (cd /tmp/generated-js && npm install --ignore-scripts && npm run build)
+          cargo run -p wasm-plugin-host -- plugin-check \
+            /tmp/generated-js/dist/plugin.component.wasm --json \
+            | python3 -m json.tool >/dev/null
+
   ui:
     name: UI plugin harnesses
     runs-on: ubuntu-latest
