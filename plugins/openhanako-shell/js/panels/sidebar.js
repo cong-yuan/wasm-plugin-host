@@ -10,6 +10,7 @@ return (function () {
   const sessionBulk = studio.require('lib/session-bulk');
   const sessionRuntime = studio.require('lib/session-runtime');
   const sessionRow = studio.require('lib/session-row');
+  const sessionActionLock = studio.require('lib/session-action-lock');
   const { t } = studio.require('lib/i18n');
 
   // Upstream icon markup, copied unchanged.
@@ -26,6 +27,7 @@ return (function () {
   function render(options) {
     const view = { archived: false, query: '', searchVersion: 0, expanded: new Set(), selectedIds: new Set(), visibleIds: [], keyboardId: null, renamingId: null, deleteConfirmId: null, bulkDeleteArmed: false };
     const searchController = sessionSearchController.create({ adapter, ttlMs: 15000, maxEntries: 20 });
+    const actionLock = sessionActionLock.create();
     let searchTimer = null;
     let lastRuntimeSignature = '';
     const add = h('button', { class: 'sidebar-action-btn', title: t('sidebar.newChat') }, svg(ICON.newChat));
@@ -145,25 +147,30 @@ return (function () {
       draw(options.selected);
     };
 
-    bulkPrimary.onclick = async () => {
+    bulkPrimary.onclick = async () => actionLock.run('bulk:primary', async () => {
       const ids = Array.from(view.selectedIds);
       if (!ids.length) return;
+      bulkPrimary.disabled = true;
       const operation = view.archived ? 'Restoring' : 'Archiving';
       reportAction(`${operation} ${ids.length} sessions…`);
-      const { completed, failed } = await sessionBulk.runBatch(ids, (sessionId) =>
-        adapter.http('POST', view.archived ? '/api/sessions/restore' : '/api/sessions/archive', { sessionId }));
-      view.selectedIds = new Set(failed);
-      refreshBulkBar();
-      if (failed.length) {
-        reportAction(`${completed} completed · ${failed.length} failed`, true, () => bulkPrimary.onclick());
-      } else {
-        reportAction(`${completed} sessions ${view.archived ? 'restored' : 'archived'}`);
+      try {
+        const { completed, failed } = await sessionBulk.runBatch(ids, (sessionId) =>
+          adapter.http('POST', view.archived ? '/api/sessions/restore' : '/api/sessions/archive', { sessionId }));
+        view.selectedIds = new Set(failed);
+        refreshBulkBar();
+        if (failed.length) {
+          reportAction(`${completed} completed · ${failed.length} failed`, true, () => bulkPrimary.onclick());
+        } else {
+          reportAction(`${completed} sessions ${view.archived ? 'restored' : 'archived'}`);
+        }
+        await draw(options.selected);
+      } finally {
+        bulkPrimary.disabled = false;
       }
-      await draw(options.selected);
-    };
+    });
 
 
-    bulkDelete.onclick = async () => {
+    bulkDelete.onclick = async () => actionLock.run('bulk:delete', async () => {
       const ids = Array.from(view.selectedIds);
       if (!view.archived || !ids.length) return;
       if (!view.bulkDeleteArmed) {
@@ -172,19 +179,24 @@ return (function () {
         reportAction(`Confirm permanent deletion of ${ids.length} archived session${ids.length === 1 ? '' : 's'}`);
         return;
       }
+      bulkDelete.disabled = true;
       reportAction(`Deleting ${ids.length} archived sessions…`);
-      const { completed, failed } = await sessionBulk.runBatch(ids, (sessionId) =>
-        adapter.http('POST', '/api/sessions/archived/delete', { sessionId }));
-      view.selectedIds = new Set(failed);
-      view.bulkDeleteArmed = false;
-      refreshBulkBar();
-      if (failed.length) {
-        reportAction(`${completed} deleted · ${failed.length} failed`, true, () => bulkDelete.onclick());
-      } else {
-        reportAction(`${completed} archived sessions permanently deleted`);
+      try {
+        const { completed, failed } = await sessionBulk.runBatch(ids, (sessionId) =>
+          adapter.http('POST', '/api/sessions/archived/delete', { sessionId }));
+        view.selectedIds = new Set(failed);
+        view.bulkDeleteArmed = false;
+        refreshBulkBar();
+        if (failed.length) {
+          reportAction(`${completed} deleted · ${failed.length} failed`, true, () => bulkDelete.onclick());
+        } else {
+          reportAction(`${completed} archived sessions permanently deleted`);
+        }
+        await draw(options.selected);
+      } finally {
+        bulkDelete.disabled = false;
       }
-      await draw(options.selected);
-    };
+    });
 
     const highlightedText = (text, query) => {
       const parts = sessionSearch.highlightParts(text, query);

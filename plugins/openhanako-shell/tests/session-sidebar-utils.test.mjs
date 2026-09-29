@@ -12,6 +12,7 @@ const search = load('session-search.js');
 const bulk = load('session-bulk.js');
 const runtime = load('session-runtime.js');
 const row = load('session-row.js');
+const actionLock = load('session-action-lock.js');
 const searchControllerSource = readFileSync(join(ROOT, 'js/lib/session-search-controller.js'), 'utf8');
 const searchController = new Function('studio', searchControllerSource)({
   require(name) {
@@ -152,6 +153,27 @@ const check = (label, condition) => { if (!condition) failures.push(label); };
   check('content search uses bounded transcript concurrency', maxLoads === 3);
   check('content search preserves source ordering before limit',
     contentMatches.length === 1 && contentMatches[0].sessionId === 's-1');
+}
+
+{
+  const lock = actionLock.create();
+  let entered = 0;
+  let release;
+  const first = lock.run('bulk:archive', async () => {
+    entered += 1;
+    await new Promise((resolve) => { release = resolve; });
+    return 'done';
+  });
+  const duplicate = await lock.run('bulk:archive', async () => {
+    entered += 1;
+    return 'duplicate';
+  });
+  check('action lock skips duplicate mutation while pending',
+    duplicate.skipped === true && entered === 1 && lock.isPending('bulk:archive'));
+  release();
+  const finished = await first;
+  check('action lock releases after completion',
+    finished.value === 'done' && !lock.isPending('bulk:archive') && lock.size() === 0);
 }
 
 if (failures.length) {
