@@ -51,13 +51,14 @@ return (function () {
         return;
       }
       providers.forEach(([name, provider]) => {
-        const configured = !!provider?.has_credentials || !!provider?.is_configured;
+        const builtIn = !!provider?.is_builtin || name === 'mock';
+        const configured = builtIn || !!provider?.has_credentials || !!provider?.is_configured;
         const row = h('div', {
           class: 'sidebarSettingsProvider',
           'data-configured': configured ? 'true' : 'false',
         }, h('div', { class: 'sidebarSettingsProviderHeader' },
           h('span', { class: 'sidebarSettingsProviderName' }, provider?.display_name || name),
-          h('span', { class: 'sidebarSettingsProviderState' }, configured ? 'Configured' : 'Needs credentials')));
+          h('span', { class: 'sidebarSettingsProviderState' }, builtIn ? 'Built in' : configured ? 'Configured' : 'Needs credentials')));
         const models = Array.isArray(provider?.models) ? provider.models : [];
         if (models.length) {
           row.appendChild(h('div', { class: 'sidebarSettingsProviderMeta' },

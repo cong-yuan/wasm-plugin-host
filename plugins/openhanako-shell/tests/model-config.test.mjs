@@ -91,6 +91,7 @@ const originalDeepseekUrl = llmState.providers.deepseek.base_url;
 llmState.providers.deepseek.base_url = 'https://user:secret@api.deepseek.com/v1?token=abc#fragment';
 const summary = await adapter.http('GET', '/api/providers/summary');
 check('summary includes deepseek credentials', summary.providers.deepseek.has_credentials === true);
+check('provider summary marks mock as built in', summary.providers.mock.is_builtin === true);
 check('provider summary redacts URL credentials and query secrets',
   summary.providers.deepseek.base_url === 'https://api.deepseek.com/v1'
   && !/user|secret|token|fragment/.test(summary.providers.deepseek.base_url));

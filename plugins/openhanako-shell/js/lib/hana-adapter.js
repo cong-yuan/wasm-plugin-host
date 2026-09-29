@@ -518,6 +518,7 @@ return (function () {
       summary[name] = {
         display_name: name,
         has_credentials: hasKey || hasUrl,
+        is_builtin: name === 'mock',
         is_configured: hasUrl,
         supports_oauth: false,
         is_coding_plan: false,
