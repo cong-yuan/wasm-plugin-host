@@ -901,6 +901,68 @@ html[data-platform="linux"] .tb-toggle-right {
     margin-left: 6px;
 }
 
+.sidebarActivityPanel {
+    margin: 0 10px 8px;
+    padding: 8px;
+    border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 8px;
+    background: rgba(0,0,0,0.018);
+}
+.sidebarActivitySummary {
+    margin-bottom: 6px;
+    font-size: 10px;
+    color: var(--text-muted);
+}
+.sidebarActivityItem {
+    padding: 5px 0;
+    border-top: 1px solid rgba(0,0,0,0.045);
+}
+.sidebarActivityItemHeader {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+}
+.sidebarActivityStateDot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: rgba(0,0,0,0.22);
+}
+.sidebarActivityStateDot[data-state="running"] {
+    background: rgba(70,140,90,0.85);
+}
+.sidebarActivityStateDot[data-state="error"] {
+    background: rgba(190,80,70,0.85);
+}
+.sidebarActivityItemTitle {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    color: var(--text-primary);
+}
+.sidebarActivityItemState,
+.sidebarActivityItemMeta,
+.sidebarActivityItemError {
+    font-size: 9px;
+    color: var(--text-muted);
+}
+.sidebarActivityItemState {
+    text-transform: capitalize;
+}
+.sidebarActivityItemMeta,
+.sidebarActivityItemError {
+    margin: 2px 0 0 11px;
+    overflow-wrap: anywhere;
+}
+.sidebarActivityItemError {
+    color: #a64238;
+}
+
 .sidebarSkillsPanel {
     margin: 0 10px 8px;
     padding: 8px;

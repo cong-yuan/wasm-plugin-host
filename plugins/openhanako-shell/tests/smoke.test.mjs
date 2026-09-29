@@ -454,6 +454,23 @@ check('skills button closes capabilities panel',
   skillsButton?.getAttribute('aria-expanded') === 'false'
   && root.querySelector('.sidebarSkillsPanel')?.style?.display === 'none');
 
+const activityButton = root.querySelector('.sidebar-activity-button');
+activityButton?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('activity button opens runtime panel',
+  activityButton?.getAttribute('aria-expanded') === 'true'
+  && root.querySelector('.sidebarActivityPanel')?.style?.display !== 'none');
+check('activity panel lists runtime sessions',
+  /session/.test(root.querySelector('.sidebarActivityPanel')?.textContent || '')
+  && /Welcome|Page design sketch/.test(root.querySelector('.sidebarActivityPanel')?.textContent || ''));
+skillsButton?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('skills and activity panels are mutually exclusive',
+  root.querySelector('.sidebarActivityPanel')?.style?.display === 'none'
+  && activityButton?.getAttribute('aria-expanded') === 'false'
+  && skillsButton?.getAttribute('aria-expanded') === 'true');
+skillsButton?.fire('click');
+
 // Rapid session switching must keep the newest transcript when an older
 // transcript request resolves later.
 {

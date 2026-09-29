@@ -52,8 +52,17 @@ return (function () {
       svg(ICON.bridge), h('span', {}, t('sidebar.bridgeShort')),
       bridgeStatus, bridgeDot);
     bridge.title = 'Refresh agent runtime state';
-    const activity = h('button', { class: 'sidebar-activity-bar', type: 'button' },
-      svg(ICON.activity), h('span', {}, t('sidebar.activity')));
+    const activity = h('button', {
+      class: 'sidebar-activity-bar sidebar-activity-button',
+      type: 'button',
+      'aria-expanded': 'false',
+    }, svg(ICON.activity), h('span', {}, t('sidebar.activity')));
+    const activityPanel = h('div', {
+      class: 'sidebarActivityPanel',
+      role: 'region',
+      'aria-label': t('sidebar.activity'),
+    });
+    activityPanel.style.display = 'none';
     const automation = h('button', { class: 'sidebar-activity-bar', type: 'button' },
       svg(ICON.automation), h('span', {}, t('automation.title')),
       h('span', { class: 'automation-count-badge' }, ''));
@@ -119,11 +128,68 @@ return (function () {
     slots.mount('openhanako.sidebar.footer', footer);
 
     const content = h('div', { class: 'sidebar-chat-content' },
-      header, bridge, activity, automation, skills, skillsPanel, activities, list, footer);
+      header, bridge, activity, activityPanel, automation, skills, skillsPanel, activities, list, footer);
 
     const root = h('aside', { class: 'sidebar', id: 'sidebar' },
       h('div', { class: 'sidebar-inner' }, content),
       h('div', { class: 'resize-handle resize-handle-right', id: 'sidebarResizeHandle' }));
+
+    const closeInfoPanel = (panel, button) => {
+      panel.style.display = 'none';
+      button.setAttribute('aria-expanded', 'false');
+    };
+
+    const renderActivityPanel = (runtime) => {
+      clear(activityPanel);
+      const rows = Array.from(runtime?.sessions || []);
+      const running = rows.filter((row) => row.status === 'running' || row.isStreaming);
+      const errors = rows.filter((row) => row.status === 'error' || row.error);
+      activityPanel.appendChild(h('div', { class: 'sidebarActivitySummary' },
+        `${rows.length} session${rows.length === 1 ? '' : 's'} · ${running.length} running · ${errors.length} error${errors.length === 1 ? '' : 's'}`));
+      if (!rows.length) {
+        activityPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'No runtime sessions'));
+        return;
+      }
+      rows.forEach((row) => {
+        const state = row.status === 'error' || row.error
+          ? 'error'
+          : row.status === 'running' || row.isStreaming ? 'running' : 'idle';
+        const item = h('div', { class: 'sidebarActivityItem', 'data-state': state },
+          h('div', { class: 'sidebarActivityItemHeader' },
+            h('span', { class: 'sidebarActivityStateDot', 'data-state': state }),
+            h('span', { class: 'sidebarActivityItemTitle' }, row.title || row.sessionId || 'Session'),
+            h('span', { class: 'sidebarActivityItemState' }, state)));
+        const toolNames = (row.activeTools || []).map((tool) => tool?.name).filter(Boolean);
+        if (toolNames.length) {
+          item.appendChild(h('div', { class: 'sidebarActivityItemMeta' }, `Tools: ${toolNames.join(', ')}`));
+        }
+        if (row.error) {
+          item.appendChild(h('div', { class: 'sidebarActivityItemError' }, String(row.error)));
+        }
+        activityPanel.appendChild(item);
+      });
+    };
+
+    const loadActivityPanel = async () => {
+      clear(activityPanel);
+      activityPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'Loading runtime…'));
+      try {
+        const runtime = await adapter.http('GET', '/api/runtime-state');
+        renderActivityPanel(runtime);
+      } catch (err) {
+        clear(activityPanel);
+        activityPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty error' },
+          err?.message || 'Unable to load runtime activity'));
+      }
+    };
+
+    activity.onclick = async () => {
+      const opening = activityPanel.style.display === 'none';
+      if (opening) closeInfoPanel(skillsPanel, skills);
+      activityPanel.style.display = opening ? '' : 'none';
+      activity.setAttribute('aria-expanded', opening ? 'true' : 'false');
+      if (opening) await loadActivityPanel();
+    };
 
     let skillsLoaded = false;
     let skillsLoading = false;
@@ -176,6 +242,7 @@ return (function () {
 
     skills.onclick = async () => {
       const opening = skillsPanel.style.display === 'none';
+      if (opening) closeInfoPanel(activityPanel, activity);
       skillsPanel.style.display = opening ? '' : 'none';
       skills.setAttribute('aria-expanded', opening ? 'true' : 'false');
       if (opening && !skillsLoaded) await loadSkillsPanel();
