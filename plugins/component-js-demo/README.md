@@ -56,6 +56,6 @@ Expected behavior:
 
 ## WASI boundary
 
-The default StarlingMonkey componentization path imports WASI Preview2 interfaces, including `wasi:io/*` and `wasi:http/*`. The host now supplies `wasmtime-wasi::p2` plus `wasmtime-wasi-http` only for **trusted** Components, and the default StarlingMonkey artifact has been verified through load → invoke → unload.
+The default StarlingMonkey componentization path imports WASI Preview2 interfaces, including `wasi:io/*` and `wasi:http/*`. The host supplies `wasmtime-wasi::p2` plus `wasmtime-wasi-http` for both trust modes, but authority is still determined by `HostState` and `CapabilityGate`.
 
-Sandboxed Components intentionally do not receive the Preview2 linker. Loading the same StarlingMonkey artifact under a sandboxed policy fails at its first Preview2 resource import (`wasi:io/poll`), rather than receiving ambient WASI authority. Future sandboxed Preview2 support must map filesystem/network/stdio/clocks/random surfaces into explicit capability policy and audit semantics.
+Trusted Components receive the trusted Preview2 context. Sandboxed Components can also instantiate the same StarlingMonkey artifact, but keep closed/sink stdio, no ambient env/args, raw sockets/IP lookup denied by default, and only explicit filesystem **read** grants become Preview2 preopens. Preview2 `wasi:http` outbound requests are checked by the same `network.allow` / method / sensitive-target gate as the custom host HTTP import. Mutation capabilities remain on the host-mediated WIT filesystem API because Preview2's single `MUTATE` bit would otherwise collapse `write/create/delete` into broader authority.

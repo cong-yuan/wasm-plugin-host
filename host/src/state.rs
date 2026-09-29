@@ -209,6 +209,44 @@ impl LogSink {
     }
 }
 
+#[derive(Clone)]
+pub struct Preview2HttpHooks {
+    gate: crate::capability::CapabilityGate,
+}
+
+impl Preview2HttpHooks {
+    fn new(gate: crate::capability::CapabilityGate) -> Self {
+        Self { gate }
+    }
+
+    fn authorize_request(&self, url: &str, method: &str) -> Result<(), String> {
+        self.gate.require_http(url, method)
+    }
+}
+
+impl wasmtime_wasi_http::p2::WasiHttpHooks for Preview2HttpHooks {
+    fn send_request(
+        &mut self,
+        request: hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
+        config: wasmtime_wasi_http::p2::types::OutgoingRequestConfig,
+    ) -> wasmtime_wasi_http::p2::HttpResult<wasmtime_wasi_http::p2::types::HostFutureIncomingResponse>
+    {
+        let url = request.uri().to_string();
+        let method = request.method().as_str();
+        if let Err(reason) = self.authorize_request(&url, method) {
+            return Err(
+                wasmtime_wasi_http::p2::bindings::http::types::ErrorCode::InternalError(Some(
+                    reason,
+                ))
+                .into(),
+            );
+        }
+        Ok(wasmtime_wasi_http::p2::default_send_request(
+            request, config,
+        ))
+    }
+}
+
 /// Per-`Store` host state. `T` in `Store<T>` is this type.
 pub struct HostState {
     pub wasi: WasiP1Ctx,
@@ -218,6 +256,7 @@ pub struct HostState {
     pub component_wasi: WasiCtx,
     pub component_table: ResourceTable,
     pub component_http: wasmtime_wasi_http::WasiHttpCtx,
+    pub component_http_hooks: Preview2HttpHooks,
     /// Wasmtime's per-store resource limiter. Sandboxed plugins receive a
     /// finite linear-memory ceiling; trusted mode leaves it unrestricted.
     pub store_limits: wasmtime::StoreLimits,
@@ -281,15 +320,7 @@ impl HostState {
         services: Option<Arc<crate::service::Shared>>,
         policy: crate::capability::PluginPolicy,
     ) -> Self {
-        Self::new_with_policy_and_audit(
-            slot,
-            plugin_name,
-            config,
-            log,
-            services,
-            policy,
-            None,
-        )
+        Self::new_with_policy_and_audit(slot, plugin_name, config, log, services, policy, None)
     }
 
     pub fn new_with_policy_and_audit(
@@ -345,8 +376,7 @@ impl HostState {
             // access is bounded by the host grant itself. The late plugin
             // request still gates host-mediated capabilities, but is not a
             // security boundary for these preopens.
-            let mut paths: std::collections::BTreeSet<String> =
-                std::collections::BTreeSet::new();
+            let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
             for path in &policy.grant.filesystem.read {
                 paths.insert(path.clone());
             }
@@ -379,6 +409,25 @@ impl HostState {
                     "[host] could not preopen / for trusted Component plugin {plugin_name}: {e}"
                 );
             }
+        } else {
+            // Preview2 directory permissions collapse mutation operations into
+            // one MUTATE bit. Mapping write/create/delete here would therefore
+            // widen our finer capability model. Only read grants are exposed
+            // directly; mutations stay on the host-mediated WIT filesystem API.
+            for path in &policy.grant.filesystem.read {
+                let canonical =
+                    std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
+                if let Err(e) = component_builder.preopened_dir(
+                    &canonical,
+                    path,
+                    wasmtime_wasi::DirPerms::READ,
+                    wasmtime_wasi::FilePerms::READ,
+                ) {
+                    eprintln!(
+                        "[host] could not preopen sandbox Preview2 read grant {path} for plugin {plugin_name}: {e}"
+                    );
+                }
+            }
         }
         let component_wasi = component_builder.build();
         let mut fs_roots = std::collections::HashMap::new();
@@ -395,12 +444,9 @@ impl HostState {
                 if fs_roots.contains_key(path) {
                     continue;
                 }
-                let canonical = std::fs::canonicalize(path)
-                    .unwrap_or_else(|_| std::path::PathBuf::from(path));
-                match cap_std::fs::Dir::open_ambient_dir(
-                    &canonical,
-                    cap_std::ambient_authority(),
-                ) {
+                let canonical =
+                    std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
+                match cap_std::fs::Dir::open_ambient_dir(&canonical, cap_std::ambient_authority()) {
                     Ok(dir) => {
                         fs_roots.insert(path.clone(), dir);
                     }
@@ -439,6 +485,7 @@ impl HostState {
             component_wasi,
             component_table: ResourceTable::new(),
             component_http: wasmtime_wasi_http::WasiHttpCtx::new(),
+            component_http_hooks: Preview2HttpHooks::new(capability_gate.clone()),
             store_limits,
             log,
             slot,
@@ -518,8 +565,41 @@ impl wasmtime_wasi_http::p2::WasiHttpView for HostState {
         wasmtime_wasi_http::p2::WasiHttpCtxView {
             ctx: &mut self.component_http,
             table: &mut self.component_table,
-            hooks: Default::default(),
+            hooks: &mut self.component_http_hooks,
         }
+    }
+}
+
+#[cfg(test)]
+mod preview2_tests {
+    use super::*;
+    use crate::capability::{CapabilitySet, NetworkCapabilities, PluginPolicy, TrustMode};
+
+    #[test]
+    fn preview2_http_hook_reuses_network_capability_gate() {
+        let requested = CapabilitySet {
+            network: NetworkCapabilities {
+                allow: vec!["api.example.com".into()],
+                methods: vec!["GET".into()],
+            },
+            ..Default::default()
+        };
+        let policy = PluginPolicy {
+            trust: TrustMode::Sandboxed,
+            grant: requested.clone(),
+            ..Default::default()
+        };
+        let gate = crate::capability::CapabilityGate::new(&policy);
+        gate.resolve(&policy, &requested);
+        let hooks = Preview2HttpHooks::new(gate);
+
+        assert!(hooks
+            .authorize_request("https://api.example.com/v1", "GET")
+            .is_ok());
+        assert!(hooks
+            .authorize_request("https://api.example.com/v1", "POST")
+            .is_err());
+        assert!(hooks.authorize_request("http://127.0.0.1/", "GET").is_err());
     }
 }
 

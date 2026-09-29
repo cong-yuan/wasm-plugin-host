@@ -32,10 +32,7 @@ fn main() -> Result<()> {
         report.slot, report.plugin, report.tools
     );
 
-    let result = registry.call_tool(
-        &tool,
-        &serde_json::json!({"hello":"component","n":42}),
-    )?;
+    let result = registry.call_tool(&tool, &serde_json::json!({"hello":"component","n":42}))?;
     println!("{}", serde_json::to_string_pretty(&result)?);
 
     registry.unload("component-smoke")?;

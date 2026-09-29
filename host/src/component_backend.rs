@@ -17,11 +17,7 @@ wasmtime::component::bindgen!({
 impl wasm_plugin_host::plugin::types::Host for HostState {}
 
 impl wasm_plugin_host::plugin::host_log::Host for HostState {
-    fn log(
-        &mut self,
-        level: wasm_plugin_host::plugin::types::LogLevel,
-        message: String,
-    ) {
+    fn log(&mut self, level: wasm_plugin_host::plugin::types::LogLevel, message: String) {
         if self.charge_log_bytes(message.len() as u64).is_err() {
             return;
         }
@@ -103,10 +99,12 @@ impl wasm_plugin_host::plugin::host_network::Host for HostState {
             .map(|headers| {
                 headers
                     .iter()
-                    .map(|(name, value)| wasm_plugin_host::plugin::types::HttpHeader {
-                        name: name.clone(),
-                        value: value.as_str().unwrap_or("").to_string(),
-                    })
+                    .map(
+                        |(name, value)| wasm_plugin_host::plugin::types::HttpHeader {
+                            name: name.clone(),
+                            value: value.as_str().unwrap_or("").to_string(),
+                        },
+                    )
                     .collect()
             })
             .unwrap_or_default();
@@ -221,9 +219,8 @@ fn component_fs_mutation(
         "path": path,
     });
     if let Some(data) = data {
-        request["data_b64"] = serde_json::Value::String(
-            base64::engine::general_purpose::STANDARD.encode(data),
-        );
+        request["data_b64"] =
+            serde_json::Value::String(base64::engine::general_purpose::STANDARD.encode(data));
     }
     let reply = crate::runtime::fs_op_json(state, &request.to_string());
     if let Some(error) = reply.get("error").and_then(|v| v.as_str()) {
@@ -249,7 +246,7 @@ impl ComponentInstance {
         component: &wasmtime::component::Component,
         state: HostState,
     ) -> Result<Self> {
-        let linker = component_linker(engine, state.policy.trust)?;
+        let linker = component_linker(engine)?;
         let mut store = wasmtime::Store::new(engine, state);
         store.limiter(|state| &mut state.store_limits);
         crate::runtime::prepare_store_budget(&mut store)?;
@@ -259,7 +256,8 @@ impl ComponentInstance {
 
     pub(crate) fn abi_version(&mut self) -> Result<u32> {
         self.prepare_guest_call()?;
-        Ok(self.bindings
+        Ok(self
+            .bindings
             .wasm_plugin_host_plugin_lifecycle()
             .call_abi_version(&mut self.store)?)
     }
@@ -281,11 +279,10 @@ impl ComponentInstance {
             .map_err(anyhow::Error::msg)
     }
 
-    pub(crate) fn describe(
-        &mut self,
-    ) -> Result<wasm_plugin_host::plugin::types::PluginDecl> {
+    pub(crate) fn describe(&mut self) -> Result<wasm_plugin_host::plugin::types::PluginDecl> {
         self.prepare_guest_call()?;
-        Ok(self.bindings
+        Ok(self
+            .bindings
             .wasm_plugin_host_plugin_lifecycle()
             .call_describe(&mut self.store)?)
     }
@@ -301,7 +298,8 @@ impl ComponentInstance {
     ) -> Result<wasm_plugin_host::plugin::types::InvokeResult> {
         self.prepare_guest_call()?;
         let args_json = args_json.to_string();
-        Ok(self.bindings
+        Ok(self
+            .bindings
             .wasm_plugin_host_plugin_lifecycle()
             .call_invoke(&mut self.store, op, &args_json)?)
     }
@@ -346,7 +344,8 @@ impl ComponentInstance {
 
     pub(crate) fn shutdown(&mut self) -> Result<()> {
         self.prepare_guest_call()?;
-        Ok(self.bindings
+        Ok(self
+            .bindings
             .wasm_plugin_host_plugin_lifecycle()
             .call_shutdown(&mut self.store)?)
     }
@@ -445,23 +444,24 @@ fn component_capabilities_to_internal(
 }
 
 #[allow(dead_code)]
-pub(crate) fn component_linker(
-    engine: &Engine,
-    trust: crate::capability::TrustMode,
-) -> Result<Linker<HostState>> {
+pub(crate) fn component_linker(engine: &Engine) -> Result<Linker<HostState>> {
     let mut linker = Linker::new(engine);
     Plugin::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
-    if trust == crate::capability::TrustMode::Trusted {
-        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
-        wasmtime_wasi_http::p2::add_only_http_to_linker_sync(&mut linker)?;
-    }
+    // Preview2 is linked for all Component guests so language runtimes such as
+    // StarlingMonkey can instantiate. Authority comes from HostState: sandboxed
+    // contexts get only read preopens, raw sockets stay denied, and wasi:http
+    // is checked by Preview2HttpHooks against the same CapabilityGate.
+    wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
+    wasmtime_wasi_http::p2::add_only_http_to_linker_sync(&mut linker)?;
     Ok(linker)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capability::{CapabilitySet, FilesystemCapabilities, NetworkCapabilities, PluginPolicy, TrustMode};
+    use crate::capability::{
+        CapabilitySet, FilesystemCapabilities, NetworkCapabilities, PluginPolicy, TrustMode,
+    };
     use crate::state::LogSink;
     use std::sync::Arc;
 
@@ -486,25 +486,23 @@ mod tests {
     #[test]
     fn component_linker_accepts_existing_host_state_contract() {
         let runtime = crate::runtime::Runtime::new().unwrap();
-        component_linker(runtime.engine(), TrustMode::Sandboxed)
-            .expect("generated WIT imports should link to HostState");
+        component_linker(runtime.engine()).expect("generated WIT imports should link to HostState");
     }
 
     #[test]
     fn trusted_component_linker_composes_preview2_and_http_once() {
         let runtime = crate::runtime::Runtime::new().unwrap();
-        component_linker(runtime.engine(), TrustMode::Trusted)
-            .expect("trusted Component linker should compose Preview2 + wasi:http without duplicate interfaces");
+        component_linker(runtime.engine()).expect(
+            "Component linker should compose Preview2 + wasi:http without duplicate interfaces",
+        );
     }
 
     #[test]
     fn component_filesystem_read_reuses_the_same_grant_boundary() {
         use wasm_plugin_host::plugin::host_filesystem::Host as _;
 
-        let root = std::env::temp_dir().join(format!(
-            "wasm-plugin-component-read-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("wasm-plugin-component-read-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("ok.txt"), b"COMPONENT_OK").unwrap();
