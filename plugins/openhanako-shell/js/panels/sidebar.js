@@ -35,6 +35,7 @@ return (function () {
     let searchTimer = null;
     let lastRuntimeSignature = '';
     let drawVersion = 0;
+    let runtimeRefreshPending = false;
     const add = h('button', { class: 'sidebar-action-btn', title: t('sidebar.newChat') }, svg(ICON.newChat));
     const settings = h('button', { class: 'sidebar-action-btn sidebar-settings-button', title: t('settings.title'), 'aria-expanded': 'false' }, svg(ICON.settings));
     const collapse = h('button', { class: 'sidebar-action-btn', title: t('sidebar.collapse') }, svg(ICON.collapse));
@@ -616,7 +617,8 @@ return (function () {
     draw(options.selected);
     bridge.onclick = () => draw(options.selected);
     const runtimeRefreshTimer = setInterval(async () => {
-      if (view.archived || view.query.trim() || view.renamingId) return;
+      if (runtimeRefreshPending || view.archived || view.query.trim() || view.renamingId) return;
+      runtimeRefreshPending = true;
       try {
         const runtime = await adapter.http('GET', '/api/runtime-state');
         const nextSignature = sessionRuntime.signature(runtime);
@@ -628,6 +630,8 @@ return (function () {
         }
       } catch {
         // Keep the last known runtime state; manual bridge refresh remains available.
+      } finally {
+        runtimeRefreshPending = false;
       }
     }, 3000);
     runtimeRefreshTimer?.unref?.();
