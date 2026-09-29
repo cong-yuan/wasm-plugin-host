@@ -24,10 +24,16 @@ export const SHELL_SOURCE = 'openhanako-shell';
 
 type BridgeMode = 'pending' | 'on' | 'off';
 
+export type StudioBridgeStatus =
+  | { state: 'standalone' }
+  | { state: 'pending' }
+  | { state: 'connected' }
+  | { state: 'error'; message: string };
+
 type Pending = {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: number;
   socket?: StudioSocketLike;
 };
 
@@ -47,6 +53,28 @@ let readyPromise: Promise<boolean> | null = null;
 let readyWaiters: Array<() => void> = [];
 let seq = 0;
 const pending = new Map<string, Pending>();
+let bridgeStatus: StudioBridgeStatus = { state: 'pending' };
+const statusListeners = new Set<() => void>();
+
+function setBridgeStatus(next: StudioBridgeStatus): void {
+  if (
+    bridgeStatus.state === next.state
+    && (bridgeStatus.state !== 'error'
+      || next.state !== 'error'
+      || bridgeStatus.message === next.message)
+  ) return;
+  bridgeStatus = next;
+  statusListeners.forEach(listener => listener());
+}
+
+export function getStudioBridgeStatus(): StudioBridgeStatus {
+  return bridgeStatus;
+}
+
+export function subscribeStudioBridgeStatus(listener: () => void): () => void {
+  statusListeners.add(listener);
+  return () => statusListeners.delete(listener);
+}
 
 function inIframe(): boolean {
   try {
@@ -59,6 +87,7 @@ function inIframe(): boolean {
 function enable(): void {
   if (mode === 'on') return;
   mode = 'on';
+  setBridgeStatus({ state: 'connected' });
   const waiters = readyWaiters;
   readyWaiters = [];
   waiters.forEach((fn) => fn());
@@ -67,6 +96,7 @@ function enable(): void {
 function whenReady(): Promise<boolean> {
   if (!inIframe()) {
     mode = 'off';
+    setBridgeStatus({ state: 'standalone' });
     return Promise.resolve(false);
   }
   if (mode === 'on') return Promise.resolve(true);
@@ -74,7 +104,10 @@ function whenReady(): Promise<boolean> {
   if (!readyPromise) {
     readyPromise = new Promise((resolve) => {
       const timer = window.setTimeout(() => {
-        if (mode === 'pending') mode = 'off';
+        if (mode === 'pending') {
+          mode = 'off';
+          setBridgeStatus({ state: 'error', message: 'Studio bridge handshake timed out' });
+        }
         resolve(mode === 'on');
       }, HANDSHAKE_MS);
       readyWaiters.push(() => {
@@ -101,7 +134,9 @@ function rpc(payload: Record<string, unknown>, socket?: StudioSocketLike): Promi
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => {
       pending.delete(requestId);
-      reject(new Error('studio bridge timeout'));
+      const err = new Error('studio bridge timeout');
+      setBridgeStatus({ state: 'error', message: err.message });
+      reject(err);
     }, timeout);
     pending.set(requestId, { resolve, reject, timer, socket });
     try {
@@ -114,7 +149,9 @@ function rpc(payload: Record<string, unknown>, socket?: StudioSocketLike): Promi
     } catch (err) {
       window.clearTimeout(timer);
       pending.delete(requestId);
-      reject(err instanceof Error ? err : new Error(String(err)));
+      const normalized = err instanceof Error ? err : new Error(String(err));
+      setBridgeStatus({ state: 'error', message: normalized.message });
+      reject(normalized);
     }
   });
 }
@@ -137,8 +174,14 @@ function onParentMessage(ev: MessageEvent): void {
   if (!item) return;
   pending.delete(data.requestId);
   window.clearTimeout(item.timer);
-  if (data.ok) item.resolve(data.result);
-  else item.reject(new Error(data.error || 'studio bridge error'));
+  if (data.ok) {
+    setBridgeStatus({ state: 'connected' });
+    item.resolve(data.result);
+  } else {
+    const err = new Error(data.error || 'studio bridge error');
+    setBridgeStatus({ state: 'error', message: err.message });
+    item.reject(err);
+  }
 }
 
 function requestUrl(input: RequestInfo | URL): { pathname: string; search: string } {
@@ -411,9 +454,14 @@ function ensurePlatform(): void {
 
 /** Install fetch/WS shims and handshake with the parent. Idempotent. */
 export function startStudioBackendBridge(): () => void {
-  if (!inIframe()) return () => {};
+  if (!inIframe()) {
+    mode = 'off';
+    setBridgeStatus({ state: 'standalone' });
+    return () => {};
+  }
   if (installed) return () => {};
   installed = true;
+  setBridgeStatus({ state: 'pending' });
   window.addEventListener('message', onParentMessage);
   ensurePlatform();
   installFetchShim();

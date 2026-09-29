@@ -4,10 +4,16 @@
  * 每个 session 一个原生滚动 div，visibility:hidden 保持 scrollTop。
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useStore } from '../../stores';
+import { sessionScopedValue } from '../../stores/session-slice';
+import { selectIsStreamingSession } from '../../stores/session-selectors';
 import { ChatMessageSurface, type ChatScrollButtonState } from './ChatMessageSurface';
 import { ChatFindBar } from './ChatFindBar';
+import {
+  getStudioBridgeStatus,
+  subscribeStudioBridgeStatus,
+} from '../../studio-backend/studio-backend-bridge';
 import styles from './Chat.module.css';
 
 const MAX_ALIVE = 5;
@@ -15,10 +21,55 @@ const MAX_ALIVE = 5;
 export function ChatArea() {
   return (
     <>
+      <ChatRuntimeStatusBar />
       <PanelHost />
       <ChatFindBar />
       <ScrollToBottomBtn />
     </>
+  );
+}
+
+export function resolveChatRuntimeStatus({
+  bridge,
+  streaming,
+  inlineError,
+}: {
+  bridge: ReturnType<typeof getStudioBridgeStatus>;
+  streaming: boolean;
+  inlineError?: { text: string } | null;
+}): { state: 'connected' | 'pending' | 'streaming' | 'error'; label: string } | null {
+  if (inlineError?.text) return { state: 'error', label: inlineError.text };
+  if (bridge.state === 'error') return { state: 'error', label: `Studio connection issue: ${bridge.message}` };
+  if (streaming) return { state: 'streaming', label: 'Hanako is responding…' };
+  if (bridge.state === 'pending') return { state: 'pending', label: 'Connecting to Studio…' };
+  if (bridge.state === 'connected') return { state: 'connected', label: 'Studio connected' };
+  return null;
+}
+
+function ChatRuntimeStatusBar() {
+  const bridge = useSyncExternalStore(
+    subscribeStudioBridgeStatus,
+    getStudioBridgeStatus,
+    getStudioBridgeStatus,
+  );
+  const currentPath = useStore(s => s.currentSessionPath);
+  const streaming = useStore(s => selectIsStreamingSession(s, currentPath));
+  const inlineError = useStore(s => currentPath
+    ? sessionScopedValue(s, s.inlineErrors, currentPath) ?? null
+    : null);
+  const status = resolveChatRuntimeStatus({ bridge, streaming, inlineError });
+  if (!status) return null;
+
+  return (
+    <div
+      className={`${styles.bridgeStatus} ${styles[`bridgeStatus-${status.state}`]}`}
+      role={status.state === 'error' ? 'alert' : 'status'}
+      aria-live="polite"
+      data-chat-runtime-state={status.state}
+    >
+      <span className={styles.bridgeStatusDot} aria-hidden="true" />
+      <span>{status.label}</span>
+    </div>
   );
 }
 

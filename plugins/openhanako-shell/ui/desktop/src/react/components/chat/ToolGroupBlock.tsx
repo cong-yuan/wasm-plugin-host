@@ -257,7 +257,7 @@ const ToolIndicator = memo(function ToolIndicator({ tool }: { tool: ToolCall }) 
   useEffect(() => {
     if (!expanded) return;
     const cached = previewCacheRef.current;
-    if (cached?.args === tool.args && cached.response === rawResponse) {
+    if (cached && cached.args === tool.args && cached.response === rawResponse) {
       setInput(cached.inputPreview);
       setResponse(cached.responsePreview);
       setEditDiffs(cached.editDiffs);
