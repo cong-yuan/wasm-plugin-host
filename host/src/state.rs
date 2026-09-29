@@ -212,15 +212,40 @@ impl LogSink {
 #[derive(Clone)]
 pub struct Preview2HttpHooks {
     gate: crate::capability::CapabilityGate,
+    trust: crate::capability::TrustMode,
 }
 
 impl Preview2HttpHooks {
-    fn new(gate: crate::capability::CapabilityGate) -> Self {
-        Self { gate }
+    fn new(
+        gate: crate::capability::CapabilityGate,
+        trust: crate::capability::TrustMode,
+    ) -> Self {
+        Self { gate, trust }
     }
 
     fn authorize_request(&self, url: &str, method: &str) -> Result<(), String> {
-        self.gate.require_http(url, method)
+        self.gate.require_http(url, method)?;
+        if self.trust == crate::capability::TrustMode::Trusted {
+            return Ok(());
+        }
+
+        // `default_send_request` performs its own DNS resolution and does not
+        // expose the resolved socket address to our capability layer. Allowing
+        // sandboxed hostnames here would reopen DNS-rebinding/SSRF after the
+        // hostname check. Until wasi-http can connect through our safe resolver,
+        // sandboxed Preview2 HTTP is limited to exact IP URLs.
+        let uri = url
+            .parse::<ureq::http::Uri>()
+            .map_err(|e| format!("permission denied: invalid wasi:http URI: {e}"))?;
+        let host = uri
+            .host()
+            .ok_or_else(|| "permission denied: wasi:http URI has no host".to_string())?;
+        let ip = host.parse::<std::net::IpAddr>().map_err(|_| {
+            format!(
+                "permission denied: sandboxed wasi:http hostname `{host}` is not allowed; use host-network.http-fetch for DNS-safe HTTP"
+            )
+        })?;
+        self.gate.require_socket_ip(ip)
     }
 }
 
@@ -498,7 +523,7 @@ impl HostState {
             component_wasi,
             component_table: ResourceTable::new(),
             component_http: wasmtime_wasi_http::WasiHttpCtx::new(),
-            component_http_hooks: Preview2HttpHooks::new(capability_gate.clone()),
+            component_http_hooks: Preview2HttpHooks::new(capability_gate.clone(), policy.trust),
             store_limits,
             log,
             slot,
@@ -604,15 +629,42 @@ mod preview2_tests {
         };
         let gate = crate::capability::CapabilityGate::new(&policy);
         gate.resolve(&policy, &requested);
-        let hooks = Preview2HttpHooks::new(gate);
+        let hooks = Preview2HttpHooks::new(gate, TrustMode::Sandboxed);
 
         assert!(hooks
             .authorize_request("https://api.example.com/v1", "GET")
-            .is_ok());
+            .is_err(), "sandboxed wasi:http hostnames must not bypass the safe resolver");
         assert!(hooks
             .authorize_request("https://api.example.com/v1", "POST")
             .is_err());
         assert!(hooks.authorize_request("http://127.0.0.1/", "GET").is_err());
+
+        let ip_requested = CapabilitySet {
+            network: NetworkCapabilities {
+                allow: vec!["93.184.216.34".into()],
+                methods: vec!["GET".into()],
+            },
+            ..Default::default()
+        };
+        let ip_policy = PluginPolicy {
+            trust: TrustMode::Sandboxed,
+            grant: ip_requested.clone(),
+            ..Default::default()
+        };
+        let ip_gate = crate::capability::CapabilityGate::new(&ip_policy);
+        ip_gate.resolve(&ip_policy, &ip_requested);
+        let ip_hooks = Preview2HttpHooks::new(ip_gate, TrustMode::Sandboxed);
+        assert!(ip_hooks
+            .authorize_request("http://93.184.216.34/", "GET")
+            .is_ok());
+
+        let trusted = Preview2HttpHooks::new(
+            crate::capability::CapabilityGate::new(&PluginPolicy::trusted()),
+            TrustMode::Trusted,
+        );
+        assert!(trusted
+            .authorize_request("https://api.example.com/v1", "GET")
+            .is_ok());
     }
 }
 

@@ -63,18 +63,20 @@ A Component guest must not receive broader authority merely because it uses WIT.
 
 The same rule applies to resource budgets: Component `describe` and `invoke` results are charged against `limits.max_output_bytes` after canonical lifting, while Wasmtime memory/fuel/epoch limits remain the earlier physical execution boundary.
 
-## Transitional JSON fields
+## JSON boundary and WIT versioning
 
-The first WIT version types lifecycle, capability requests, host operations and
-result envelopes, while retaining JSON strings for genuinely dynamic payloads:
+The `0.1.0` world intentionally keeps JSON strings where the payload is genuinely dynamic:
 
-- tool JSON Schema
-- tool invocation arguments / values
-- hook/event payloads when introduced
-- UI declaration payload during the first migration step
+- tool JSON Schema and tool invocation arguments / values;
+- service call arguments / results;
+- event/hook payloads whose shape depends on the event vocabulary;
+- the legacy UI declaration bridge (`ui-json`).
 
-These can be replaced incrementally by additional WIT records without changing
-Registry identity, policy or lifecycle semantics.
+The first three are not accidental transport debt: the host tool/service model is JSON-Schema-driven and event payloads are polymorphic. Converting them to one giant WIT variant would duplicate the host schema system without adding authority or validation.
+
+`ui-json` is different: the UI declaration now has a stable internal schema and is a reasonable candidate for a typed WIT record. However, changing `plugin-decl` in-place would change the canonical ABI of already-built `wasm-plugin-host:plugin@0.1.0` Components. Therefore wire-shape changes such as typed UI declarations or a dedicated typed hook-decision export belong in a new WIT package/world version (for example `0.2.x`), while Registry identity, policy and lifecycle semantics remain unchanged.
+
+Compatibility rule for `0.1.0`: do not add/reorder required record fields or required exports in-place. Additive host implementation behavior is fine; guest-visible canonical ABI changes require a WIT version bump.
 
 ## Validation
 
@@ -82,13 +84,9 @@ Registry identity, policy or lifecycle semantics.
 this directory. Therefore normal `cargo check --all-targets` validates the WIT
 package without requiring a separate `wasm-tools` CLI.
 
-## Runtime seam status
+## Runtime status
 
-`Runtime::artifact_kind()` now distinguishes core modules from Components,
-`compile_component()` provides an mtime-aware in-process Component cache, and
-`compile_artifact()` is the stable compile entrypoint for both shapes. Existing
-core guests still follow the unchanged module path. `Plugin::load` recognizes a
-Component and reports that lifecycle execution is not wired yet.
+`Runtime::artifact_kind()` distinguishes core modules from Components, `compile_component()` provides an mtime-aware in-process Component cache, and `compile_artifact()` is the stable compile entrypoint for both shapes. `PluginBackend::Core | Component` routes both transports behind the same Registry/Supervisor API. Component lifecycle (`abi-version`, `init`, `configure`, `describe`, `invoke`, `shutdown`) is live, including resource budgets and capability resolution.
 
 ## Host import binding status
 
@@ -99,17 +97,9 @@ Component and reports that lifecycle execution is not wired yet.
 - filesystem reuses the same grant roots, cap-std handles and mutation implementation;
 - services reuse `services.consume` authorization and the existing service graph.
 
-The generated lifecycle exports are wrapped as typed calls for `abi-version`, `init`, `configure`, `describe`, `invoke` and `shutdown`. `Plugin` has a `Core | Component` backend split and routes Component artifacts through this instance without changing Registry/Supervisor APIs. Component declarations/results are converted back into the existing internal `PluginDecl` / `InvokeResult` model, so hooks, services and UI remain transport-agnostic. `plugins/component-rust-demo` now provides a real successful guest built with `wit-bindgen` + `ComponentEncoder`; `host/examples/component_smoke.rs` verifies load → typed describe/tool registration → invoke → unload. The remaining producer work is JS/jco and Python/componentize-py using the same WIT world.
+The generated lifecycle exports are wrapped as typed calls and converted back into the existing internal `PluginDecl` / `InvokeResult` model, so hooks, services and UI remain transport-agnostic. `plugins/component-rust-demo` and `plugins/component-js-demo` both run through the normal Registry path. The JS demo additionally validates custom `host-log` / `host-config` imports, sandbox capability request ∩ grant, QuickJS/stub-wasi, and default StarlingMonkey/Preview2.
 
-## Next implementation step
+## Remaining producer / ABI work
 
-Add a Component-backed plugin instance that implements the same internal
-operations currently used by `Plugin`:
-
-1. init/configure/describe
-2. invoke
-3. shutdown
-4. host log/config/network/filesystem/service imports
-
-The eventual load branch should replace the current explicit Component-status
-error without changing Registry or Supervisor APIs.
+- Python/componentize-py producer validation remains blocked on the current runner: even componentize-py's minimal hello-world is terminated by the OS with SIGKILL, across tested versions. This is tracked as an environment validation item rather than a Host runtime blocker.
+- A future WIT `0.2.x` may type the stable UI declaration and/or introduce a dedicated typed hook-decision surface. It should coexist with `0.1.0` rather than silently changing the existing canonical ABI.
