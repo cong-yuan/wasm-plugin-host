@@ -8,6 +8,7 @@ return (function () {
   const sessionSearch = studio.require('lib/session-search');
   const sessionBulk = studio.require('lib/session-bulk');
   const sessionRuntime = studio.require('lib/session-runtime');
+  const sessionRow = studio.require('lib/session-row');
   const { t } = studio.require('lib/i18n');
 
   // Upstream icon markup, copied unchanged.
@@ -261,9 +262,8 @@ return (function () {
       const pinnedIds = allRows.filter((row) => !!row.pinnedAt).map((row) => row.id);
       rows.forEach((s) => {
         const state = runtimeById.get(s.id) || null;
-        const isRunning = !view.archived && !!(s.busy || state?.isStreaming || state?.status === 'running');
-        const isError = !view.archived && (state?.status === 'error' || !!state?.error);
-        const toolCount = Number(state?.activeToolCount) || 0;
+        const rowRuntime = sessionRow.deriveRuntime(s, state, view.archived);
+        const { running: isRunning, error: isError, toolCount } = rowRuntime;
         const statusNode = toolCount > 0
           ? h('span', { class: 'sessionToolCount', title: `${toolCount} active tool${toolCount === 1 ? '' : 's'}` }, String(toolCount))
           : isError ? h('span', { class: 'sessionErrorDot', title: state?.error || 'Session error' }) : null;
@@ -473,26 +473,10 @@ return (function () {
           isRunning ? h('span', { class: 'sessionStreamingDot', 'data-state': 'running' }) : null,
           titleNode,
           statusNode, runtimeAction, rowActions));
-        const details = [];
-        if (view.archived) details.push('Archived');
-        else if (isRunning) details.push('Running');
-        else if (isError) details.push('Error');
-        else details.push('Idle');
-        const messageCount = Number(s.messageCount ?? s.messages);
-        if (Number.isFinite(messageCount) && messageCount > 0) {
-          details.push(`${messageCount} message${messageCount === 1 ? '' : 's'}`);
-        }
-        if (s.modelId) details.push(String(s.modelId));
-        row.appendChild(h('div', { class: 'sessionItemMeta' }, details.join(' · ')));
+        row.appendChild(h('div', { class: 'sessionItemMeta' },
+          sessionRow.metaText(s, rowRuntime, view.archived)));
         if (view.expanded.has(s.id)) {
-          const detailLines = [
-            ['Session', s.id],
-            ['Path', s.path || `studio://${s.id}`],
-            ['Model', s.modelId ? `${s.modelProvider || ''}/${s.modelId}`.replace(/^\//, '') : null],
-            ['Runtime', isRunning ? 'running' : isError ? 'error' : view.archived ? 'archived' : 'idle'],
-            ['Tools', toolCount > 0 ? String(toolCount) : null],
-            ['Error', state?.error || s.error || null],
-          ].filter((entry) => entry[1]);
+          const detailLines = sessionRow.detailEntries(s, state, rowRuntime, view.archived);
           const panel = h('div', { class: 'sessionDetailsPanel' });
           detailLines.forEach(([label, value]) => {
             panel.appendChild(h('div', { class: 'sessionDetailsLine' },
@@ -539,10 +523,7 @@ return (function () {
             }
             if (key !== 'ArrowDown' && key !== 'ArrowUp') return;
             event?.preventDefault?.();
-            const visible = view.visibleIds || [];
-            const index = visible.indexOf(s.id);
-            const nextIndex = Math.max(0, Math.min(visible.length - 1, index + (key === 'ArrowDown' ? 1 : -1)));
-            const nextId = visible[nextIndex];
+            const nextId = sessionRow.nextKeyboardId(view.visibleIds, s.id, key);
             if (!nextId || nextId === s.id) return;
             view.keyboardId = nextId;
             draw(selected).then(() => {

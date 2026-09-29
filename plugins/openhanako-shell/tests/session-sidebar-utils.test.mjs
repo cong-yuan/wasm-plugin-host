@@ -11,6 +11,7 @@ const load = (name) => new Function(
 const search = load('session-search.js');
 const bulk = load('session-bulk.js');
 const runtime = load('session-runtime.js');
+const row = load('session-row.js');
 
 const failures = [];
 const check = (label, condition) => { if (!condition) failures.push(label); };
@@ -67,6 +68,23 @@ const check = (label, condition) => { if (!condition) failures.push(label); };
     runtime.summarize(one).state === 'running' && runtime.summarize(one).text === '1 running');
   check('runtime summary prioritizes errors over running',
     runtime.summarize({ sessions: [...one.sessions, { sessionId: 'e', status: 'error' }] }).state === 'error');
+}
+
+{
+  const session = { id: 'a', messageCount: 2, modelId: 'gpt-x', modelProvider: 'openai' };
+  const state = { sessionId: 'a', status: 'running', isStreaming: true, activeToolCount: 3 };
+  const derived = row.deriveRuntime(session, state, false);
+  check('row runtime derives running and tool state',
+    derived.running === true && derived.error === false && derived.toolCount === 3);
+  check('row metadata summarizes runtime and message count',
+    row.metaText(session, derived, false) === 'Running · 2 messages · gpt-x');
+  const details = row.detailEntries(session, state, derived, false);
+  check('row details include model and tool count',
+    details.some(([label, value]) => label === 'Model' && value === 'openai/gpt-x')
+    && details.some(([label, value]) => label === 'Tools' && value === '3'));
+  check('row keyboard navigation stays within visible bounds',
+    row.nextKeyboardId(['a', 'b'], 'a', 'ArrowDown') === 'b'
+    && row.nextKeyboardId(['a', 'b'], 'a', 'ArrowUp') === 'a');
 }
 
 if (failures.length) {

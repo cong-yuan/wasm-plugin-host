@@ -85,6 +85,7 @@ const ASSETS: &[(&str, &str)] = &[
     ("lib/session-search.js", include_str!("../js/lib/session-search.js")),
     ("lib/session-bulk.js", include_str!("../js/lib/session-bulk.js")),
     ("lib/session-runtime.js", include_str!("../js/lib/session-runtime.js")),
+    ("lib/session-row.js", include_str!("../js/lib/session-row.js")),
     ("lib/host-bridge.js", include_str!("../js/lib/host-bridge.js")),
     ("entry.js", include_str!("../js/entry.js")),
 ];
