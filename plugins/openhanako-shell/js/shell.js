@@ -18,6 +18,15 @@ return (function () {
     theme.install();
 
     const state = { selected: null, sidebar: true, preview: false, jian: true };
+    const shellData = {
+      plugins: [],
+      tools: [],
+      status: null,
+      runtime: { mode: api.mode(), sessions: [] },
+    };
+    let refreshVersion = 0;
+    let refreshTimer = null;
+    let disposed = false;
 
     // ── PreviewPanel (upstream: rendered by AppPages for the chat tab) ──
     const previewBody = h('div', { class: 'preview-panel-body' });
@@ -35,7 +44,7 @@ return (function () {
     const chat = conversation.render({
       onOpened: (id) => { state.selected = id; side.refresh(id); },
       onCreated: (id) => { state.selected = id; side.refresh(id); },
-      onChanged: () => refresh(),
+      onChanged: () => scheduleRuntimeRefresh(),
     });
 
     side = sidebar.render({
@@ -89,20 +98,53 @@ return (function () {
     el.appendChild(root);
     const unResize = resize.wireAll(root);
 
-    async function refresh() {
+    const applyRefresh = async (version, runtime) => {
+      if (disposed || version !== refreshVersion) return;
+      shellData.runtime = runtime;
+      right.update(shellData);
+      await side.refresh(state.selected, runtime);
+    };
+
+    async function refreshCapabilities() {
+      const version = ++refreshVersion;
       const [plugins, tools, status, runtime] = await Promise.all([
         api.plugins(),
         api.tools(),
         api.status(),
         adapter.http('GET', '/api/runtime-state').catch(() => ({ mode: api.mode(), sessions: [] })),
       ]);
-      right.update({ plugins, tools, status, runtime });
-      await side.refresh(state.selected);
+      if (disposed || version !== refreshVersion) return;
+      shellData.plugins = plugins;
+      shellData.tools = tools;
+      shellData.status = status;
+      await applyRefresh(version, runtime);
     }
-    refresh();
+
+    async function refreshRuntime() {
+      const version = ++refreshVersion;
+      const runtime = await adapter.http('GET', '/api/runtime-state')
+        .catch(() => ({ mode: api.mode(), sessions: [] }));
+      await applyRefresh(version, runtime);
+    }
+
+    function scheduleRuntimeRefresh() {
+      if (disposed) return;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        refreshRuntime();
+      }, 120);
+      refreshTimer?.unref?.();
+    }
+
+    refreshCapabilities();
 
     return () => {
+      disposed = true;
+      refreshVersion += 1;
+      if (refreshTimer) clearTimeout(refreshTimer);
       if (unResize) unResize();
+      if (side && typeof side.destroy === 'function') side.destroy();
       if (right && typeof right.dispose === 'function') right.dispose();
       root.remove();
     };

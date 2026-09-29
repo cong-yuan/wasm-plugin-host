@@ -635,6 +635,20 @@ check('unsupported automation control is explicitly disabled',
 
 // Main shell chat must use the incremental transport rather than the legacy
 // whole-turn send path. The mock backend emits thinking + text in chunks.
+const originalPluginsForRefresh = api.plugins;
+const originalToolsForRefresh = api.tools;
+const originalStatusForRefresh = api.status;
+const adapterForShellRefresh = studio.require('lib/hana-adapter');
+const originalHttpForRefresh = adapterForShellRefresh.http;
+let capabilityRefreshCalls = 0;
+let runtimeRefreshCalls = 0;
+api.plugins = async () => { capabilityRefreshCalls += 1; return originalPluginsForRefresh(); };
+api.tools = async () => { capabilityRefreshCalls += 1; return originalToolsForRefresh(); };
+api.status = async () => { capabilityRefreshCalls += 1; return originalStatusForRefresh(); };
+adapterForShellRefresh.http = async (method, path, body) => {
+  if (method === 'GET' && path === '/api/runtime-state') runtimeRefreshCalls += 1;
+  return originalHttpForRefresh(method, path, body);
+};
 const smokeInput = root.querySelector('.input-box');
 smokeInput.textContent = 'stream smoke';
 root.querySelector('.send-btn').fire('click');
@@ -643,6 +657,14 @@ check('conversation uses sendWithProgress', streamedSends === 1);
 check('streamed assistant response reaches DOM',
   root.querySelectorAll('.md-content').some((el) => /mock fallback/.test(el.textContent)));
 check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').length > 0);
+await new Promise((resolve) => setTimeout(resolve, 180));
+check('streaming refresh does not reload static capabilities', capabilityRefreshCalls === 0);
+check('streaming refresh coalesces runtime work',
+  runtimeRefreshCalls >= 1 && runtimeRefreshCalls <= 2);
+api.plugins = originalPluginsForRefresh;
+api.tools = originalToolsForRefresh;
+api.status = originalStatusForRefresh;
+adapterForShellRefresh.http = originalHttpForRefresh;
 
 // New live sessions pass only the selected provider so api.create can resolve
 // the configured current model instead of treating the provider name as a model.
