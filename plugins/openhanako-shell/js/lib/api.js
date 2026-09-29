@@ -38,6 +38,9 @@ return (function () {
     busy: !!(row && row.busy),
     live: !row || row.live !== false,
     status: (row && row.status) || '',
+    error: row && (row.error || row.last_error || row.lastError)
+      ? String(row.error || row.last_error || row.lastError)
+      : '',
     messages: (row && row.messages) || 0,
     turns: (row && row.turns) || 0,
     usage: (row && row.usage) || null,

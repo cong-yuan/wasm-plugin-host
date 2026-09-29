@@ -4,6 +4,7 @@ return (function () {
   const { h, svg, clear } = studio.require('lib/dom');
   const slots = studio.require('lib/slots');
   const api = studio.require('lib/api');
+  const adapter = studio.require('lib/hana-adapter');
   const { t } = studio.require('lib/i18n');
 
   // Upstream icon markup, copied unchanged.
@@ -31,9 +32,12 @@ return (function () {
       h('span', { class: 'sidebar-title' }, t('sidebar.title')), actions);
 
     // Upstream renders the activity bars as flat siblings (no wrapper div).
+    const bridgeStatus = h('span', { class: 'sidebar-bridge-status' }, '');
+    const bridgeDot = h('span', { class: 'sidebar-bridge-dot connected' });
     const bridge = h('button', { class: 'sidebar-activity-bar sidebar-bridge-card', type: 'button' },
       svg(ICON.bridge), h('span', {}, t('sidebar.bridgeShort')),
-      h('span', { class: 'sidebar-bridge-dot connected' }));
+      bridgeStatus, bridgeDot);
+    bridge.title = 'Refresh agent runtime state';
     const activity = h('button', { class: 'sidebar-activity-bar', type: 'button' },
       svg(ICON.activity), h('span', {}, t('sidebar.activity')));
     const automation = h('button', { class: 'sidebar-activity-bar', type: 'button' },
@@ -60,24 +64,61 @@ return (function () {
       h('div', { class: 'resize-handle resize-handle-right', id: 'sidebarResizeHandle' }));
 
     async function draw(selected) {
-      const rows = await api.sessions();
+      const [rows, runtime] = await Promise.all([
+        api.sessions(),
+        adapter.http('GET', '/api/runtime-state').catch(() => ({ mode: api.mode(), sessions: [] })),
+      ]);
+      const runtimeById = new Map((runtime.sessions || []).map((state) => [state.sessionId, state]));
+      const runtimeRows = Array.from(runtimeById.values());
+      const errorCount = runtimeRows.filter((state) => state.status === 'error').length;
+      const runningCount = runtimeRows.filter((state) => state.status === 'running' || state.isStreaming).length;
+      bridgeStatus.textContent = errorCount
+        ? `${errorCount} error${errorCount === 1 ? '' : 's'}`
+        : runningCount
+          ? `${runningCount} running`
+          : (runtime.mode === 'mock' ? 'Mock' : 'Connected');
+      bridgeDot.className = 'sidebar-bridge-dot'
+        + (errorCount ? ' error' : runningCount ? ' running' : ' connected');
       clear(scroller);
       if (!rows.length) {
         scroller.appendChild(h('div', { class: 'sessionEmpty' }, t('sidebar.empty')));
         return;
       }
       rows.forEach((s) => {
+        const state = runtimeById.get(s.id) || null;
+        const isRunning = !!(s.busy || state?.isStreaming || state?.status === 'running');
+        const isError = state?.status === 'error' || !!state?.error;
+        const toolCount = Number(state?.activeToolCount) || 0;
+        const statusNode = toolCount > 0
+          ? h('span', { class: 'sessionToolCount', title: `${toolCount} active tool${toolCount === 1 ? '' : 's'}` }, String(toolCount))
+          : isError
+            ? h('span', { class: 'sessionErrorDot', title: state?.error || 'Session error' })
+            : null;
+        const retry = isError
+          ? h('button', { class: 'sessionRetryBtn', type: 'button', title: 'Retry session' }, '↻')
+          : null;
         const row = h('div', {
           class: 'sessionItem sessionItemSingleLine' + (selected === s.id ? ' sessionItemActive' : ''),
           role: 'button', tabindex: '0',
+          ...(isError ? { 'data-runtime-state': 'error' } : isRunning ? { 'data-runtime-state': 'running' } : {}),
         }, h('div', { class: 'sessionItemHeader' },
-          s.busy ? h('span', { class: 'sessionStreamingDot', 'data-state': 'running' }) : null,
-          h('span', { class: 'sessionItemTitle' }, s.title || t('session.untitled'))));
+          isRunning ? h('span', { class: 'sessionStreamingDot', 'data-state': 'running' }) : null,
+          h('span', { class: 'sessionItemTitle' }, s.title || t('session.untitled')),
+          statusNode,
+          retry));
+        if (retry) {
+          retry.onclick = (event) => {
+            event?.stopPropagation?.();
+            if (typeof options.onRetry === 'function') options.onRetry(s);
+            else options.onSelect(s);
+          };
+        }
         row.onclick = () => options.onSelect(s);
         scroller.appendChild(row);
       });
     }
     draw(options.selected);
+    bridge.onclick = () => draw(options.selected);
     return { root, refresh: draw };
   }
   return { render };

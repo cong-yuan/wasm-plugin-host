@@ -130,7 +130,7 @@ global.MutationObserver = class {
 // --- plugin module loader (mirrors the host's studio.require) ---
 const sources = new Map();
 for (const name of [
-  'lib/dom.js', 'lib/slots.js', 'lib/tauri-invoke.js', 'lib/api.js', 'lib/avatar.js',
+  'lib/dom.js', 'lib/slots.js', 'lib/tauri-invoke.js', 'lib/api.js', 'lib/hana-adapter.js', 'lib/avatar.js',
   'lib/theme.js', 'lib/i18n.js', 'lib/resize.js',
   'lib/motion.js', 'lib/tokens.js',
   'panels/titlebar.js', 'panels/sidebar.js', 'panels/conversation.js',
@@ -180,7 +180,7 @@ for (const sel of [
   '.titlebar', '.tb-left-group', '.tb-toggle-left', '.tb-center-title', '.tb-right-group',
   '.app', '.sidebar', '.sidebar-inner', '.sidebar-chat-content', '.sidebar-header',
   '.sidebar-title', '.sidebar-header-actions', '.sidebar-activity-bar', '.sidebar-bridge-card',
-  '.sidebar-bridge-dot', '.session-list', '.sessionListScroller', '.resize-handle',
+  '.sidebar-bridge-dot', '.sidebar-bridge-status', '.session-list', '.sessionListScroller', '.resize-handle',
   '.main-content', '.chat-area', '.welcome', '.welcomeAvatar', '.welcomeText',
   '.folderSelectWrap', '.folderSelectBtn', '.memoryToggleBtn',
   '.input-area', '.input-surface', '.input-stack', '.input-wrapper', '.input-box',

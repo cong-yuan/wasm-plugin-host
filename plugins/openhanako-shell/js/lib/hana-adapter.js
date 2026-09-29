@@ -669,6 +669,11 @@ return (function () {
   const projection = (row) => {
     const path = pathFor(row.id);
     const pin = loadPins()[path] || null;
+    const activeTurn = activeTurns.get(String(row.id || ''));
+    const isStreaming = !!(activeTurn && isActiveTurn(activeTurn));
+    const status = row.busy || isStreaming
+      ? 'running'
+      : (row.status || (row.error ? 'error' : 'idle'));
     const updatedAt = row.updated_at ?? row.updatedAt ?? null;
     const timestamp = updatedAt == null ? null : new Date(updatedAt);
     const isoTimestamp = timestamp && !Number.isNaN(timestamp.getTime())
@@ -690,7 +695,63 @@ return (function () {
       pinOrder: pin && Number.isFinite(pin.pinOrder) ? pin.pinOrder : null,
       live: row.live !== false,
       busy: !!row.busy,
+      status,
+      isStreaming,
+      error: row.error || null,
       projectId: loadAssignments()[path] || null,
+    };
+  };
+
+  const runtimeToolState = (rows) => {
+    const results = toolResultsFromTranscript(rows || []);
+    const active = [];
+    const failed = [];
+    for (const message of (rows || [])) {
+      if (!message || !Array.isArray(message.tool_calls)) continue;
+      for (const call of message.tool_calls) {
+        const id = toolCallId(call);
+        if (!id) continue;
+        const result = results.get(id);
+        if (!result) {
+          active.push({
+            id,
+            name: call.name || 'tool',
+            args: parseToolArgs(call.arguments),
+            startedAt: toolTimestamp(call, 'started_at', 'startedAt'),
+          });
+          continue;
+        }
+        if (result.is_error === true || result.isError === true || result.success === false || result.status === 'failed') {
+          failed.push({
+            id,
+            name: call.name || 'tool',
+            error: toolResultText(result.content ?? result.output) || 'tool failed',
+          });
+        }
+      }
+    }
+    return { active, failed };
+  };
+
+  const runtimeProjection = async (row) => {
+    const base = projection(row);
+    let transcript = [];
+    try { transcript = await api.transcript(row.id); } catch (_) { /* session row still useful */ }
+    const tools = runtimeToolState(transcript);
+    const failure = base.error || (tools.failed.length ? tools.failed[tools.failed.length - 1].error : null);
+    return {
+      sessionId: row.id,
+      path: base.path,
+      title: base.title,
+      status: failure ? 'error' : base.status,
+      busy: base.busy,
+      isStreaming: base.isStreaming,
+      live: base.live,
+      activeToolCount: tools.active.length,
+      activeTools: tools.active,
+      failedTools: tools.failed,
+      error: failure,
+      messageCount: base.messageCount,
     };
   };
 
@@ -1186,6 +1247,23 @@ return (function () {
     if (pathname === '/api/sessions' && verb === 'GET') {
       const rows = await api.sessions();
       return rows.map(projection);
+    }
+
+    if (pathname === '/api/runtime-state' && verb === 'GET') {
+      const rows = await api.sessions();
+      return {
+        mode: api.mode(),
+        sessions: await Promise.all(rows.map(runtimeProjection)),
+      };
+    }
+
+    const runtimeSessionMatch = pathname.match(/^\/api\/runtime-state\/([^/]+)$/);
+    if (runtimeSessionMatch && verb === 'GET') {
+      const sessionId = idFrom(decodeURIComponent(runtimeSessionMatch[1]));
+      const rows = await api.sessions();
+      const row = rows.find((item) => item.id === sessionId);
+      if (!row) return { error: 'session not found', code: 'session_not_found' };
+      return runtimeProjection(row);
     }
 
     if ((pathname === '/api/sessions/new' || pathname === '/api/sessions/new-detached') && verb === 'POST') {

@@ -42,6 +42,10 @@ return (function () {
       onNew: () => { state.selected = null; chat.reset(); side.refresh(null); },
       onCollapse: toggleSidebar,
       onSelect: (session) => chat.open(session),
+      onRetry: async (session) => {
+        await chat.open(session);
+        await side.refresh(session.id);
+      },
     });
 
     const bar = titlebar.render({

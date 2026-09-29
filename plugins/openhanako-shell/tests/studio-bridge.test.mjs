@@ -197,6 +197,65 @@ const projectedLive = await adapter.http('GET', '/api/sessions');
 check('sessions without backend timestamps do not become just-now on every refresh',
   projectedLive.every((session) => session.modified == null && session.created == null));
 
+// Runtime-state is the shell's stable projection for busy/error/tool activity.
+// Keep this independent of the renderer so React/slot surfaces consume one
+// normalized contract instead of inferring state from transcripts repeatedly.
+{
+  const originalSessions = api.sessions;
+  const originalTranscript = api.transcript;
+  api.sessions = async () => [
+    { id: 'runtime-running', title: 'Running', busy: true, live: true, status: 'busy', messages: 2 },
+    { id: 'runtime-error', title: 'Failed', busy: false, live: true, status: 'failed', error: 'provider offline', messages: 2 },
+  ];
+  api.transcript = async (id) => {
+    if (id === 'runtime-running') {
+      return [{
+        role: 'assistant',
+        text: '',
+        reasoning: '',
+        tool_calls: [{ id: 'tool-live', name: 'read_file', arguments: '{"path":"README.md"}' }],
+        tool_results: [],
+      }];
+    }
+    return [
+      {
+        role: 'assistant',
+        text: '',
+        reasoning: '',
+        tool_calls: [{ id: 'tool-failed', name: 'fetch', arguments: '{}' }],
+        tool_results: [],
+      },
+      {
+        role: 'user',
+        text: '',
+        reasoning: '',
+        tool_calls: [],
+        tool_results: [{ tool_call_id: 'tool-failed', content: 'network denied', is_error: true }],
+      },
+    ];
+  };
+
+  const runtime = await adapter.http('GET', '/api/runtime-state');
+  const running = runtime.sessions.find((session) => session.sessionId === 'runtime-running');
+  const failed = runtime.sessions.find((session) => session.sessionId === 'runtime-error');
+  check('runtime-state exposes running session and active tool',
+    runtime.mode === 'tauri'
+    && running?.status === 'running'
+    && running?.activeToolCount === 1
+    && running?.activeTools?.[0]?.name === 'read_file');
+  check('runtime-state carries backend error and failed tool projection',
+    failed?.status === 'error'
+    && failed?.error === 'provider offline'
+    && failed?.failedTools?.[0]?.error === 'network denied');
+
+  const single = await adapter.http('GET', '/api/runtime-state/runtime-running');
+  check('runtime-state supports single-session lookup',
+    single?.sessionId === 'runtime-running' && single?.activeToolCount === 1);
+
+  api.sessions = originalSessions;
+  api.transcript = originalTranscript;
+}
+
 const created = await adapter.http('POST', '/api/sessions/new-detached', {});
 check('create_agent uses mock/mock-1',
   created.sessionId === 'agent-new'
