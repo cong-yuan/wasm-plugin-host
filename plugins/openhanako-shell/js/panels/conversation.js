@@ -302,7 +302,8 @@ return (function () {
       options.onOpened(state.id);
     }
 
-    const failSubmit = (err) => {
+    const failSubmit = (err, submitEpoch = state.epoch) => {
+      if (state.epoch !== submitEpoch) return;
       state.turns.push({
         role: 'assistant',
         text: (err && err.message) ? err.message : String(err),
@@ -327,16 +328,22 @@ return (function () {
       if (!state.id) {
         try {
           const provider = await api.pickProvider();
+          if (state.epoch !== submitEpoch) return;
           if (!provider) {
-            failSubmit(new Error(t('error.llmAuthFailed')));
+            failSubmit(new Error(t('error.llmAuthFailed')), submitEpoch);
             return;
           }
-          state.id = provider === 'mock'
+          const createdId = provider === 'mock'
             ? await api.create(provider, 'mock-1')
             : await api.create(provider);
+          if (state.epoch !== submitEpoch) {
+            if (createdId) api.dispose(createdId).catch(() => {});
+            return;
+          }
+          state.id = createdId;
           options.onCreated(state.id);
         } catch (err) {
-          failSubmit(err);
+          failSubmit(err, submitEpoch);
           return;
         }
       }

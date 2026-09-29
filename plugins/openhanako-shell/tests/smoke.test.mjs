@@ -548,6 +548,47 @@ check('streamed thinking reaches DOM', root.querySelectorAll('.thinkingBlock').l
   api.sendWithProgress = originalProgress;
 }
 
+// A create_agent result that arrives after New Chat must be discarded and
+// disposed instead of silently attaching the stale session to the fresh chat.
+{
+  const originalPickProvider = api.pickProvider;
+  const originalCreate = api.create;
+  const originalDispose = api.dispose;
+  let releaseCreate = null;
+  const disposedIds = [];
+  api.pickProvider = async () => 'deepseek';
+  api.create = async () => new Promise((resolve) => {
+    releaseCreate = () => resolve('stale-created-session');
+  });
+  api.dispose = async (id) => { disposedIds.push(id); };
+
+  const staleCreateHost = new El('div');
+  const disposeStaleCreateShell = shell.render(staleCreateHost);
+  const staleCreateRoot = staleCreateHost.children[0];
+  const staleCreateInput = staleCreateRoot.querySelector('.input-box');
+  const staleCreateSend = staleCreateRoot.querySelector('.send-btn');
+  staleCreateInput.textContent = 'stale create smoke';
+  staleCreateSend.fire('click');
+  for (let i = 0; i < 20 && !releaseCreate; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  staleCreateRoot.querySelectorAll('.sidebar-action-btn')[0]?.fire('click');
+  releaseCreate?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  check('stale create result is disposed after new chat',
+    disposedIds.includes('stale-created-session'));
+  check('stale create cannot reattach to fresh conversation',
+    staleCreateRoot.querySelectorAll('.md-content').length === 0
+    && staleCreateSend.getAttribute('data-mode') === 'send');
+
+  if (typeof disposeStaleCreateShell === 'function') disposeStaleCreateShell();
+  api.pickProvider = originalPickProvider;
+  api.create = originalCreate;
+  api.dispose = originalDispose;
+}
+
 // Session creation failures must restore the composer instead of leaving
 // the conversation stuck in busy/Stop mode.
 {
