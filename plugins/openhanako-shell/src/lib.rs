@@ -90,6 +90,7 @@ const ASSETS: &[(&str, &str)] = &[
     ("lib/session-row-view.js", include_str!("../js/lib/session-row-view.js")),
     ("lib/session-action-lock.js", include_str!("../js/lib/session-action-lock.js")),
     ("lib/session-mutations.js", include_str!("../js/lib/session-mutations.js")),
+    ("lib/sidebar-info-panels.js", include_str!("../js/lib/sidebar-info-panels.js")),
     ("lib/host-bridge.js", include_str!("../js/lib/host-bridge.js")),
     ("entry.js", include_str!("../js/entry.js")),
 ];

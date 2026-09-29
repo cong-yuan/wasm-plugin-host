@@ -13,6 +13,7 @@ return (function () {
   const sessionRowView = studio.require('lib/session-row-view');
   const sessionActionLock = studio.require('lib/session-action-lock');
   const sessionMutations = studio.require('lib/session-mutations');
+  const sidebarInfoPanels = studio.require('lib/sidebar-info-panels');
   const { t } = studio.require('lib/i18n');
 
   // Upstream icon markup, copied unchanged.
@@ -44,12 +45,6 @@ return (function () {
 
     const header = h('div', { class: 'sidebar-header' },
       h('span', { class: 'sidebar-title' }, t('sidebar.title')), actions);
-    const settingsPanel = h('div', {
-      class: 'sidebarSettingsPanel',
-      role: 'region',
-      'aria-label': t('settings.title'),
-    });
-    settingsPanel.style.display = 'none';
 
     // Upstream renders the activity bars as flat siblings (no wrapper div).
     const bridgeStatus = h('span', { class: 'sidebar-bridge-status' }, '');
@@ -63,12 +58,6 @@ return (function () {
       type: 'button',
       'aria-expanded': 'false',
     }, svg(ICON.activity), h('span', {}, t('sidebar.activity')));
-    const activityPanel = h('div', {
-      class: 'sidebarActivityPanel',
-      role: 'region',
-      'aria-label': t('sidebar.activity'),
-    });
-    activityPanel.style.display = 'none';
     const automation = h('button', { class: 'sidebar-activity-bar', type: 'button' },
       svg(ICON.automation), h('span', {}, t('automation.title')),
       h('span', { class: 'automation-count-badge' }, ''));
@@ -77,12 +66,16 @@ return (function () {
       type: 'button',
       'aria-expanded': 'false',
     }, svg(ICON.skills), h('span', {}, t('skills.panel.title')));
-    const skillsPanel = h('div', {
-      class: 'sidebarSkillsPanel',
-      role: 'region',
-      'aria-label': t('skills.panel.title'),
+    const infoPanels = sidebarInfoPanels.create({
+      api,
+      adapter,
+      labels: {
+        settings: t('settings.title'),
+        activity: t('sidebar.activity'),
+        skills: t('skills.panel.title'),
+      },
     });
-    skillsPanel.style.display = 'none';
+    const { settingsPanel, activityPanel, skillsPanel } = infoPanels;
 
     const activities = h('div', { class: 'hana-slot sidebar-activities-slot' });
     slots.mount('openhanako.sidebar.activities', activities);
@@ -140,192 +133,37 @@ return (function () {
       h('div', { class: 'sidebar-inner' }, content),
       h('div', { class: 'resize-handle resize-handle-right', id: 'sidebarResizeHandle' }));
 
-    const closeInfoPanel = (panel, button) => {
-      panel.style.display = 'none';
-      button.setAttribute('aria-expanded', 'false');
-    };
-    const renderSettingsPanel = (summaryData, status) => {
-      clear(settingsPanel);
-      const providers = summaryData?.providers && typeof summaryData.providers === 'object'
-        ? Object.entries(summaryData.providers)
-        : [];
-      const activeProvider = status?.providers?.[0] || '';
-      const activeModel = status?.model || '';
-      const refresh = h('button', { class: 'sidebarSettingsRefresh', type: 'button' }, 'Refresh');
-      refresh.onclick = () => loadSettingsPanel();
-      settingsPanel.appendChild(h('div', { class: 'sidebarSettingsSummary' },
-        h('span', {}, activeModel
-          ? `Active: ${activeProvider ? activeProvider + ' / ' : ''}${activeModel}`
-          : 'Provider configuration'),
-        refresh));
-
-      if (!providers.length) {
-        settingsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'No providers configured'));
-        return;
-      }
-      providers.forEach(([name, provider]) => {
-        const configured = !!provider?.has_credentials || !!provider?.is_configured;
-        const row = h('div', { class: 'sidebarSettingsProvider', 'data-configured': configured ? 'true' : 'false' },
-          h('div', { class: 'sidebarSettingsProviderHeader' },
-            h('span', { class: 'sidebarSettingsProviderName' }, provider?.display_name || name),
-            h('span', { class: 'sidebarSettingsProviderState' }, configured ? 'Configured' : 'Needs credentials')));
-        const models = Array.isArray(provider?.models) ? provider.models : [];
-        if (models.length) {
-          row.appendChild(h('div', { class: 'sidebarSettingsProviderMeta' },
-            `${models.length} model${models.length === 1 ? '' : 's'} · ${models.slice(0, 3).join(', ')}${models.length > 3 ? '…' : ''}`));
-        }
-        if (provider?.base_url) {
-          row.appendChild(h('div', { class: 'sidebarSettingsProviderMeta' }, String(provider.base_url)));
-        }
-        settingsPanel.appendChild(row);
-      });
-    };
-
-    const loadSettingsPanel = async () => {
-      clear(settingsPanel);
-      settingsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'Loading providers…'));
-      try {
-        const [summaryData, status] = await Promise.all([
-          adapter.http('GET', '/api/providers/summary'),
-          api.status(),
-        ]);
-        renderSettingsPanel(summaryData, status);
-      } catch (err) {
-        clear(settingsPanel);
-        settingsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty error' },
-          err?.message || 'Unable to load provider settings'));
-      }
-    };
-
     settings.onclick = async () => {
       const opening = settingsPanel.style.display === 'none';
       if (opening) {
-        closeInfoPanel(activityPanel, activity);
-        closeInfoPanel(skillsPanel, skills);
+        infoPanels.close(activityPanel, activity);
+        infoPanels.close(skillsPanel, skills);
       }
       settingsPanel.style.display = opening ? '' : 'none';
       settings.setAttribute('aria-expanded', opening ? 'true' : 'false');
-      if (opening) await loadSettingsPanel();
-    };
-
-
-    const renderActivityPanel = (runtime) => {
-      clear(activityPanel);
-      const rows = Array.from(runtime?.sessions || []);
-      const running = rows.filter((row) => row.status === 'running' || row.isStreaming);
-      const errors = rows.filter((row) => row.status === 'error' || row.error);
-      const refresh = h('button', { class: 'sidebarActivityRefresh', type: 'button' }, 'Refresh');
-      refresh.onclick = () => loadActivityPanel();
-      activityPanel.appendChild(h('div', { class: 'sidebarActivitySummary' },
-        h('span', {}, `${rows.length} session${rows.length === 1 ? '' : 's'} · ${running.length} running · ${errors.length} error${errors.length === 1 ? '' : 's'}`),
-        refresh));
-      if (!rows.length) {
-        activityPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'No runtime sessions'));
-        return;
-      }
-      rows.forEach((row) => {
-        const state = row.status === 'error' || row.error
-          ? 'error'
-          : row.status === 'running' || row.isStreaming ? 'running' : 'idle';
-        const item = h('div', { class: 'sidebarActivityItem', 'data-state': state },
-          h('div', { class: 'sidebarActivityItemHeader' },
-            h('span', { class: 'sidebarActivityStateDot', 'data-state': state }),
-            h('span', { class: 'sidebarActivityItemTitle' }, row.title || row.sessionId || 'Session'),
-            h('span', { class: 'sidebarActivityItemState' }, state)));
-        const toolNames = (row.activeTools || []).map((tool) => tool?.name).filter(Boolean);
-        if (toolNames.length) {
-          item.appendChild(h('div', { class: 'sidebarActivityItemMeta' }, `Tools: ${toolNames.join(', ')}`));
-        }
-        if (row.error) {
-          item.appendChild(h('div', { class: 'sidebarActivityItemError' }, String(row.error)));
-        }
-        activityPanel.appendChild(item);
-      });
-    };
-
-    const loadActivityPanel = async () => {
-      clear(activityPanel);
-      activityPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'Loading runtime…'));
-      try {
-        const runtime = await adapter.http('GET', '/api/runtime-state');
-        renderActivityPanel(runtime);
-      } catch (err) {
-        clear(activityPanel);
-        activityPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty error' },
-          err?.message || 'Unable to load runtime activity'));
-      }
+      if (opening) await infoPanels.loadSettings();
     };
 
     activity.onclick = async () => {
       const opening = activityPanel.style.display === 'none';
       if (opening) {
-        closeInfoPanel(skillsPanel, skills);
-        closeInfoPanel(settingsPanel, settings);
+        infoPanels.close(skillsPanel, skills);
+        infoPanels.close(settingsPanel, settings);
       }
       activityPanel.style.display = opening ? '' : 'none';
       activity.setAttribute('aria-expanded', opening ? 'true' : 'false');
-      if (opening) await loadActivityPanel();
-    };
-
-    let skillsLoading = false;
-    const renderSkillsPanel = (plugins, tools) => {
-      clear(skillsPanel);
-      const pluginRows = Array.from(plugins || []);
-      const toolRows = Array.from(tools || []);
-      const refresh = h('button', { class: 'sidebarSkillsRefresh', type: 'button' }, 'Refresh');
-      refresh.onclick = () => loadSkillsPanel();
-      const summary = h('div', { class: 'sidebarSkillsSummary' },
-        h('span', {}, `${pluginRows.length} plugin${pluginRows.length === 1 ? '' : 's'} · ${toolRows.length} tool${toolRows.length === 1 ? '' : 's'}`),
-        refresh);
-      skillsPanel.appendChild(summary);
-
-      const appendSection = (title, rows, kind) => {
-        const section = h('div', { class: 'sidebarSkillsSection' },
-          h('div', { class: 'sidebarSkillsSectionTitle' }, title));
-        if (!rows.length) {
-          section.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, `No ${kind}s available`));
-        } else {
-          rows.forEach((row) => {
-            const name = String(row?.name || row?.id || kind);
-            const description = row?.description || row?.state || '';
-            section.appendChild(h('div', { class: 'sidebarSkillsItem', 'data-kind': kind },
-              h('span', { class: 'sidebarSkillsItemName' }, name),
-              description ? h('span', { class: 'sidebarSkillsItemDescription' }, String(description)) : null));
-          });
-        }
-        skillsPanel.appendChild(section);
-      };
-
-      appendSection('Plugins', pluginRows, 'plugin');
-      appendSection('Tools', toolRows, 'tool');
-    };
-
-    const loadSkillsPanel = async () => {
-      if (skillsLoading) return;
-      skillsLoading = true;
-      clear(skillsPanel);
-      skillsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'Loading capabilities…'));
-      try {
-        const [plugins, tools] = await Promise.all([api.plugins(), api.tools()]);
-        renderSkillsPanel(plugins, tools);
-      } catch (err) {
-        clear(skillsPanel);
-        skillsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty error' },
-          err?.message || 'Unable to load capabilities'));
-      } finally {
-        skillsLoading = false;
-      }
+      if (opening) await infoPanels.loadActivity();
     };
 
     skills.onclick = async () => {
       const opening = skillsPanel.style.display === 'none';
       if (opening) {
-        closeInfoPanel(activityPanel, activity);
-        closeInfoPanel(settingsPanel, settings);
+        infoPanels.close(activityPanel, activity);
+        infoPanels.close(settingsPanel, settings);
       }
       skillsPanel.style.display = opening ? '' : 'none';
       skills.setAttribute('aria-expanded', opening ? 'true' : 'false');
-      if (opening) await loadSkillsPanel();
+      if (opening) await infoPanels.loadSkills();
     };
 
     const updateBridgeStatus = (runtime) => {
@@ -451,7 +289,7 @@ return (function () {
       const runtimeById = new Map((runtime.sessions || []).map((state) => [state.sessionId, state]));
       lastRuntimeSignature = sessionRuntime.signature(runtime);
       updateBridgeStatus(runtime);
-      if (activityPanel.style.display !== 'none') renderActivityPanel(runtime);
+      if (activityPanel.style.display !== 'none') infoPanels.renderActivity(runtime);
       activeView.className = 'sessionViewBtn' + (view.archived ? '' : ' active');
       archivedView.className = 'sessionViewBtn' + (view.archived ? ' active' : '');
       activeView.setAttribute('aria-pressed', view.archived ? 'false' : 'true');
@@ -778,7 +616,7 @@ return (function () {
         const runtime = await adapter.http('GET', '/api/runtime-state');
         const nextSignature = sessionRuntime.signature(runtime);
         updateBridgeStatus(runtime);
-        if (activityPanel.style.display !== 'none') renderActivityPanel(runtime);
+        if (activityPanel.style.display !== 'none') infoPanels.renderActivity(runtime);
         if (nextSignature !== lastRuntimeSignature) {
           lastRuntimeSignature = nextSignature;
           await draw(options.selected, runtime);
