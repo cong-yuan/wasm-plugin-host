@@ -630,12 +630,30 @@ return (function () {
         const s = await tauri.invoke('studio_status');
         if (s && typeof s === 'object') return s;
       } catch (_) { /* older hosts omit studio_status */ }
-      return {
-        providers: [DEFAULT_PROVIDER],
-        model: DEFAULT_MODEL,
-        offline: false,
-        note: 'studio_status unavailable; create_agent still uses mock/mock-1 unless the caller passes another pair',
-      };
+      try {
+        const llm = await tauri.invoke('get_llm_config');
+        const current = llm && llm.current && typeof llm.current === 'object' ? llm.current : {};
+        const provider = (typeof current.provider === 'string' && current.provider)
+          || (typeof llm?.default === 'string' && llm.default)
+          || DEFAULT_PROVIDER;
+        const model = (typeof current.model === 'string' && current.model)
+          || llm?.providers?.[provider]?.model
+          || (provider === DEFAULT_PROVIDER ? DEFAULT_MODEL : provider);
+        const configuredProviders = Object.keys(llm?.providers || {});
+        return {
+          providers: configuredProviders.length ? configuredProviders : [provider],
+          model,
+          offline: false,
+          note: 'studio_status unavailable; derived from get_llm_config',
+        };
+      } catch (_) {
+        return {
+          providers: [DEFAULT_PROVIDER],
+          model: DEFAULT_MODEL,
+          offline: false,
+          note: 'studio_status and get_llm_config unavailable',
+        };
+      }
     },
 
     sessions: () => (tauri.available() ? liveSessions() : Promise.resolve(mock.sessions())),
