@@ -407,6 +407,7 @@ return (function () {
 
     send.onclick = () => (state.busy ? stop() : submit());
     input.addEventListener('keydown', (event) => {
+      if (event?.isComposing || event?.keyCode === 229) return;
       if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit(); }
     });
 

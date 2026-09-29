@@ -481,6 +481,30 @@ root.querySelector('.memoryToggleBtn').fire('click');
   api.transcript = originalTranscript;
 }
 
+// IME composition Enter must not submit while the user is confirming a
+// composition candidate.
+{
+  const originalProgress = api.sendWithProgress;
+  let imeSends = 0;
+  api.sendWithProgress = async () => { imeSends += 1; return true; };
+
+  const imeHost = new El('div');
+  const disposeImeShell = shell.render(imeHost);
+  const imeRoot = imeHost.children[0];
+  const imeInput = imeRoot.querySelector('.input-box');
+  imeInput.textContent = '中文输入';
+  imeInput.fire('keydown', {
+    key: 'Enter',
+    isComposing: true,
+    preventDefault() { throw new Error('composing Enter should not prevent default'); },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('IME composing Enter does not submit', imeSends === 0 && imeInput.textContent === '中文输入');
+
+  if (typeof disposeImeShell === 'function') disposeImeShell();
+  api.sendWithProgress = originalProgress;
+}
+
 // Main shell chat must use the incremental transport rather than the legacy
 // whole-turn send path. The mock backend emits thinking + text in chunks.
 const smokeInput = root.querySelector('.input-box');
