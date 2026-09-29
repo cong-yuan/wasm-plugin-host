@@ -80,18 +80,30 @@ pub enum UiHostAction {
         #[serde(default)]
         args: serde_json::Value,
     },
-    ListenEvent { event: String },
+    ListenEvent {
+        event: String,
+    },
     Theme,
-    Adjust { slot: String },
-    ProvideSlot { slot: String },
-    InjectSlot { slot: String },
-    RenderSlot { slot: String },
+    Adjust {
+        slot: String,
+    },
+    ProvideSlot {
+        slot: String,
+    },
+    InjectSlot {
+        slot: String,
+    },
+    RenderSlot {
+        slot: String,
+    },
     OpenWindow {
         name: String,
         #[serde(default)]
         params: serde_json::Value,
     },
-    CloseWindow { name: String },
+    CloseWindow {
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -217,7 +229,10 @@ impl PluginPolicy {
             let canonical = std::fs::canonicalize(raw).map_err(|e| {
                 format!("sandboxed filesystem grant `{path}` cannot be canonicalized: {e}")
             })?;
-            if !canonical_roots.iter().any(|p: &std::path::PathBuf| p == &canonical) {
+            if !canonical_roots
+                .iter()
+                .any(|p: &std::path::PathBuf| p == &canonical)
+            {
                 canonical_roots.push(canonical);
             }
         }
@@ -315,6 +330,12 @@ impl CapabilityGate {
         if sensitive {
             self.audit_result("network.resolve", &ip.to_string(), &result);
         }
+        result
+    }
+
+    pub fn require_socket_ip(&self, ip: std::net::IpAddr) -> Result<(), String> {
+        let result = self.effective.read().unwrap().allows_socket_ip(ip);
+        self.audit_result("network.socket", &ip.to_string(), &result);
         result
     }
 
@@ -416,7 +437,8 @@ impl CapabilityGate {
 
     pub fn require_agent_veto(&self, event: &str) -> Result<(), String> {
         let effective = self.effective.read().unwrap();
-        let result = effective.allows_named("agent veto", event, &effective.capabilities.agent.veto);
+        let result =
+            effective.allows_named("agent veto", event, &effective.capabilities.agent.veto);
         drop(effective);
         self.audit_result("agent.veto", event, &result);
         result
@@ -641,7 +663,9 @@ impl EffectiveCapabilities {
             // Wildcards are too broad for loopback, private/link-local, IP
             // literals, and well-known metadata hosts. These targets require an
             // exact grant so `*` cannot silently turn into SSRF authority.
-            net.allow.iter().any(|p| p.trim().eq_ignore_ascii_case(&host))
+            net.allow
+                .iter()
+                .any(|p| p.trim().eq_ignore_ascii_case(&host))
         } else {
             net.allow.iter().any(|p| host_matches(p, &host))
         };
@@ -681,6 +705,25 @@ impl EffectiveCapabilities {
             "permission denied: resolved sensitive IP {needle} requires an exact IP grant"
         ))
     }
+
+    pub fn allows_socket_ip(&self, ip: std::net::IpAddr) -> Result<(), String> {
+        if self.unrestricted {
+            return Ok(());
+        }
+        let needle = ip.to_string();
+        if self
+            .capabilities
+            .network
+            .allow
+            .iter()
+            .any(|host| host.trim().eq_ignore_ascii_case(&needle))
+        {
+            return Ok(());
+        }
+        Err(format!(
+            "permission denied: raw socket IP {needle} requires an exact IP grant"
+        ))
+    }
 }
 
 fn host_matches(pattern: &str, host: &str) -> bool {
@@ -695,7 +738,11 @@ fn host_matches(pattern: &str, host: &str) -> bool {
 }
 
 fn sensitive_network_target(host: &str) -> bool {
-    let host = host.trim().trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
+    let host = host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
     if host == "localhost"
         || host.ends_with(".localhost")
         || matches!(
@@ -974,9 +1021,7 @@ mod tests {
         };
         let effective = EffectiveCapabilities::resolve(&policy, &requested);
 
-        assert!(effective
-            .allows_http("https://example.com/", "GET")
-            .is_ok());
+        assert!(effective.allows_http("https://example.com/", "GET").is_ok());
         for url in [
             "http://127.0.0.1/",
             "http://10.0.0.1/",
@@ -1056,6 +1101,38 @@ mod tests {
         let effective = EffectiveCapabilities::resolve(&policy, &requested);
         assert!(effective
             .allows_resolved_ip("10.0.0.8".parse().unwrap())
+            .is_ok());
+    }
+
+    #[test]
+    fn raw_socket_ip_requires_an_exact_ip_grant_even_for_public_addresses() {
+        let policy = PluginPolicy {
+            trust: TrustMode::Sandboxed,
+            grant: CapabilitySet {
+                network: NetworkCapabilities {
+                    allow: vec!["*".into(), "api.example.com".into(), "93.184.216.34".into()],
+                    methods: vec!["GET".into()],
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let requested = policy.grant.clone();
+        let effective = EffectiveCapabilities::resolve(&policy, &requested);
+
+        assert!(effective
+            .allows_socket_ip("93.184.216.34".parse().unwrap())
+            .is_ok());
+        assert!(effective
+            .allows_socket_ip("1.1.1.1".parse().unwrap())
+            .is_err());
+        assert!(effective
+            .allows_socket_ip("127.0.0.1".parse().unwrap())
+            .is_err());
+
+        let trusted = EffectiveCapabilities::bootstrap(&PluginPolicy::trusted());
+        assert!(trusted
+            .allows_socket_ip("127.0.0.1".parse().unwrap())
             .is_ok());
     }
 

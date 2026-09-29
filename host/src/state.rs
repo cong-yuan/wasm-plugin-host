@@ -396,9 +396,19 @@ impl HostState {
             }
         }
         let ctx = builder.build_p1();
+        let capability_gate = match audit.clone() {
+            Some(sink) => crate::capability::CapabilityGate::with_audit(
+                &policy,
+                sink,
+                slot.clone(),
+                plugin_name.clone(),
+            ),
+            None => crate::capability::CapabilityGate::new(&policy),
+        };
         let mut component_builder = WasiCtxBuilder::new();
         component_builder.allow_blocking_current_thread(true);
         if policy.trust == crate::capability::TrustMode::Trusted {
+            component_builder.inherit_network();
             if let Err(e) = component_builder.preopened_dir(
                 "/",
                 "/",
@@ -410,6 +420,18 @@ impl HostState {
                 );
             }
         } else {
+            let socket_gate = capability_gate.clone();
+            component_builder.allow_tcp(true);
+            component_builder.allow_udp(false);
+            component_builder.allow_ip_name_lookup(false);
+            component_builder.socket_addr_check(move |addr, use_| {
+                let gate = socket_gate.clone();
+                Box::pin(async move {
+                    matches!(use_, wasmtime_wasi::sockets::SocketAddrUse::TcpConnect)
+                        && gate.require_socket_ip(addr.ip()).is_ok()
+                })
+            });
+
             // Preview2 directory permissions collapse mutation operations into
             // one MUTATE bit. Mapping write/create/delete here would therefore
             // widen our finer capability model. Only read grants are exposed
@@ -470,15 +492,6 @@ impl HostState {
                 .build()
         } else {
             wasmtime::StoreLimitsBuilder::new().build()
-        };
-        let capability_gate = match audit.clone() {
-            Some(sink) => crate::capability::CapabilityGate::with_audit(
-                &policy,
-                sink,
-                slot.clone(),
-                plugin_name.clone(),
-            ),
-            None => crate::capability::CapabilityGate::new(&policy),
         };
         Self {
             wasi: ctx,
