@@ -826,7 +826,7 @@ unload — the host removes them from the registry automatically.
 
 * **Now (core module):** Rust and Go compile to `wasm32-wasip1` and can export
   these symbols directly. Go uses `//go:wasmexport`; Rust uses `#[no_mangle]`.
-* **Component Model (Phase E active):** `wit/plugin.wit` defines the typed world for JS (`jco`), Python (`componentize-py`) and Rust components, and Wasmtime `component::bindgen!` validates it in `host/tests/wit_contract.rs`. Runtime detects `CoreModule | Component`, compiles both through the stable `compile_artifact()` entrypoint, and `PluginBackend` dispatches both behind the same `Plugin` API. Component lifecycle calls (`abi/init/configure/describe/invoke/shutdown`) are wired, while declarations/results are converted into the existing internal models before Registry/Hook/Service/UI code sees them. The **Registry, slot identity, CapabilityGate, AuditSink and service/hook semantics remain authoritative and shared** — WIT replaces transport, not policy. A real Rust Component guest now lives in `plugins/component-rust-demo` and is verified by `host/examples/component_smoke.rs` through load → describe/tool registration → invoke → unload. The remaining Phase E producer work is JS/jco and Python/componentize-py demos using the same WIT world.
+* **Component Model (Phase E active):** versioned WIT 0.1/0.2/0.3/0.4 contracts coexist. Runtime detects the exported lifecycle package version and dispatches matching generated bindings behind the same `Plugin` API. 0.2 types tool dependencies, 0.3 types UI declarations, and 0.4 adds typed hook decisions via `invoke-hook`; older Components remain loadable. Rust and JS real guests are covered by CI; Python/componentize-py remains an environment-specific producer blocker. The **Registry, slot identity, CapabilityGate, AuditSink and service/hook semantics remain authoritative and shared** — WIT replaces transport, not policy.
 
 
 ## Host imports (补充)
@@ -835,7 +835,7 @@ unload — the host removes them from the registry automatically.
 
 ### `host.http_fetch(req_ptr, req_len, out_ptr, out_cap) -> i64`
 
-发起一个 HTTP 请求。WASI p1 的 `sock_*` 在 wasmtime 里未实现,所以**这是插件唯一的联网方式**。
+发起一个受控 HTTP 请求。对 **core/WASI p1 插件**，`sock_*` 不能作为通用联网通道，因此 `host.http_fetch` 是标准联网入口。Component/Preview2 guest 另有受 CapabilityGate 约束的 `wasi:http` / outbound socket 路径；它们不扩大 sandboxed authority。
 
 请求 JSON:
 ```json

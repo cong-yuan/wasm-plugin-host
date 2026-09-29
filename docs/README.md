@@ -77,9 +77,9 @@
 
 ## 现状(一句话)
 
-**功能完整度 ~95%**:插件生命周期、热更新、流程介入、服务图、配置、日志、并发、磁盘缓存、
-配置校验、dsh 组合全部完成且有测试(123 个,全绿,零警告)。
-**当前硬缺口**:`trusted` 兼容模式保留；`sandboxed` 已具备默认无 root、read/write 目录白名单、HTTP host/method gate、fuel/内存/epoch 超时、输出与日志记录上限。Phase B 剩路径审计/细粒度 create-delete 与全量验证，随后是 Service/Hook/UI capability。
+**宿主主体已进入可持续维护阶段**：生命周期、热更新、Hook/Service/tool 依赖、配置、日志、并发、磁盘缓存、dsh 组合与 Component Model 均有自动验证。当前 Rust 可枚举测试 249，CI 还覆盖 Rust/JS Component 和 Hana/OpenHanako Node harness。
+
+安全侧 `trusted` 兼容模式与 `sandboxed` 默认拒绝模式均已落地：filesystem/network/Agent Hook/Service/UI gate、资源预算、Audit、DNS/SSRF 与 Preview2/raw socket 边界均已实现。仓库内主要安全缺口已经闭环；剩余边界是仓库外真实 Studio/Tauri 前端宿主必须使用 authenticated slot identity 接 typed UI authorization。
 详见 [能力与权限模型.md](能力与权限模型.md)。
 
 详见 [进度.md](进度.md) 与 [已知问题.md](已知问题.md)。
