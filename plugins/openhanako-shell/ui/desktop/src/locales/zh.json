@@ -288,7 +288,9 @@
     "selectedCount": "已选 {count} 条",
     "allDone": "全部完成",
     "markAllComplete": "全部标记为已完成",
-    "back": "返回"
+    "back": "返回",
+    "retry": "重试",
+    "dismiss": "关闭"
   },
   "chat": {
     "find": {

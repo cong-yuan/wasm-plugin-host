@@ -76,6 +76,20 @@ export function subscribeStudioBridgeStatus(listener: () => void): () => void {
   return () => statusListeners.delete(listener);
 }
 
+export function retryStudioBackendBridge(): void {
+  if (!inIframe()) {
+    mode = 'off';
+    setBridgeStatus({ state: 'standalone' });
+    return;
+  }
+  mode = 'pending';
+  readyPromise = null;
+  readyWaiters = [];
+  setBridgeStatus({ state: 'pending' });
+  probe();
+  void whenReady();
+}
+
 function inIframe(): boolean {
   try {
     return !!window.parent && window.parent !== window;

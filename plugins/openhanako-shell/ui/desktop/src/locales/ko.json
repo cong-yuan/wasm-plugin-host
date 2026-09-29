@@ -288,7 +288,9 @@
     "selectedCount": "{count}개 선택됨",
     "allDone": "모두 완료",
     "markAllComplete": "모두 완료로 표시",
-    "back": "뒤로"
+    "back": "뒤로",
+    "retry": "다시 시도",
+    "dismiss": "닫기"
   },
   "chat": {
     "find": {

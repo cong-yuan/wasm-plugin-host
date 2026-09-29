@@ -35,6 +35,26 @@
 .bridgeStatus-error {
     color: var(--danger, #c94a4a);
     border-color: color-mix(in srgb, currentColor 24%, transparent);
+    pointer-events: auto;
+}
+
+.bridgeStatusAction {
+    appearance: none;
+    border: 0;
+    padding: 0 2px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+}
+
+.bridgeStatusAction:hover,
+.bridgeStatusAction:focus-visible {
+    opacity: 0.8;
+    outline: none;
 }
 
 .bridgeStatus-streaming {

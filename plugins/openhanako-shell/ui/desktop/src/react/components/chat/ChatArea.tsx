@@ -13,6 +13,7 @@ import { ChatFindBar } from './ChatFindBar';
 import {
   getStudioBridgeStatus,
   subscribeStudioBridgeStatus,
+  retryStudioBackendBridge,
 } from '../../studio-backend/studio-backend-bridge';
 import styles from './Chat.module.css';
 
@@ -58,6 +59,18 @@ function ChatRuntimeStatusBar() {
     ? sessionScopedValue(s, s.inlineErrors, currentPath) ?? null
     : null);
   const status = resolveChatRuntimeStatus({ bridge, streaming, inlineError });
+  const handleErrorAction = () => {
+    if (inlineError && currentPath) {
+      useStore.getState().clearInlineError(currentPath);
+      return;
+    }
+    if (bridge.state === 'error') retryStudioBackendBridge();
+  };
+  const errorActionLabel = inlineError
+    ? window.t('common.dismiss')
+    : bridge.state === 'error'
+      ? window.t('common.retry')
+      : null;
   if (!status) return null;
 
   return (
@@ -69,6 +82,16 @@ function ChatRuntimeStatusBar() {
     >
       <span className={styles.bridgeStatusDot} aria-hidden="true" />
       <span>{status.label}</span>
+      {status.state === 'error' && errorActionLabel && (
+        <button
+          type="button"
+          className={styles.bridgeStatusAction}
+          onClick={handleErrorAction}
+          data-chat-runtime-action=""
+        >
+          {errorActionLabel}
+        </button>
+      )}
     </div>
   );
 }

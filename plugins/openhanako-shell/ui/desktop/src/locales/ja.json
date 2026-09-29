@@ -288,7 +288,9 @@
     "selectedCount": "{count} 件選択中",
     "allDone": "すべて完了",
     "markAllComplete": "すべて完了にする",
-    "back": "戻る"
+    "back": "戻る",
+    "retry": "再試行",
+    "dismiss": "閉じる"
   },
   "chat": {
     "find": {

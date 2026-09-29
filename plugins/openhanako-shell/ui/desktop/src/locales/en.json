@@ -288,7 +288,9 @@
     "selectedCount": "{count} selected",
     "allDone": "All done",
     "markAllComplete": "Mark all as complete",
-    "back": "Back"
+    "back": "Back",
+    "retry": "Retry",
+    "dismiss": "Dismiss"
   },
   "chat": {
     "find": {
