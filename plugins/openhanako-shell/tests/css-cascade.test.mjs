@@ -10,12 +10,11 @@
 // swallowing every click inside it) is invisible to a DOM shim with no layout
 // engine, and invisible to the eye until someone tries to click a row.
 //
-// jsdom is a **dev-only, optional** dependency: this plugin ships zero runtime
-// dependencies (every asset is an `include_str!` into the `.wasm`), and forcing
-// an install step on `npm test` would be a worse trade than skipping here. So
-// this file skips — **loudly** — when jsdom is absent. A silent skip would read
-// as "checked and fine", which is the failure mode this whole file exists to
-// avoid.
+// jsdom is a dev-only test dependency. The plugin still ships zero runtime
+// dependencies (every asset is an `include_str!` into the `.wasm`). CI installs
+// the pinned package-lock with `npm ci`, so this test is part of the main gate.
+// Keep the loud local skip only for developers running the file directly
+// without installing dev dependencies.
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,27 +33,42 @@ try {
   process.exit(0);
 }
 
-// Markup mirrors the shipped structure exactly — the handle is the column's
-// child, not a sibling of it, which is what made the bug possible.
-const markup = (pane, cls, handleCls, resize) => `
-  <div class="hn-shell">
-    <div class="hn-col-${pane}" data-pane="${pane}">
-      <aside class="${cls}">
-        <div class="hn-resize-handle ${handleCls}" data-resize="${resize}" id="handle"></div>
-        <div class="${cls}-header" id="inner"></div>
-      </aside>
-    </div>
+// Markup mirrors the current shipped openhanako-shell structure. The resize
+// handle is a narrow absolutely-positioned hit strip inside each panel; it must
+// never inherit the panel width and swallow normal clicks.
+const markup = (c) => `
+  <div class="hana-replica">
+    <aside class="${c.panelClass}">
+      <div class="resize-handle ${c.handleClass}" id="handle"></div>
+      <div class="${c.innerClass}" id="inner"></div>
+    </aside>
   </div>`;
 
 const CHECKS = [
-  // `innerToken` is the width the inner content should end up with. The sidebar
-  // and rail size their children explicitly (so the content keeps its width
-  // while the column animates to zero); the preview instead sizes *itself* and
-  // lets flex stretch the children, so their computed width is `auto`. Asserting
-  // one rule for all three would encode a rule the design does not have.
-  { pane: 'sidebar', cls: 'hn-side', handleCls: 'hn-resize-right', resize: 'sidebar', innerToken: '--dw-sidebar-width' },
-  { pane: 'preview', cls: 'hn-preview', handleCls: 'hn-resize-left', resize: 'preview', innerToken: null },
-  { pane: 'rail', cls: 'hn-rail', handleCls: 'hn-resize-left', resize: 'rail', innerToken: '--dw-rail-width' },
+  {
+    pane: 'sidebar',
+    panelClass: 'sidebar',
+    innerClass: 'sidebar-inner',
+    handleClass: 'resize-handle-right',
+    handleWidth: '6px',
+    innerToken: '--sidebar-width',
+  },
+  {
+    pane: 'preview',
+    panelClass: 'preview-panel',
+    innerClass: 'preview-panel-inner',
+    handleClass: 'resize-handle-left',
+    handleWidth: '8px',
+    innerToken: null,
+  },
+  {
+    pane: 'rail',
+    panelClass: 'jian-sidebar',
+    innerClass: 'jian-sidebar-inner',
+    handleClass: 'resize-handle-left',
+    handleWidth: '8px',
+    innerToken: '--jian-sidebar-width',
+  },
 ];
 
 const results = [];
@@ -65,35 +79,25 @@ const check = (name, cond, detail) => {
 
 for (const c of CHECKS) {
   const dom = new JSDOM(
-    `<!doctype html><html><head><style>${css}</style></head><body>${markup(c.pane, c.cls, c.handleCls, c.resize)}</body></html>`,
+    `<!doctype html><html><head><style>${css}</style></head><body>${markup(c)}</body></html>`,
     { pretendToBeVisual: true },
   );
   const style = (id) => dom.window.getComputedStyle(dom.window.document.getElementById(id));
 
-  // The whole point: the handle is 3px, not the column's width. `getComputedStyle`
-  // returns the *declared* value for `var()`, so an unresolved token shows up as
-  // the literal string `var(--dw-sidebar-width)` — which is exactly what the bug
-  // looked like, and is why comparing against `3px` catches it.
-  const hw = style('handle').width;
-  check(`[${c.pane}] the handle is 3px, not the column width`,
-    hw === '3px', `computed width was ${hw}`);
+  const handle = style('handle');
+  check(`[${c.pane}] resize hit strip keeps its narrow width`,
+    handle.width === c.handleWidth, `computed width was ${handle.width}`);
+  check(`[${c.pane}] resize hit strip is absolutely positioned`,
+    handle.position === 'absolute', handle.position);
+  check(`[${c.pane}] resize hit strip uses col-resize cursor`,
+    handle.cursor === 'col-resize', handle.cursor);
 
-  check(`[${c.pane}] the handle is absolutely positioned`,
-    style('handle').position === 'absolute', style('handle').position);
-
-  check(`[${c.pane}] the handle is a grab strip, not a click target`,
-    style('handle').cursor === 'col-resize', style('handle').cursor);
-
-  // The inner content must not have been broken by the fix. Where the design
-  // sizes it explicitly, it must still resolve to that token; where it relies on
-  // the parent (preview), it must not have picked up a stray width.
+  const iw = style('inner').width;
   if (c.innerToken) {
-    const iw = style('inner').width;
     check(`[${c.pane}] inner content still sizes from ${c.innerToken}`,
       iw === `var(${c.innerToken})`, `inner width was ${iw}`);
   } else {
-    const iw = style('inner').width;
-    check(`[${c.pane}] inner content is not stretched by a child rule`,
+    check(`[${c.pane}] inner content keeps automatic width`,
       iw === 'auto', `inner width was ${iw}`);
   }
 }
