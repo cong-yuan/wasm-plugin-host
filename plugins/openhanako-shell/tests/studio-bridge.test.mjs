@@ -264,6 +264,45 @@ check('sessions without backend timestamps do not become just-now on every refre
   api.transcript = originalTranscript;
 }
 
+// Idle runtime projections reuse transcript parsing until the session version
+// changes, while busy sessions always refresh for live tool state.
+{
+  const originalSessions = api.sessions;
+  const originalTranscript = api.transcript;
+  let messageCount = 2;
+  let busy = false;
+  let transcriptCalls = 0;
+  api.sessions = async () => [{
+    id: 'runtime-cache',
+    title: 'Cached runtime',
+    busy,
+    live: true,
+    status: busy ? 'busy' : 'idle',
+    messages: messageCount,
+    updated_at: 100,
+  }];
+  api.transcript = async () => {
+    transcriptCalls += 1;
+    return [{ role: 'assistant', text: 'cached', tool_calls: [], tool_results: [] }];
+  };
+
+  await adapter.http('GET', '/api/runtime-state');
+  await adapter.http('GET', '/api/runtime-state');
+  check('idle runtime-state reuses transcript cache', transcriptCalls === 1);
+
+  messageCount = 3;
+  await adapter.http('GET', '/api/runtime-state');
+  check('runtime transcript cache invalidates on message version change', transcriptCalls === 2);
+
+  busy = true;
+  await adapter.http('GET', '/api/runtime-state');
+  await adapter.http('GET', '/api/runtime-state');
+  check('busy runtime-state bypasses transcript cache', transcriptCalls === 4);
+
+  api.sessions = originalSessions;
+  api.transcript = originalTranscript;
+}
+
 const created = await adapter.http('POST', '/api/sessions/new-detached', {});
 check('create_agent uses mock/mock-1',
   created.sessionId === 'agent-new'

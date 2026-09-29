@@ -22,6 +22,13 @@ return (function () {
   // turn token so Stop can synchronously invalidate every late callback before
   // awaiting the backend cancellation request.
   const activeTurns = new Map();
+  const runtimeTranscriptCache = new Map();
+  const runtimeTranscriptKey = (row, base) => [
+    base?.messageCount ?? '',
+    row?.updated_at ?? row?.updatedAt ?? '',
+    row?.status ?? '',
+    row?.error ?? row?.last_error ?? row?.lastError ?? '',
+  ].join('|');
   let streamSequence = 0;
   const newStreamId = () => 'studio-stream-' + Date.now().toString(36) + '-' + (++streamSequence).toString(36);
   const deactivateTurn = (turn) => {
@@ -745,8 +752,21 @@ return (function () {
 
   const runtimeProjection = async (row) => {
     const base = projection(row);
-    let transcript = [];
-    try { transcript = await api.transcript(row.id); } catch (_) { /* session row still useful */ }
+    const cacheKey = runtimeTranscriptKey(row, base);
+    const cached = runtimeTranscriptCache.get(row.id) || null;
+    let transcript = cached?.transcript || [];
+    const shouldRefreshTranscript = base.busy
+      || base.isStreaming
+      || !cached
+      || cached.key !== cacheKey;
+    if (shouldRefreshTranscript) {
+      try {
+        transcript = await api.transcript(row.id);
+        if (!base.busy && !base.isStreaming) {
+          runtimeTranscriptCache.set(row.id, { key: cacheKey, transcript });
+        }
+      } catch (_) { /* retain cached transcript when available */ }
+    }
     const tools = runtimeToolState(transcript);
     const failure = base.error || (tools.failed.length ? tools.failed[tools.failed.length - 1].error : null);
     return {
@@ -1311,6 +1331,10 @@ return (function () {
 
     if (pathname === '/api/runtime-state' && verb === 'GET') {
       const rows = await api.sessions();
+      const liveIds = new Set(rows.map((row) => row.id));
+      for (const id of runtimeTranscriptCache.keys()) {
+        if (!liveIds.has(id)) runtimeTranscriptCache.delete(id);
+      }
       return {
         mode: api.mode(),
         sessions: await Promise.all(rows.map(runtimeProjection)),
