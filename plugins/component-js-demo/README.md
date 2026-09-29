@@ -53,6 +53,9 @@ Expected behavior:
 - `js_component_echo` is registered from typed `describe()`
 - typed `invoke()` echoes the input JSON
 - typed `shutdown()` runs during unload
+- `init()` and `invoke()` call the custom `host-log` import
+- `invoke()` reads the live config through `host-config` and the smoke result includes `source=component-smoke`
+- the declaration requests `GET` access to `api.example.com`; the sandbox smoke grants exactly that capability, exercising request ∩ grant validation
 
 ## WASI boundary
 

@@ -20,6 +20,13 @@ fn main() -> Result<()> {
             config,
             PluginPolicy {
                 trust: TrustMode::Sandboxed,
+                grant: wasm_plugin_host::CapabilitySet {
+                    network: wasm_plugin_host::NetworkCapabilities {
+                        allow: vec!["api.example.com".into()],
+                        methods: vec!["GET".into()],
+                    },
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         )?
