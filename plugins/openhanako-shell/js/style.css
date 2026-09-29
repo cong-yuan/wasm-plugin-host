@@ -991,7 +991,9 @@ html[data-platform="linux"] .tb-toggle-right {
     font-size: 10px;
     color: var(--text-muted);
 }
+.sessionBulkSelectVisible,
 .sessionBulkPrimary,
+.sessionBulkDelete,
 .sessionBulkClear {
     border: 0;
     border-radius: 6px;
@@ -1002,10 +1004,24 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--text-muted);
     background: rgba(0,0,0,0.05);
 }
+.sessionBulkSelectVisible:hover,
 .sessionBulkPrimary:hover,
+.sessionBulkDelete:hover,
 .sessionBulkClear:hover {
     color: var(--text-primary);
     background: rgba(0,0,0,0.08);
+}
+.sessionBulkDelete {
+    color: #a64238;
+}
+.sessionBulkDelete:hover {
+    color: #8f342c;
+    background: rgba(190,80,70,0.08);
+}
+.sessionItemKeyboard {
+    outline: 1px solid rgba(164,116,47,0.35);
+    outline-offset: -1px;
+    background: rgba(214,176,78,0.055);
 }
 .sessionSelectBox {
     width: 13px;

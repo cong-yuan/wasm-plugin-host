@@ -252,6 +252,16 @@ check('4 activity bars', chatContent.children.filter(
     && root.querySelectorAll('.sessionArchiveBtn').length === beforeRows.length);
   check('sidebar exposes multi-select controls',
     root.querySelectorAll('.sessionSelectBox').length === beforeRows.length);
+  root.querySelector('.sessionBulkSelectVisible')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('select visible chooses every visible session',
+    root.querySelectorAll('.sessionSelectBox').length > 0
+    && root.querySelectorAll('.sessionSelectBox').every((box) => box.checked === true)
+    && /selected/i.test(root.querySelector('.sessionBulkCount')?.textContent || ''));
+  root.querySelector('.sessionBulkSelectVisible')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('select visible toggles back to clear visible',
+    root.querySelectorAll('.sessionSelectBox').every((box) => box.checked !== true));
   const firstTwo = beforeRows.slice(0, 2);
   firstTwo.forEach((row) => {
     const box = row.querySelector('.sessionSelectBox');
@@ -267,7 +277,8 @@ check('4 activity bars', chatContent.children.filter(
   root.querySelector('.sessionBulkClear')?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   check('bulk selection can be cleared',
-    root.querySelector('.sessionBulkBar')?.style?.display === 'none');
+    /visible/i.test(root.querySelector('.sessionBulkCount')?.textContent || '')
+    && root.querySelector('.sessionBulkPrimary')?.style?.display === 'none');
 
   const target = beforeRows[beforeRows.length - 1];
   let targetTitle = target.querySelector('.sessionItemTitle')?.textContent || '';
@@ -355,13 +366,32 @@ check('4 activity bars', chatContent.children.filter(
     box.checked = true;
     box.fire('click');
   });
+  root.querySelector('.sessionBulkDelete')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('bulk archived delete requires second confirmation',
+    /confirm delete/i.test(root.querySelector('.sessionBulkDelete')?.textContent || '')
+    && /confirm permanent deletion/i.test(root.querySelector('.sessionActionStatus')?.textContent || ''));
+  root.querySelector('.sessionBulkClear')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  root.querySelectorAll('.sessionSelectBox').slice(0, 2).forEach((box) => {
+    box.checked = true;
+    box.fire('click');
+  });
   root.querySelector('.sessionBulkPrimary')?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   check('bulk restore returns to clean archived selection state',
     /sessions restored/i.test(root.querySelector('.sessionActionStatus')?.textContent || '')
-    && root.querySelector('.sessionBulkBar')?.style?.display === 'none');
+    && root.querySelector('.sessionBulkPrimary')?.style?.display === 'none'
+    && /visible/i.test(root.querySelector('.sessionBulkCount')?.textContent || ''));
   viewButtons[0]?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const keyboardRows = root.querySelectorAll('.sessionItem');
+  keyboardRows[0]?.fire('keydown', { key: 'ArrowDown', preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('arrow key navigation advances keyboard focus state',
+    root.querySelectorAll('.sessionItem').some((row, index) =>
+      index > 0 && row._classes().includes('sessionItemKeyboard')));
 
   const search = root.querySelector('.sessionSearchInput');
   search?.fire('input', { target: { value: 'Welcome' } });

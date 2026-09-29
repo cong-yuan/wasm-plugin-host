@@ -19,9 +19,10 @@ return (function () {
   };
 
   function render(options) {
-    const view = { archived: false, query: '', searchVersion: 0, expanded: new Set(), selectedIds: new Set(), renamingId: null, deleteConfirmId: null };
+    const view = { archived: false, query: '', searchVersion: 0, expanded: new Set(), selectedIds: new Set(), visibleIds: [], keyboardId: null, renamingId: null, deleteConfirmId: null, bulkDeleteArmed: false };
     const searchCache = new Map();
     let searchTimer = null;
+    let lastRuntimeSignature = '';
     const add = h('button', { class: 'sidebar-action-btn', title: t('sidebar.newChat') }, svg(ICON.newChat));
     const settings = h('button', { class: 'sidebar-action-btn', title: t('settings.title') }, svg(ICON.settings));
     const collapse = h('button', { class: 'sidebar-action-btn', title: t('sidebar.collapse') }, svg(ICON.collapse));
@@ -64,10 +65,12 @@ return (function () {
     actionRetry.style.display = 'none';
     const actionStatus = h('div', { class: 'sessionActionStatus', 'aria-live': 'polite' }, actionStatusText, actionRetry);
     const bulkCount = h('span', { class: 'sessionBulkCount' }, '');
+    const bulkSelectVisible = h('button', { class: 'sessionBulkSelectVisible', type: 'button' }, 'Select visible');
     const bulkPrimary = h('button', { class: 'sessionBulkPrimary', type: 'button' }, 'Archive selected');
+    const bulkDelete = h('button', { class: 'sessionBulkDelete', type: 'button' }, 'Delete selected');
     const bulkClear = h('button', { class: 'sessionBulkClear', type: 'button' }, 'Clear');
-    const bulkBar = h('div', { class: 'sessionBulkBar' }, bulkCount, bulkPrimary, bulkClear);
-    bulkBar.style.display = 'none';
+    const bulkBar = h('div', { class: 'sessionBulkBar' }, bulkCount, bulkSelectVisible, bulkPrimary, bulkDelete, bulkClear);
+    bulkBar.style.display = '';
     const sessionControls = h('div', { class: 'sessionListControls' }, search, viewToggle, searchStatus, actionStatus, bulkBar);
     let actionStatusTimer = null;
     const reportAction = (message, isError = false, retry = null) => {
@@ -103,15 +106,56 @@ return (function () {
       h('div', { class: 'sidebar-inner' }, content),
       h('div', { class: 'resize-handle resize-handle-right', id: 'sidebarResizeHandle' }));
 
+    const runtimeSignature = (runtime) => (runtime?.sessions || [])
+      .map((state) => [
+        state.sessionId,
+        state.status || '',
+        state.isStreaming ? 1 : 0,
+        Number(state.activeToolCount) || 0,
+        state.error || '',
+      ].join(':'))
+      .sort()
+      .join('|');
+
+    const updateBridgeStatus = (runtime) => {
+      const runtimeRows = Array.from(runtime?.sessions || []);
+      const errorCount = runtimeRows.filter((state) => state.status === 'error').length;
+      const runningCount = runtimeRows.filter((state) => state.status === 'running' || state.isStreaming).length;
+      bridgeStatus.textContent = errorCount
+        ? `${errorCount} error${errorCount === 1 ? '' : 's'}`
+        : runningCount ? `${runningCount} running` : (runtime?.mode === 'mock' ? 'Mock' : 'Connected');
+      bridgeDot.className = 'sidebar-bridge-dot' + (errorCount ? ' error' : runningCount ? ' running' : ' connected');
+    };
+
     const refreshBulkBar = () => {
       const count = view.selectedIds.size;
-      bulkBar.style.display = count ? '' : 'none';
-      bulkCount.textContent = count ? `${count} selected` : '';
+      bulkBar.style.display = '';
+      bulkCount.textContent = count ? `${count} selected` : `${view.visibleIds.length || 0} visible`;
       bulkPrimary.textContent = view.archived ? 'Restore selected' : 'Archive selected';
+      bulkPrimary.style.display = count ? '' : 'none';
+      bulkClear.style.display = count ? '' : 'none';
+      bulkDelete.style.display = view.archived && count ? '' : 'none';
+      bulkSelectVisible.textContent = view.visibleIds.length > 0
+        && view.visibleIds.every((id) => view.selectedIds.has(id))
+        ? 'Clear visible' : 'Select visible';
+      bulkDelete.textContent = view.bulkDeleteArmed ? 'Confirm delete' : 'Delete selected';
+    };
+
+    bulkSelectVisible.onclick = () => {
+      const visible = view.visibleIds || [];
+      const allSelected = visible.length > 0 && visible.every((id) => view.selectedIds.has(id));
+      visible.forEach((id) => {
+        if (allSelected) view.selectedIds.delete(id);
+        else view.selectedIds.add(id);
+      });
+      view.bulkDeleteArmed = false;
+      refreshBulkBar();
+      draw(options.selected);
     };
 
     bulkClear.onclick = () => {
       view.selectedIds.clear();
+      view.bulkDeleteArmed = false;
       refreshBulkBar();
       draw(options.selected);
     };
@@ -138,6 +182,39 @@ return (function () {
         reportAction(`${completed} completed · ${failed.length} failed`, true, () => bulkPrimary.onclick());
       } else {
         reportAction(`${completed} sessions ${view.archived ? 'restored' : 'archived'}`);
+      }
+      await draw(options.selected);
+    };
+
+
+    bulkDelete.onclick = async () => {
+      const ids = Array.from(view.selectedIds);
+      if (!view.archived || !ids.length) return;
+      if (!view.bulkDeleteArmed) {
+        view.bulkDeleteArmed = true;
+        refreshBulkBar();
+        reportAction(`Confirm permanent deletion of ${ids.length} archived session${ids.length === 1 ? '' : 's'}`);
+        return;
+      }
+      reportAction(`Deleting ${ids.length} archived sessions…`);
+      let completed = 0;
+      const failed = [];
+      for (const sessionId of ids) {
+        try {
+          const result = await adapter.http('POST', '/api/sessions/archived/delete', { sessionId });
+          if (!result || result.ok === false || result.error) failed.push(sessionId);
+          else completed += 1;
+        } catch {
+          failed.push(sessionId);
+        }
+      }
+      view.selectedIds = new Set(failed);
+      view.bulkDeleteArmed = false;
+      refreshBulkBar();
+      if (failed.length) {
+        reportAction(`${completed} deleted · ${failed.length} failed`, true, () => bulkDelete.onclick());
+      } else {
+        reportAction(`${completed} archived sessions permanently deleted`);
       }
       await draw(options.selected);
     };
@@ -235,13 +312,8 @@ return (function () {
       }
 
       const runtimeById = new Map((runtime.sessions || []).map((state) => [state.sessionId, state]));
-      const runtimeRows = Array.from(runtimeById.values());
-      const errorCount = runtimeRows.filter((state) => state.status === 'error').length;
-      const runningCount = runtimeRows.filter((state) => state.status === 'running' || state.isStreaming).length;
-      bridgeStatus.textContent = errorCount
-        ? `${errorCount} error${errorCount === 1 ? '' : 's'}`
-        : runningCount ? `${runningCount} running` : (runtime.mode === 'mock' ? 'Mock' : 'Connected');
-      bridgeDot.className = 'sidebar-bridge-dot' + (errorCount ? ' error' : runningCount ? ' running' : ' connected');
+      lastRuntimeSignature = runtimeSignature(runtime);
+      updateBridgeStatus(runtime);
       activeView.className = 'sessionViewBtn' + (view.archived ? '' : ' active');
       archivedView.className = 'sessionViewBtn' + (view.archived ? ' active' : '');
       for (const id of Array.from(view.selectedIds)) {
@@ -255,6 +327,8 @@ return (function () {
           query ? 'No matching sessions' : view.archived ? 'No archived sessions' : t('sidebar.empty')));
         return;
       }
+      view.visibleIds = rows.map((row) => row.id);
+      refreshBulkBar();
 
       const pinnedIds = allRows.filter((row) => !!row.pinnedAt).map((row) => row.id);
       rows.forEach((s) => {
@@ -458,9 +532,12 @@ return (function () {
           titleNode.appendChild(cancelRename);
         }
         const row = h('div', {
-          class: 'sessionItem sessionItemSingleLine' + (selected === s.id ? ' sessionItemActive' : ''),
+          class: 'sessionItem sessionItemSingleLine'
+            + (selected === s.id ? ' sessionItemActive' : '')
+            + (view.keyboardId === s.id ? ' sessionItemKeyboard' : ''),
           role: 'button', tabindex: '0',
           ...(s.pinnedAt ? { 'data-pinned': 'true' } : {}),
+          'data-session-id': s.id,
           ...(view.archived ? { 'data-archived': 'true' } : {}),
           ...(isError ? { 'data-runtime-state': 'error' } : isRunning ? { 'data-runtime-state': 'running' } : {}),
         }, h('div', { class: 'sessionItemHeader' },
@@ -526,9 +603,24 @@ return (function () {
         if (!view.archived && !renaming) row.onclick = () => options.onSelect(s);
         if (!view.archived && !renaming) {
           row.onkeydown = (event) => {
-            if (event?.key !== 'Enter' && event?.key !== ' ') return;
+            const key = event?.key;
+            if (key === 'Enter' || key === ' ') {
+              event?.preventDefault?.();
+              options.onSelect(s);
+              return;
+            }
+            if (key !== 'ArrowDown' && key !== 'ArrowUp') return;
             event?.preventDefault?.();
-            options.onSelect(s);
+            const visible = view.visibleIds || [];
+            const index = visible.indexOf(s.id);
+            const nextIndex = Math.max(0, Math.min(visible.length - 1, index + (key === 'ArrowDown' ? 1 : -1)));
+            const nextId = visible[nextIndex];
+            if (!nextId || nextId === s.id) return;
+            view.keyboardId = nextId;
+            draw(selected).then(() => {
+              const nextRow = scroller.querySelector(`[data-session-id="${nextId}"]`);
+              nextRow?.focus?.();
+            });
           };
         }
         scroller.appendChild(row);
@@ -543,6 +635,8 @@ return (function () {
     activeView.onclick = () => {
       view.archived = false;
       view.selectedIds.clear();
+      view.bulkDeleteArmed = false;
+      view.keyboardId = null;
       view.deleteConfirmId = null;
       view.renamingId = null;
       draw(options.selected);
@@ -550,14 +644,27 @@ return (function () {
     archivedView.onclick = () => {
       view.archived = true;
       view.selectedIds.clear();
+      view.bulkDeleteArmed = false;
+      view.keyboardId = null;
       view.deleteConfirmId = null;
       view.renamingId = null;
       draw(options.selected);
     };
     draw(options.selected);
     bridge.onclick = () => draw(options.selected);
-    const runtimeRefreshTimer = setInterval(() => {
-      if (!view.archived && !view.query.trim() && !view.renamingId) draw(options.selected);
+    const runtimeRefreshTimer = setInterval(async () => {
+      if (view.archived || view.query.trim() || view.renamingId) return;
+      try {
+        const runtime = await adapter.http('GET', '/api/runtime-state');
+        const nextSignature = runtimeSignature(runtime);
+        updateBridgeStatus(runtime);
+        if (nextSignature !== lastRuntimeSignature) {
+          lastRuntimeSignature = nextSignature;
+          await draw(options.selected);
+        }
+      } catch {
+        // Keep the last known runtime state; manual bridge refresh remains available.
+      }
     }, 3000);
     runtimeRefreshTimer?.unref?.();
     return {
