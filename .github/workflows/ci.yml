@@ -221,10 +221,12 @@ jobs:
 
       - name: Smoke Rust WIT 0.3 typed-UI Component
         run: |
+          # This smoke validates the WIT 0.3 typed-UI transport. The fixture
+          # requests UI authority, so use trusted compatibility mode here;
+          # sandboxed UI allow/deny semantics have dedicated capability tests.
           cargo run -p wasm-plugin-host --example component_smoke -- \
             plugins/component-rust-ui-demo/target/component-rust-ui-demo.component.wasm \
-            component_ui_echo \
-            sandboxed
+            component_ui_echo
 
       - name: Smoke Rust WIT 0.4 typed-hook Component
         run: |
