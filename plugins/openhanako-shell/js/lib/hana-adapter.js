@@ -1338,7 +1338,9 @@ return (function () {
 
     if (pathname === '/api/sessions' && verb === 'GET') {
       const rows = await api.sessions();
-      return rows.filter((row) => !archivedRecord(row.id)).map(projection);
+      return rows
+        .filter((row) => !archivedRecord(row.id) && !disposedIds.has(row.id))
+        .map(projection);
     }
 
 
@@ -1351,7 +1353,8 @@ return (function () {
         : 20;
       if (!rawQuery) return { query: rawQuery, phase, results: [] };
       const needle = rawQuery.toLocaleLowerCase();
-      const rows = (await api.sessions()).filter((row) => !archivedRecord(row.id));
+      const rows = (await api.sessions())
+        .filter((row) => !archivedRecord(row.id) && !disposedIds.has(row.id));
       const results = [];
       for (const row of rows) {
         const projected = projection(row);
@@ -1391,7 +1394,8 @@ return (function () {
     }
 
     if (pathname === '/api/runtime-state' && verb === 'GET') {
-      const rows = (await api.sessions()).filter((row) => !archivedRecord(row.id));
+      const rows = (await api.sessions())
+        .filter((row) => !archivedRecord(row.id) && !disposedIds.has(row.id));
       const liveIds = new Set(rows.map((row) => row.id));
       for (const id of runtimeTranscriptCache.keys()) {
         if (!liveIds.has(id)) runtimeTranscriptCache.delete(id);
@@ -1406,7 +1410,9 @@ return (function () {
     if (runtimeSessionMatch && verb === 'GET') {
       const sessionId = idFrom(decodeURIComponent(runtimeSessionMatch[1]));
       const rows = await api.sessions();
-      const row = rows.find((item) => item.id === sessionId && !archivedRecord(item.id));
+      const row = rows.find((item) => item.id === sessionId
+        && !archivedRecord(item.id)
+        && !disposedIds.has(item.id));
       if (!row) return { error: 'session not found', code: 'session_not_found' };
       return runtimeProjection(row);
     }

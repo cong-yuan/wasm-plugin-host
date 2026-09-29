@@ -775,16 +775,6 @@ check('host bridge correlates requestId',
   check('restore resumes archived agent',
     restored && restored.ok === true && restored.restored === true
     && calls.some((c) => c.cmd === 'resume_session' && c.args.sessionId === 'agent-1'));
-
-  await adapter.http('POST', '/api/sessions/rename', { sessionId: 'agent-1', title: 'Disposable title' });
-  await adapter.http('POST', '/api/sessions/pin', { sessionId: 'agent-1', pinned: true });
-  await adapter.http('POST', '/api/sessions/archive', { sessionId: 'agent-1' });
-  calls.length = 0;
-  const deletedArchived = await adapter.http('POST', '/api/sessions/archived/delete', { sessionId: 'agent-1' });
-  check('permanent delete disposes archived session', deletedArchived?.ok === true);
-  const afterPermanentDelete = await adapter.http('GET', '/api/sessions/archived');
-  check('permanent delete removes archived metadata',
-    !afterPermanentDelete.some((row) => row.sessionId === 'agent-1'));
 }
 
 // Standalone session search mirrors the server's title/content phases and
@@ -802,6 +792,28 @@ check('host bridge correlates requestId',
       row.sessionId === 'agent-1'
       && row.matchKind === 'content'
       && /done/i.test(row.snippet || '')));
+
+  await adapter.http('POST', '/api/sessions/rename', { sessionId: 'agent-1', title: 'Disposable title' });
+  await adapter.http('POST', '/api/sessions/pin', { sessionId: 'agent-1', pinned: true });
+  await adapter.http('POST', '/api/sessions/archive', { sessionId: 'agent-1' });
+  calls.length = 0;
+  const deletedArchived = await adapter.http('POST', '/api/sessions/archived/delete', { sessionId: 'agent-1' });
+  check('permanent delete disposes archived session', deletedArchived?.ok === true);
+  const afterPermanentDelete = await adapter.http('GET', '/api/sessions/archived');
+  check('permanent delete removes archived metadata',
+    !afterPermanentDelete.some((row) => row.sessionId === 'agent-1'));
+  const activeAfterPermanentDelete = await adapter.http('GET', '/api/sessions');
+  check('disposed session stays hidden while backend list is stale',
+    !activeAfterPermanentDelete.some((row) => row.sessionId === 'agent-1'));
+  const runtimeAfterPermanentDelete = await adapter.http('GET', '/api/runtime-state');
+  check('disposed session stays hidden from runtime state',
+    !runtimeAfterPermanentDelete.sessions.some((row) => row.sessionId === 'agent-1'));
+  const searchAfterPermanentDelete = await adapter.http(
+    'GET',
+    '/api/sessions/search?q=Hello&phase=title&limit=20',
+  );
+  check('disposed session stays hidden from search',
+    !searchAfterPermanentDelete.results.some((row) => row.sessionId === 'agent-1'));
 }
 
 // Busy session must refuse a second prompt (send lock).
