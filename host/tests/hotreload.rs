@@ -7,12 +7,8 @@ use std::path::{Path, PathBuf};
 
 const RESULT_JSON: &str = r#"{"kind":"success","content":"ok","value":{}}"#;
 
-/// Build a minimal ABI-v1 module declaring one tool `<slot>_tool`, whose
-/// declaration and invoke-result come from embedded data segments.
-fn wasm_bytes(slot: &str, marker: &str) -> Vec<u8> {
-    let decl = format!(
-        r#"{{"name":"{slot}","abi":1,"tools":[{{"name":"{slot}_tool","description":"{marker}","exec":"go"}}]}}"#
-    );
+/// Build a minimal ABI-v1 module from an arbitrary JSON declaration.
+fn wasm_from_decl(decl: String) -> Vec<u8> {
     let decl_off = 16usize;
     let res_off = decl_off + decl.len();
     let wat = format!(
@@ -31,12 +27,8 @@ fn wasm_bytes(slot: &str, marker: &str) -> Vec<u8> {
             (local.set $p (global.get $bump))
             (global.set $bump (i32.add (global.get $bump) (local.get $n)))
             (local.get $p))
-          ;; LIFO free: rewind the bump pointer so repeated calls do not exhaust
-          ;; the (small) test memory. The host frees the output buffer last, so
-          ;; this is correct for the call pattern used here.
           (func (export "plugin_free") (param $p i32) (param $n i32)
             (global.set $bump (local.get $p)))
-
           (func $blit (param $src i32) (param $len i32) (param $out i32) (param $cap i32) (result i64)
             (local $i i32)
             (if (i32.lt_s (local.get $cap) (local.get $len))
@@ -49,10 +41,8 @@ fn wasm_bytes(slot: &str, marker: &str) -> Vec<u8> {
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $loop)))
             (i64.extend_i32_s (local.get $len)))
-
           (func (export "plugin_describe") (param $out i32) (param $cap i32) (result i64)
             (call $blit (i32.const {decl_off}) (i32.const {decl_len}) (local.get $out) (local.get $cap)))
-
           (func (export "plugin_invoke")
             (param $op i32) (param $oplen i32) (param $a i32) (param $alen i32)
             (param $out i32) (param $cap i32) (result i64)
@@ -66,6 +56,24 @@ fn wasm_bytes(slot: &str, marker: &str) -> Vec<u8> {
         res_len = RESULT_JSON.len(),
     );
     wat::parse_str(&wat).expect("test wat should parse")
+}
+
+/// Build a minimal ABI-v1 module declaring one tool `<slot>_tool`.
+fn wasm_bytes(slot: &str, marker: &str) -> Vec<u8> {
+    wasm_from_decl(format!(
+        r#"{{"name":"{slot}","abi":1,"tools":[{{"name":"{slot}_tool","description":"{marker}","exec":"go"}}]}}"#
+    ))
+}
+
+fn wasm_tool_graph(slot: &str, tools: serde_json::Value) -> Vec<u8> {
+    wasm_from_decl(
+        serde_json::json!({
+            "name": slot,
+            "abi": 1,
+            "tools": tools,
+        })
+        .to_string(),
+    )
 }
 
 fn tmpdir(tag: &str) -> PathBuf {
@@ -202,11 +210,37 @@ fn validation_report_exposes_artifact_and_declaration_summary() {
     assert_eq!(report.plugin, "alpha");
     assert_eq!(report.abi, 1);
     assert_eq!(report.tools, vec!["alpha_tool"]);
+    assert!(report.tool_dependencies.is_empty());
     assert!(report.hooks.is_empty());
     assert!(report.injects.is_empty());
     assert!(report.provides.is_empty());
     assert!(!report.has_ui);
     assert!(report.requested_capabilities.is_empty());
+}
+
+#[test]
+fn validation_report_exposes_tool_dependencies() {
+    let dir = tmpdir("validate-tool-deps");
+    let wasm = dir.join("deps.wasm");
+    write(
+        &wasm,
+        &wasm_tool_graph(
+            "deps",
+            serde_json::json!([
+                {"name":"base","description":"base","exec":"go"},
+                {"name":"child","description":"child","exec":"go","requires":["base"]}
+            ]),
+        ),
+    );
+
+    let reg = Registry::new(Runtime::new().unwrap());
+    let report = reg.validate_report(&wasm).unwrap();
+    assert_eq!(report.tools, vec!["base", "child"]);
+    assert_eq!(
+        report.tool_dependencies.get("child"),
+        Some(&vec!["base".to_string()])
+    );
+    assert!(!report.tool_dependencies.contains_key("base"));
 }
 
 // ---------- config diffing ----------
@@ -1066,6 +1100,214 @@ fn service_inject_reports_missing_provider() {
     let r = reg.load("alpha", &a, serde_json::Value::Null).unwrap();
     assert!(r.missing_services.is_empty());
     assert_eq!(reg.provider_of("llm"), None);
+}
+
+// ---------- tool graph: fine-grained dependencies ----------
+
+#[test]
+fn a_tool_waits_for_its_required_tool_without_quiescing_the_plugin() {
+    let dir = tmpdir("tool-dep");
+    let consumer = dir.join("consumer.wasm");
+    let provider = dir.join("provider.wasm");
+    write(
+        &consumer,
+        &wasm_tool_graph(
+            "consumer",
+            serde_json::json!([
+                {"name":"independent","description":"always","exec":"go"},
+                {"name":"dependent","description":"waits","exec":"go","requires":["base_tool"]}
+            ]),
+        ),
+    );
+    write(
+        &provider,
+        &wasm_tool_graph(
+            "provider",
+            serde_json::json!([
+                {"name":"base_tool","description":"base","exec":"go"}
+            ]),
+        ),
+    );
+
+    let mut reg = registry();
+    let loaded = reg
+        .load("consumer", &consumer, serde_json::Value::Null)
+        .unwrap();
+    assert!(loaded.active, "tool deps must not quiesce the whole plugin");
+    assert_eq!(loaded.tools, vec!["independent"]);
+    assert!(reg.tool_owner("dependent").is_none());
+
+    reg.load("provider", &provider, serde_json::Value::Null)
+        .unwrap();
+    assert_eq!(reg.tool_owner("base_tool"), Some("provider"));
+    assert_eq!(reg.tool_owner("dependent"), Some("consumer"));
+    assert_eq!(reg.tool_owner("independent"), Some("consumer"));
+
+    reg.unload("provider").unwrap();
+    assert!(reg.is_loaded("consumer"));
+    assert_eq!(reg.tool_owner("dependent"), None);
+    assert_eq!(reg.tool_owner("independent"), Some("consumer"));
+}
+
+#[test]
+fn tool_dependency_chain_converges_in_one_registry_pass() {
+    let dir = tmpdir("tool-chain");
+    let a = dir.join("a.wasm");
+    let b = dir.join("b.wasm");
+    let c = dir.join("c.wasm");
+    write(
+        &a,
+        &wasm_tool_graph(
+            "a",
+            serde_json::json!([
+                {"name":"tool_a","description":"a","exec":"go","requires":["tool_b"]}
+            ]),
+        ),
+    );
+    write(
+        &b,
+        &wasm_tool_graph(
+            "b",
+            serde_json::json!([
+                {"name":"tool_b","description":"b","exec":"go","requires":["tool_c"]}
+            ]),
+        ),
+    );
+    write(
+        &c,
+        &wasm_tool_graph(
+            "c",
+            serde_json::json!([
+                {"name":"tool_c","description":"c","exec":"go"}
+            ]),
+        ),
+    );
+
+    let mut reg = registry();
+    reg.load("a", &a, serde_json::Value::Null).unwrap();
+    reg.load("b", &b, serde_json::Value::Null).unwrap();
+    assert!(reg.list_tools().is_empty());
+
+    reg.load("c", &c, serde_json::Value::Null).unwrap();
+    assert_eq!(reg.tool_owner("tool_c"), Some("c"));
+    assert_eq!(reg.tool_owner("tool_b"), Some("b"));
+    assert_eq!(reg.tool_owner("tool_a"), Some("a"));
+
+    reg.unload("c").unwrap();
+    assert!(reg.list_tools().is_empty(), "dependency loss must cascade");
+    assert!(reg.is_loaded("a"));
+    assert!(reg.is_loaded("b"));
+}
+
+#[test]
+fn quiescent_tool_names_are_still_reserved() {
+    let dir = tmpdir("tool-reserve");
+    let first = dir.join("first.wasm");
+    let second = dir.join("second.wasm");
+    write(
+        &first,
+        &wasm_tool_graph(
+            "first",
+            serde_json::json!([
+                {"name":"shared_name","description":"waits","exec":"go","requires":["missing_tool"]}
+            ]),
+        ),
+    );
+    write(
+        &second,
+        &wasm_tool_graph(
+            "second",
+            serde_json::json!([
+                {"name":"shared_name","description":"collision","exec":"go"}
+            ]),
+        ),
+    );
+
+    let mut reg = registry();
+    reg.load("first", &first, serde_json::Value::Null).unwrap();
+    assert_eq!(reg.tool_owner("shared_name"), None);
+    let err = reg
+        .load("second", &second, serde_json::Value::Null)
+        .unwrap_err();
+    assert!(err.to_string().contains("already declared"), "got: {err}");
+}
+
+#[test]
+fn a_tool_cannot_require_itself() {
+    let dir = tmpdir("tool-self-dep");
+    let wasm = dir.join("self.wasm");
+    write(
+        &wasm,
+        &wasm_tool_graph(
+            "self-dep",
+            serde_json::json!([
+                {"name":"loop","description":"bad","exec":"go","requires":["loop"]}
+            ]),
+        ),
+    );
+
+    let mut reg = registry();
+    let err = reg.load("self", &wasm, serde_json::Value::Null).unwrap_err();
+    assert!(err.to_string().contains("cannot require itself"), "got: {err}");
+}
+
+#[test]
+fn reload_recomputes_tool_dependencies_atomically() {
+    let dir = tmpdir("tool-dep-reload");
+    let provider = dir.join("provider.wasm");
+    let consumer = dir.join("consumer.wasm");
+    write(
+        &provider,
+        &wasm_tool_graph(
+            "provider",
+            serde_json::json!([
+                {"name":"base_tool","description":"base","exec":"go"}
+            ]),
+        ),
+    );
+    write(
+        &consumer,
+        &wasm_tool_graph(
+            "consumer",
+            serde_json::json!([
+                {"name":"dependent","description":"v1","exec":"go","requires":["base_tool"]}
+            ]),
+        ),
+    );
+
+    let mut reg = registry();
+    reg.load("provider", &provider, serde_json::Value::Null)
+        .unwrap();
+    reg.load("consumer", &consumer, serde_json::Value::Null)
+        .unwrap();
+    assert_eq!(reg.tool_owner("dependent"), Some("consumer"));
+
+    write(
+        &consumer,
+        &wasm_tool_graph(
+            "consumer",
+            serde_json::json!([
+                {"name":"dependent","description":"v2","exec":"go","requires":["missing_tool"]}
+            ]),
+        ),
+    );
+    let report = reg.reload("consumer", &consumer, None).unwrap();
+    assert!(report.new_tools.is_empty());
+    assert_eq!(reg.tool_owner("dependent"), None);
+    assert!(reg.is_loaded("consumer"));
+
+    write(
+        &consumer,
+        &wasm_tool_graph(
+            "consumer",
+            serde_json::json!([
+                {"name":"dependent","description":"v3","exec":"go"}
+            ]),
+        ),
+    );
+    let report = reg.reload("consumer", &consumer, None).unwrap();
+    assert_eq!(report.new_tools, vec!["dependent"]);
+    assert_eq!(reg.tool_owner("dependent"), Some("consumer"));
 }
 
 // ---------- service graph: convergence + cross-plugin calls ----------

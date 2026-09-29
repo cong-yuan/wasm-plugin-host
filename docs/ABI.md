@@ -226,7 +226,8 @@ reg.log_sink().clear();        // drop the buffer
       "name": "greet",
       "description": "Return a greeting",
       "parameters": { "type": "object", "properties": { "who": { "type": "string" } } },
-      "exec": "greet"
+      "exec": "greet",
+      "requires": ["sessions.list"]
     }
   ],
   "hooks": [
@@ -244,6 +245,19 @@ reg.log_sink().clear();        // drop the buffer
 
 `exec` is the `op` string the host passes to `plugin_invoke`.
 `tools[].name` is how the agent-loop sees the tool.
+
+`tools[].requires` is an optional list of **other global tool names** that must
+already be registered before this tool is exposed. This is finer-grained than
+plugin-level `injects`: missing tool dependencies hide only the affected tool;
+the plugin's hooks, services, and unrelated tools remain active. Dependency
+chains converge automatically when providers appear and unwind when they
+disappear. Declared tool names stay reserved even while dependency-blocked, and
+a tool may not require itself.
+
+The core/internal ABI accepts `requires` as an additive optional field. The
+current Component WIT 0.1 `tool-decl` intentionally remains unchanged, so
+Component tools currently map to an empty dependency list. A future WIT 0.2 can
+type this field without silently changing the 0.1 Component contract.
 
 ### Capability declaration
 

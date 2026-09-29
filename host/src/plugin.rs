@@ -35,6 +35,13 @@ pub struct ToolDecl {
     pub parameters: serde_json::Value,
     /// The `op` string to pass to `plugin_invoke`.
     pub exec: String,
+    /// Other registered tool names that must exist before this tool is exposed.
+    ///
+    /// This is intentionally tool-scoped rather than plugin-scoped: missing
+    /// dependencies keep only this tool quiescent while the plugin's hooks,
+    /// services, and unrelated tools may remain active.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
 }
 
 /// The full declaration a plugin returns from `plugin_describe`.

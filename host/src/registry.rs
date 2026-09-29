@@ -17,7 +17,7 @@
 //! a running guest must be able to reach other plugins via `host.call_service`.
 
 use anyhow::Result;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -33,6 +33,7 @@ pub struct ValidationReport {
     pub plugin: String,
     pub abi: i32,
     pub tools: Vec<String>,
+    pub tool_dependencies: BTreeMap<String, Vec<String>>,
     pub hooks: Vec<String>,
     pub injects: Vec<String>,
     pub provides: Vec<String>,
@@ -49,6 +50,7 @@ pub struct RegisteredTool {
     pub slot: String,
     pub plugin: String,
     pub exec: String,
+    pub requires: Vec<String>,
 }
 
 /// Metadata for a loaded slot. The `Plugin` itself lives in [`Shared`].
@@ -260,13 +262,19 @@ impl Registry {
     /// registry must simply reflect that decision. Registers the slot's tools,
     /// hooks, and provided services. Returns `false` if already active.
     pub fn force_activate(&mut self, slot: &str) -> bool {
-        self.activate(slot)
+        let activated = self.activate(slot);
+        if activated {
+            self.sync_tool_graph();
+        }
+        activated
     }
 
     /// Deactivate a slot unconditionally, unwinding its tools/hooks/services.
     /// Returns the tool names removed.
     pub fn force_deactivate(&mut self, slot: &str) -> Vec<String> {
-        self.deactivate(slot)
+        let removed = self.deactivate(slot);
+        self.sync_tool_graph();
+        removed
     }
 
     /// Load a plugin into `slot`.
@@ -298,14 +306,21 @@ impl Registry {
         let plugin_name = plugin.decl.name.clone();
         let injects = plugin.decl.injects.clone();
         let provides = plugin.decl.provides.clone();
-        let tool_names: Vec<String> = plugin.tools().iter().map(|t| t.name.clone()).collect();
-
-        // Validate tool names against *other* slots before committing.
-        for name in &tool_names {
-            if let Some(owner) = self.tools.get(name) {
+        // Reserve declared tool names even while a slot is quiescent. A tool
+        // dependency may keep a declaration temporarily unregistered, but that
+        // must not let another slot steal the global name.
+        let mut seen_tools = HashSet::new();
+        for tool in plugin.tools() {
+            if !seen_tools.insert(tool.name.clone()) {
+                anyhow::bail!("slot `{slot}` declares duplicate tool `{}`", tool.name);
+            }
+            if tool.requires.iter().any(|dep| dep == &tool.name) {
+                anyhow::bail!("tool `{}` cannot require itself", tool.name);
+            }
+            if let Some(owner) = self.declared_tool_owner(&tool.name, None) {
                 anyhow::bail!(
-                    "tool `{name}` from slot `{slot}` is already registered by `{}`",
-                    owner.slot
+                    "tool `{}` from slot `{slot}` is already declared by `{owner}`",
+                    tool.name
                 );
             }
         }
@@ -424,17 +439,22 @@ impl Registry {
         // ---- Stage 1: build & validate the replacement, untouched ----
         let new_plugin = self.build_plugin(slot, path, effective_config.clone(), policy.clone())?;
         let new_plugin_name = new_plugin.decl.name.clone();
-        let new_tool_names: Vec<String> =
-            new_plugin.tools().iter().map(|t| t.name.clone()).collect();
-
-        for name in &new_tool_names {
-            if let Some(owner) = self.tools.get(name) {
-                if owner.slot != slot {
-                    anyhow::bail!(
-                        "reload rejected: tool `{name}` collides with slot `{}`",
-                        owner.slot
-                    );
-                }
+        let mut seen_tools = HashSet::new();
+        for tool in new_plugin.tools() {
+            if !seen_tools.insert(tool.name.clone()) {
+                anyhow::bail!(
+                    "reload rejected: slot `{slot}` declares duplicate tool `{}`",
+                    tool.name
+                );
+            }
+            if tool.requires.iter().any(|dep| dep == &tool.name) {
+                anyhow::bail!("reload rejected: tool `{}` cannot require itself", tool.name);
+            }
+            if let Some(owner) = self.declared_tool_owner(&tool.name, Some(slot)) {
+                anyhow::bail!(
+                    "reload rejected: tool `{}` collides with slot `{owner}`",
+                    tool.name
+                );
             }
         }
         for svc in &new_plugin.decl.provides {
@@ -684,6 +704,12 @@ impl Registry {
             plugin: p.decl.name.clone(),
             abi: p.decl.abi,
             tools: p.tools().iter().map(|t| t.name.clone()).collect(),
+            tool_dependencies: p
+                .tools()
+                .iter()
+                .filter(|tool| !tool.requires.is_empty())
+                .map(|tool| (tool.name.clone(), tool.requires.clone()))
+                .collect(),
             hooks: p.decl.hooks.iter().map(|h| h.on.clone()).collect(),
             injects: p.decl.injects.clone(),
             provides: p.decl.provides.clone(),
@@ -943,6 +969,13 @@ impl Registry {
                 }
             }
 
+            // Tool dependencies have their own fixpoint inside the active
+            // plugin set. Losing one tool can hide dependents without
+            // deactivating their whole plugin; gaining one can activate a chain.
+            if self.sync_tool_graph() {
+                changed = true;
+            }
+
             if !changed {
                 break;
             }
@@ -971,43 +1004,127 @@ impl Registry {
             .unwrap_or(false)
     }
 
+    fn declared_tool_owner(&self, name: &str, except_slot: Option<&str>) -> Option<String> {
+        for slot in self.meta.keys() {
+            if except_slot == Some(slot.as_str()) {
+                continue;
+            }
+            let declared = self
+                .shared
+                .with_plugin(slot, |plugin| {
+                    Ok(plugin.tools().iter().any(|tool| tool.name == name))
+                })
+                .unwrap_or(false);
+            if declared {
+                return Some(slot.clone());
+            }
+        }
+        None
+    }
+
+    /// Reconcile tool-level dependencies inside the set of active plugins.
+    ///
+    /// Removal runs to a fixpoint first so a disappearing provider cascades
+    /// through chains. Addition then runs to a fixpoint so newly-ready tools can
+    /// unlock their dependents in the same convergence pass.
+    fn sync_tool_graph(&mut self) -> bool {
+        let mut changed_any = false;
+
+        loop {
+            let stale: Vec<(String, String)> = self
+                .tools
+                .iter()
+                .filter(|(_, tool)| {
+                    tool.requires
+                        .iter()
+                        .any(|required| !self.tools.contains_key(required))
+                })
+                .map(|(name, tool)| (name.clone(), tool.slot.clone()))
+                .collect();
+            if stale.is_empty() {
+                break;
+            }
+            for (name, slot) in stale {
+                self.tools.remove(&name);
+                if let Some(meta) = self.meta.get_mut(&slot) {
+                    meta.owned_tools.retain(|owned| owned != &name);
+                }
+                changed_any = true;
+            }
+        }
+
+        loop {
+            let mut ready = Vec::new();
+            for (slot, meta) in &self.meta {
+                if !meta.active {
+                    continue;
+                }
+                let declared = self
+                    .shared
+                    .with_plugin(slot, |plugin| Ok(plugin.tools().to_vec()))
+                    .unwrap_or_default();
+                for tool in declared {
+                    if self.tools.contains_key(&tool.name) {
+                        continue;
+                    }
+                    if tool
+                        .requires
+                        .iter()
+                        .all(|required| self.tools.contains_key(required))
+                    {
+                        ready.push((slot.clone(), meta.plugin_name.clone(), tool));
+                    }
+                }
+            }
+            if ready.is_empty() {
+                break;
+            }
+
+            let mut added = false;
+            for (slot, plugin, tool) in ready {
+                if self.tools.contains_key(&tool.name) {
+                    continue;
+                }
+                self.tools.insert(
+                    tool.name.clone(),
+                    RegisteredTool {
+                        name: tool.name.clone(),
+                        description: tool.description.clone(),
+                        parameters: tool.parameters.clone(),
+                        slot: slot.clone(),
+                        plugin,
+                        exec: tool.exec.clone(),
+                        requires: tool.requires.clone(),
+                    },
+                );
+                if let Some(meta) = self.meta.get_mut(&slot) {
+                    meta.owned_tools.push(tool.name);
+                }
+                added = true;
+                changed_any = true;
+            }
+            if !added {
+                break;
+            }
+        }
+
+        changed_any
+    }
+
     /// Register a slot's effects. Returns true if it actually became active.
     fn activate(&mut self, slot: &str) -> bool {
-        let (plugin_name, tools, hooks, provides) = {
+        let (hooks, provides) = {
             let m = match self.meta.get(slot) {
                 Some(m) if !m.active => m,
                 _ => return false,
             };
-            let plugin_name = m.plugin_name.clone();
             let provides = m.provides.clone();
-            let decl_tools = self
-                .shared
-                .with_plugin(slot, |p| Ok(p.tools().to_vec()))
-                .unwrap_or_default();
             let decl_hooks = self
                 .shared
                 .with_plugin(slot, |p| Ok(p.decl.hooks.clone()))
                 .unwrap_or_default();
-            (plugin_name, decl_tools, decl_hooks, provides)
+            (decl_hooks, provides)
         };
-        let _ = plugin_name;
-
-        // Register tools.
-        let mut owned = Vec::new();
-        for t in &tools {
-            self.tools.insert(
-                t.name.clone(),
-                RegisteredTool {
-                    name: t.name.clone(),
-                    description: t.description.clone(),
-                    parameters: t.parameters.clone(),
-                    slot: slot.to_string(),
-                    plugin: self.meta[slot].plugin_name.clone(),
-                    exec: t.exec.clone(),
-                },
-            );
-            owned.push(t.name.clone());
-        }
         // Register hooks.
         let _ = self
             .hooks
@@ -1019,7 +1136,7 @@ impl Registry {
 
         if let Some(m) = self.meta.get_mut(slot) {
             m.active = true;
-            m.owned_tools = owned;
+            m.owned_tools.clear();
         }
         true
     }

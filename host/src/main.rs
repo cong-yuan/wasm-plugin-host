@@ -313,6 +313,9 @@ fn run_command(host: &mut Host, parts: &[String]) -> Result<()> {
                         report.tools.join(", ")
                     }
                 );
+                for (tool, requires) in &report.tool_dependencies {
+                    println!("    {tool} requires: {}", requires.join(", "));
+                }
                 println!(
                     "  hooks: {}",
                     if report.hooks.is_empty() {

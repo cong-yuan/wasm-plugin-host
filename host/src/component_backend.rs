@@ -454,6 +454,9 @@ fn component_decl_to_internal(
                 description: tool.description,
                 parameters: parse_json_value(&tool.parameters_json, "tool parameters")?,
                 exec: tool.exec,
+                // WIT 0.1 intentionally has no tool-dependency field. Keep the
+                // Component ABI stable; WIT 0.2 can type this explicitly.
+                requires: Vec::new(),
             })
         })
         .collect::<Result<Vec<_>>>()?;
