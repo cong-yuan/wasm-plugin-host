@@ -1102,6 +1102,7 @@ return (function () {
     try {
       await api.dispose(sessionId);
       disposedIds.add(sessionId);
+      runtimeTranscriptCache.delete(sessionId);
       clearPinForSession(sessionId);
       const assignments = loadAssignments();
       const path = pathFor(sessionId);
@@ -1484,6 +1485,7 @@ return (function () {
       const projected = projection(row);
       try {
         await api.softUnbind(sessionId);
+        runtimeTranscriptCache.delete(sessionId);
         const archived = loadArchived();
         archived[pathFor(sessionId)] = {
           ...projected,
@@ -1536,6 +1538,7 @@ return (function () {
       if (!archived[pathFor(sessionId)]) return { ok: false, error: 'session is not archived' };
       try {
         const resumed = await api.resume(sessionId);
+        runtimeTranscriptCache.delete(sessionId);
         delete archived[pathFor(sessionId)];
         saveArchived(archived);
         disposedIds.delete(sessionId);

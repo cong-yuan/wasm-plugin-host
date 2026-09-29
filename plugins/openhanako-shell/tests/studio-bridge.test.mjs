@@ -711,6 +711,44 @@ check('host bridge correlates requestId',
 }
 
 
+// Archive/restore invalidates cached idle transcripts so restored sessions
+// hydrate fresh state even when their message/version fields are unchanged.
+{
+  const originalSessions = api.sessions;
+  const originalTranscript = api.transcript;
+  const originalSoftUnbind = api.softUnbind;
+  const originalResume = api.resume;
+  let transcriptCalls = 0;
+  api.sessions = async () => [{
+    id: 'cache-lifecycle',
+    title: 'Cache lifecycle',
+    busy: false,
+    live: true,
+    status: 'idle',
+    messages: 1,
+    updated_at: 77,
+  }];
+  api.transcript = async () => {
+    transcriptCalls += 1;
+    return [{ role: 'assistant', text: `snapshot-${transcriptCalls}`, tool_calls: [], tool_results: [] }];
+  };
+  api.softUnbind = async (id) => id;
+  api.resume = async (id) => id;
+
+  await adapter.http('GET', '/api/runtime-state');
+  await adapter.http('GET', '/api/runtime-state');
+  check('lifecycle test starts with cached idle transcript', transcriptCalls === 1);
+  await adapter.http('POST', '/api/sessions/archive', { sessionId: 'cache-lifecycle' });
+  await adapter.http('POST', '/api/sessions/restore', { sessionId: 'cache-lifecycle' });
+  await adapter.http('GET', '/api/runtime-state');
+  check('restore reloads transcript after archive cache invalidation', transcriptCalls === 2);
+
+  api.sessions = originalSessions;
+  api.transcript = originalTranscript;
+  api.softUnbind = originalSoftUnbind;
+  api.resume = originalResume;
+}
+
 // Archive is reversible: soft-unbind keeps JSONL/history, hides the session
 // from the active list, and restore resumes it. Permanent archived delete is
 // the operation that disposes the Studio agent.
