@@ -621,6 +621,10 @@ check('unsupported controls explain why they are disabled',
   /standalone Studio bridge/.test(root.querySelector('.folderSelectBtn')?.title || '')
   && /server command dispatcher/.test(root.querySelectorAll('.attach-btn')[1]?.title || '')
   && /enforce/.test(root.querySelector('.plan-mode-btn')?.title || ''));
+check('unsupported automation control is explicitly disabled',
+  root.querySelector('.automation-count-badge')?.parentNode?.disabled === true
+  || root.querySelectorAll('.sidebar-activity-bar').some((button) =>
+    button.disabled && /Automations/.test(button.title || '')));
 
 // Main shell chat must use the incremental transport rather than the legacy
 // whole-turn send path. The mock backend emits thinking + text in chunks.

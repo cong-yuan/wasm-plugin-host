@@ -901,6 +901,15 @@ html[data-platform="linux"] .tb-toggle-right {
     margin-left: 6px;
 }
 
+.sidebar-activity-bar:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+}
+.sidebar-activity-bar:disabled:hover {
+    color: inherit;
+    background: transparent;
+}
+
 .sidebarSettingsPanel {
     margin: 0 10px 8px;
     padding: 8px;

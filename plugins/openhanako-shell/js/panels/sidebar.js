@@ -61,6 +61,10 @@ return (function () {
     const automation = h('button', { class: 'sidebar-activity-bar', type: 'button' },
       svg(ICON.automation), h('span', {}, t('automation.title')),
       h('span', { class: 'automation-count-badge' }, ''));
+    automation.disabled = true;
+    automation.setAttribute('aria-disabled', 'true');
+    automation.setAttribute('data-unsupported', 'true');
+    automation.title = 'Automations are not available in the standalone Studio bridge yet.';
     const skills = h('button', {
       class: 'sidebar-activity-bar sidebar-skills-button',
       type: 'button',
