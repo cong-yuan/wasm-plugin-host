@@ -31,6 +31,21 @@ describe('resolveChatRuntimeStatus', () => {
     })).toEqual({ state: 'streaming', label: 'Hanako is responding…' });
   });
 
+  it('surfaces standalone websocket reconnect and disconnected states', () => {
+    expect(resolveChatRuntimeStatus({
+      bridge: { state: 'standalone' },
+      streaming: false,
+      inlineError: null,
+      wsState: 'reconnecting',
+    })).toEqual({ state: 'pending', label: 'Reconnecting…' });
+    expect(resolveChatRuntimeStatus({
+      bridge: { state: 'standalone' },
+      streaming: false,
+      inlineError: null,
+      wsState: 'disconnected',
+    })).toEqual({ state: 'error', label: 'Disconnected' });
+  });
+
   it('shows handshake progress and otherwise hides standalone idle state', () => {
     expect(resolveChatRuntimeStatus({
       bridge: { state: 'pending' },

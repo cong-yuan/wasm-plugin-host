@@ -8,6 +8,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useStore } from '../../stores';
 import { sessionScopedValue } from '../../stores/session-slice';
 import { selectIsStreamingSession } from '../../stores/session-selectors';
+import { manualReconnect } from '../../services/websocket';
 import { ChatMessageSurface, type ChatScrollButtonState } from './ChatMessageSurface';
 import { ChatFindBar } from './ChatFindBar';
 import {
@@ -34,13 +35,17 @@ export function resolveChatRuntimeStatus({
   bridge,
   streaming,
   inlineError,
+  wsState = 'connected',
 }: {
   bridge: ReturnType<typeof getStudioBridgeStatus>;
   streaming: boolean;
   inlineError?: { text: string } | null;
+  wsState?: 'connected' | 'reconnecting' | 'disconnected';
 }): { state: 'connected' | 'pending' | 'streaming' | 'error'; label: string } | null {
   if (inlineError?.text) return { state: 'error', label: inlineError.text };
   if (bridge.state === 'error') return { state: 'error', label: `Studio connection issue: ${bridge.message}` };
+  if (bridge.state === 'standalone' && wsState === 'disconnected') return { state: 'error', label: 'Disconnected' };
+  if (bridge.state === 'standalone' && wsState === 'reconnecting') return { state: 'pending', label: 'Reconnecting…' };
   if (streaming) return { state: 'streaming', label: 'Hanako is responding…' };
   if (bridge.state === 'pending') return { state: 'pending', label: 'Connecting to Studio…' };
   if (bridge.state === 'connected') return { state: 'connected', label: 'Studio connected' };
@@ -55,22 +60,26 @@ function ChatRuntimeStatusBar() {
   );
   const currentPath = useStore(s => s.currentSessionPath);
   const streaming = useStore(s => selectIsStreamingSession(s, currentPath));
+  const wsState = useStore(s => s.wsState);
   const inlineError = useStore(s => currentPath
     ? sessionScopedValue(s, s.inlineErrors, currentPath) ?? null
     : null);
-  const status = resolveChatRuntimeStatus({ bridge, streaming, inlineError });
+  const status = resolveChatRuntimeStatus({ bridge, streaming, inlineError, wsState });
   const handleErrorAction = () => {
     if (inlineError && currentPath) {
       useStore.getState().clearInlineError(currentPath);
       return;
     }
     if (bridge.state === 'error') retryStudioBackendBridge();
+    else if (bridge.state === 'standalone' && wsState === 'disconnected') manualReconnect();
   };
   const errorActionLabel = inlineError
     ? window.t('common.dismiss')
     : bridge.state === 'error'
       ? window.t('common.retry')
-      : null;
+      : bridge.state === 'standalone' && wsState === 'disconnected'
+        ? window.t('status.reconnect')
+        : null;
   if (!status) return null;
 
   return (
