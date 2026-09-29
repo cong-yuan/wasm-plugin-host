@@ -19,7 +19,9 @@ return (function () {
   };
 
   function render(options) {
-    const view = { archived: false, query: '', searchVersion: 0 };
+    const view = { archived: false, query: '', searchVersion: 0, expanded: new Set() };
+    const searchCache = new Map();
+    let searchTimer = null;
     const add = h('button', { class: 'sidebar-action-btn', title: t('sidebar.newChat') }, svg(ICON.newChat));
     const settings = h('button', { class: 'sidebar-action-btn', title: t('settings.title') }, svg(ICON.settings));
     const collapse = h('button', { class: 'sidebar-action-btn', title: t('sidebar.collapse') }, svg(ICON.collapse));
@@ -57,17 +59,24 @@ return (function () {
     const archivedView = h('button', { class: 'sessionViewBtn', type: 'button' }, 'Archived');
     const viewToggle = h('div', { class: 'sessionViewToggle' }, activeView, archivedView);
     const searchStatus = h('div', { class: 'sessionSearchStatus', 'aria-live': 'polite' }, '');
-    const actionStatus = h('div', { class: 'sessionActionStatus', 'aria-live': 'polite' }, '');
+    const actionStatusText = h('span', { class: 'sessionActionStatusText' }, '');
+    const actionRetry = h('button', { class: 'sessionActionRetry', type: 'button' }, 'Retry');
+    actionRetry.style.display = 'none';
+    const actionStatus = h('div', { class: 'sessionActionStatus', 'aria-live': 'polite' }, actionStatusText, actionRetry);
     const sessionControls = h('div', { class: 'sessionListControls' }, search, viewToggle, searchStatus, actionStatus);
     let actionStatusTimer = null;
-    const reportAction = (message, isError = false) => {
+    const reportAction = (message, isError = false, retry = null) => {
       if (actionStatusTimer) clearTimeout(actionStatusTimer);
-      actionStatus.textContent = message || '';
+      actionStatusText.textContent = message || '';
       actionStatus.className = 'sessionActionStatus' + (isError ? ' error' : '');
-      if (message) {
+      actionRetry.style.display = typeof retry === 'function' ? '' : 'none';
+      actionRetry.onclick = typeof retry === 'function' ? retry : null;
+      if (message && !retry) {
         actionStatusTimer = setTimeout(() => {
-          actionStatus.textContent = '';
+          actionStatusText.textContent = '';
           actionStatus.className = 'sessionActionStatus';
+          actionRetry.style.display = 'none';
+          actionRetry.onclick = null;
         }, 2600);
       }
     };
@@ -119,36 +128,47 @@ return (function () {
         || `${row.title || ''} ${row.sessionId || row.id || ''}`.toLocaleLowerCase().includes(query));
       if (query && !view.archived) {
         const mySearchVersion = ++view.searchVersion;
-        searchStatus.textContent = 'Searching titles and messages…';
-        try {
-          const encoded = encodeURIComponent(rawQuery);
-          const [titleData, contentData] = await Promise.all([
-            adapter.http('GET', `/api/sessions/search?q=${encoded}&phase=title&limit=20`),
-            adapter.http('GET', `/api/sessions/search?q=${encoded}&phase=content&limit=20`),
-          ]);
-          if (mySearchVersion !== view.searchVersion) return;
-          const merged = new Map();
-          for (const result of [...(titleData?.results || []), ...(contentData?.results || [])]) {
-            const id = result.sessionId || result.id;
-            if (!id) continue;
-            const existing = merged.get(id);
-            merged.set(id, {
-              ...(existing || result),
-              ...result,
-              id,
-              title: result.title || existing?.title || null,
-              searchSnippet: result.matchKind === 'content' && result.snippet
-                ? result.snippet
-                : existing?.searchSnippet || '',
-              searchMatchKind: result.matchKind || existing?.searchMatchKind || null,
-            });
-          }
-          rows = Array.from(merged.values());
+        const cacheKey = rawQuery.toLocaleLowerCase();
+        const cached = searchCache.get(cacheKey);
+        if (cached && Date.now() - cached.at < 15_000) {
+          rows = cached.rows.map((row) => ({ ...row }));
           searchStatus.textContent = rows.length
-            ? `${rows.length} result${rows.length === 1 ? '' : 's'} · title + message search`
+            ? `${rows.length} result${rows.length === 1 ? '' : 's'} · cached title + message search`
             : 'No title or message matches';
-        } catch {
-          searchStatus.textContent = 'Message search unavailable · showing local title matches';
+        } else {
+          searchStatus.textContent = 'Searching titles and messages…';
+          try {
+            const encoded = encodeURIComponent(rawQuery);
+            const [titleData, contentData] = await Promise.all([
+              adapter.http('GET', `/api/sessions/search?q=${encoded}&phase=title&limit=20`),
+              adapter.http('GET', `/api/sessions/search?q=${encoded}&phase=content&limit=20`),
+            ]);
+            if (mySearchVersion !== view.searchVersion) return;
+            const merged = new Map();
+            for (const result of [...(titleData?.results || []), ...(contentData?.results || [])]) {
+              const id = result.sessionId || result.id;
+              if (!id) continue;
+              const existing = merged.get(id);
+              merged.set(id, {
+                ...(existing || result),
+                ...result,
+                id,
+                title: result.title || existing?.title || null,
+                searchSnippet: result.matchKind === 'content' && result.snippet
+                  ? result.snippet
+                  : existing?.searchSnippet || '',
+                searchMatchKind: result.matchKind || existing?.searchMatchKind || null,
+              });
+            }
+            rows = Array.from(merged.values());
+            searchCache.set(cacheKey, { at: Date.now(), rows: rows.map((row) => ({ ...row })) });
+            if (searchCache.size > 20) searchCache.delete(searchCache.keys().next().value);
+            searchStatus.textContent = rows.length
+              ? `${rows.length} result${rows.length === 1 ? '' : 's'} · title + message search`
+              : 'No title or message matches';
+          } catch {
+            searchStatus.textContent = 'Message search unavailable · showing local title matches';
+          }
         }
       } else {
         view.searchVersion += 1;
@@ -197,7 +217,7 @@ return (function () {
             try {
               const result = await adapter.http('POST', '/api/sessions/restore', { sessionId: s.id, path: s.path });
               if (!result || result.ok === false || result.error) {
-                reportAction(result?.error || 'Restore failed', true);
+                reportAction(result?.error || 'Restore failed', true, () => restore.onclick({ stopPropagation() {} }));
                 return;
               }
               reportAction('Session restored');
@@ -206,7 +226,7 @@ return (function () {
               search.value = '';
               await draw(result.sessionId || selected);
             } catch (err) {
-              reportAction(err?.message || 'Restore failed', true);
+              reportAction(err?.message || 'Restore failed', true, () => restore.onclick({ stopPropagation() {} }));
             }
           };
           rowActions.appendChild(restore);
@@ -222,13 +242,13 @@ return (function () {
             try {
               const result = await adapter.http('POST', '/api/sessions/pin', { sessionId: s.id, pinned: nextPinned });
               if (!result || result.ok === false || result.error) {
-                reportAction(result?.error || 'Pin update failed', true);
+                reportAction(result?.error || 'Pin update failed', true, () => pin.onclick({ stopPropagation() {} }));
                 return;
               }
               reportAction(nextPinned ? 'Session pinned' : 'Session unpinned');
               await draw(selected);
             } catch (err) {
-              reportAction(err?.message || 'Pin update failed', true);
+              reportAction(err?.message || 'Pin update failed', true, () => pin.onclick({ stopPropagation() {} }));
             }
           };
           rowActions.appendChild(pin);
@@ -267,19 +287,24 @@ return (function () {
             try {
               const result = await adapter.http('POST', '/api/sessions/archive', { sessionId: s.id });
               if (!result || result.ok === false || result.error) {
-                reportAction(result?.error || 'Archive failed', true);
+                reportAction(result?.error || 'Archive failed', true, () => archive.onclick({ stopPropagation() {} }));
                 return;
               }
               reportAction('Session archived');
               if (selected === s.id) options.onNew();
               else await draw(selected);
             } catch (err) {
-              reportAction(err?.message || 'Archive failed', true);
+              reportAction(err?.message || 'Archive failed', true, () => archive.onclick({ stopPropagation() {} }));
             }
           };
           rowActions.appendChild(archive);
         }
 
+        const detailsToggle = h('button', {
+          class: 'sessionDetailsBtn', type: 'button',
+          title: view.expanded.has(s.id) ? 'Hide session details' : 'Show session details',
+        }, view.expanded.has(s.id) ? '⌃' : '…');
+        rowActions.appendChild(detailsToggle);
         const row = h('div', {
           class: 'sessionItem sessionItemSingleLine' + (selected === s.id ? ' sessionItemActive' : ''),
           role: 'button', tabindex: '0',
@@ -301,9 +326,33 @@ return (function () {
         }
         if (s.modelId) details.push(String(s.modelId));
         row.appendChild(h('div', { class: 'sessionItemMeta' }, details.join(' · ')));
+        if (view.expanded.has(s.id)) {
+          const detailLines = [
+            ['Session', s.id],
+            ['Path', s.path || `studio://${s.id}`],
+            ['Model', s.modelId ? `${s.modelProvider || ''}/${s.modelId}`.replace(/^\//, '') : null],
+            ['Runtime', isRunning ? 'running' : isError ? 'error' : view.archived ? 'archived' : 'idle'],
+            ['Tools', toolCount > 0 ? String(toolCount) : null],
+            ['Error', state?.error || s.error || null],
+          ].filter((entry) => entry[1]);
+          const panel = h('div', { class: 'sessionDetailsPanel' });
+          detailLines.forEach(([label, value]) => {
+            panel.appendChild(h('div', { class: 'sessionDetailsLine' },
+              h('span', { class: 'sessionDetailsLabel' }, label),
+              h('span', { class: 'sessionDetailsValue' }, String(value))));
+          });
+          row.appendChild(panel);
+        }
         if (s.searchSnippet) {
           row.appendChild(h('div', { class: 'sessionSearchSnippet' }, s.searchSnippet));
         }
+
+        detailsToggle.onclick = (event) => {
+          event?.stopPropagation?.();
+          if (view.expanded.has(s.id)) view.expanded.delete(s.id);
+          else view.expanded.add(s.id);
+          draw(selected);
+        };
 
         if (runtimeAction) {
           runtimeAction.onclick = async (event) => {
@@ -327,7 +376,9 @@ return (function () {
     }
     search.oninput = (event) => {
       view.query = event?.target?.value || '';
-      draw(options.selected);
+      if (searchTimer) clearTimeout(searchTimer);
+      searchStatus.textContent = view.query.trim() ? 'Waiting for typing…' : '';
+      searchTimer = setTimeout(() => draw(options.selected), 180);
     };
     activeView.onclick = () => {
       view.archived = false;

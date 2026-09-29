@@ -263,6 +263,12 @@ check('4 activity bars', chatContent.children.filter(
   check('session rows expose lightweight status metadata',
     root.querySelectorAll('.sessionItemMeta').length === pinnedRows.length
     && root.querySelectorAll('.sessionItemMeta').every((el) => /idle|running|error/i.test(el.textContent)));
+  pinnedRows[0]?.querySelector('.sessionDetailsBtn')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('session details expand with identity and runtime metadata',
+    root.querySelectorAll('.sessionDetailsPanel').length === 1
+    && /Session/.test(root.querySelector('.sessionDetailsPanel')?.textContent || '')
+    && /Runtime/.test(root.querySelector('.sessionDetailsPanel')?.textContent || ''));
 
   pinnedRows[0]?.querySelector('.sessionArchiveBtn')?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -288,18 +294,18 @@ check('4 activity bars', chatContent.children.filter(
 
   const search = root.querySelector('.sessionSearchInput');
   search?.fire('input', { target: { value: 'Welcome' } });
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 220));
   check('session search filters active rows',
     root.querySelectorAll('.sessionItemTitle').length >= 1
     && root.querySelectorAll('.sessionItemTitle').every((el) => /welcome/i.test(el.textContent)));
   search?.fire('input', { target: { value: '当前窗口' } });
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 220));
   await new Promise((resolve) => setTimeout(resolve, 0));
   check('session search includes transcript content matches',
     root.querySelectorAll('.sessionSearchSnippet').some((el) => /当前窗口/.test(el.textContent))
     && /title \+ message search/i.test(root.querySelector('.sessionSearchStatus')?.textContent || ''));
   search?.fire('input', { target: { value: '' } });
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 220));
 }
 
 // Interactions must not throw.

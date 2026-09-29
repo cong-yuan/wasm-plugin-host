@@ -961,6 +961,24 @@ html[data-platform="linux"] .tb-toggle-right {
 .sessionActionStatus.error {
     color: #a64238;
 }
+.sessionActionStatus {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.sessionActionRetry {
+    border: 0;
+    border-radius: 6px;
+    padding: 1px 6px;
+    font: inherit;
+    font-size: 10px;
+    color: inherit;
+    background: rgba(0,0,0,0.05);
+    cursor: pointer;
+}
+.sessionActionRetry:hover {
+    background: rgba(0,0,0,0.09);
+}
 .sessionItemMeta {
     margin: 1px 28px 3px 18px;
     font-size: 10px;
@@ -970,6 +988,27 @@ html[data-platform="linux"] .tb-toggle-right {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+.sessionDetailsPanel {
+    margin: 3px 12px 6px 18px;
+    padding: 6px 8px;
+    border-radius: 7px;
+    background: rgba(0,0,0,0.025);
+}
+.sessionDetailsLine {
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 6px;
+    font-size: 10px;
+    line-height: 1.35;
+}
+.sessionDetailsLabel {
+    color: var(--text-muted);
+    opacity: 0.72;
+}
+.sessionDetailsValue {
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
 }
 .sessionSearchSnippet {
     margin: 2px 28px 5px 18px;
@@ -1043,7 +1082,8 @@ html[data-platform="linux"] .tb-toggle-right {
 .sessionArchiveBtn,
 .sessionRestoreBtn,
 .sessionPinMoveBtn,
-.sessionStopBtn {
+.sessionStopBtn,
+.sessionDetailsBtn {
     width: 20px;
     height: 20px;
     padding: 0;
@@ -1062,7 +1102,8 @@ html[data-platform="linux"] .tb-toggle-right {
 .sessionArchiveBtn:hover,
 .sessionRestoreBtn:hover,
 .sessionPinMoveBtn:hover,
-.sessionStopBtn:hover {
+.sessionStopBtn:hover,
+.sessionDetailsBtn:hover {
     background: rgba(0,0,0,0.045);
     color: var(--text-primary);
 }
