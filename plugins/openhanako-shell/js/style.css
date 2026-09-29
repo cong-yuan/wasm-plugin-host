@@ -909,9 +909,29 @@ html[data-platform="linux"] .tb-toggle-right {
     background: rgba(0,0,0,0.018);
 }
 .sidebarSettingsSummary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     margin-bottom: 6px;
     font-size: 10px;
     color: var(--text-muted);
+}
+.sidebarSettingsSummary > span {
+    flex: 1;
+}
+.sidebarSettingsRefresh {
+    border: 0;
+    border-radius: 5px;
+    padding: 2px 6px;
+    font: inherit;
+    font-size: 9px;
+    cursor: pointer;
+    color: var(--text-muted);
+    background: rgba(0,0,0,0.045);
+}
+.sidebarSettingsRefresh:hover {
+    color: var(--text-primary);
+    background: rgba(0,0,0,0.075);
 }
 .sidebarSettingsProvider {
     padding: 6px 0;

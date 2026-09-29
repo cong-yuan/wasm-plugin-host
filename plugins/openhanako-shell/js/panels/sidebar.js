@@ -151,8 +151,13 @@ return (function () {
         : [];
       const activeProvider = status?.providers?.[0] || '';
       const activeModel = status?.model || '';
+      const refresh = h('button', { class: 'sidebarSettingsRefresh', type: 'button' }, 'Refresh');
+      refresh.onclick = () => loadSettingsPanel();
       settingsPanel.appendChild(h('div', { class: 'sidebarSettingsSummary' },
-        activeModel ? `Active: ${activeProvider ? activeProvider + ' / ' : ''}${activeModel}` : 'Provider configuration'));
+        h('span', {}, activeModel
+          ? `Active: ${activeProvider ? activeProvider + ' / ' : ''}${activeModel}`
+          : 'Provider configuration'),
+        refresh));
 
       if (!providers.length) {
         settingsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'No providers configured'));

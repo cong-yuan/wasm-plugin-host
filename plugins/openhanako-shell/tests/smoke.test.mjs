@@ -449,6 +449,17 @@ check('settings button opens provider status panel',
 check('settings provider panel uses safe provider summary',
   /mock/i.test(root.querySelector('.sidebarSettingsPanel')?.textContent || '')
   && !/api[_ -]?key/i.test(root.querySelector('.sidebarSettingsPanel')?.textContent || ''));
+const adapterForSettings = studio.require('lib/hana-adapter');
+const originalSettingsHttp = adapterForSettings.http;
+let settingsRefreshCalls = 0;
+adapterForSettings.http = async (method, path, body) => {
+  if (method === 'GET' && path === '/api/providers/summary') settingsRefreshCalls += 1;
+  return originalSettingsHttp(method, path, body);
+};
+root.querySelector('.sidebarSettingsRefresh')?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('settings refresh reloads provider summary', settingsRefreshCalls === 1);
+adapterForSettings.http = originalSettingsHttp;
 settingsButton?.fire('click');
 
 const skillsButton = root.querySelector('.sidebar-skills-button');
