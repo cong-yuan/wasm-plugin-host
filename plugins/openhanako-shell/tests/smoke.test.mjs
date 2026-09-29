@@ -438,6 +438,13 @@ check('jian drawer opens',
   root.querySelector('.jianDrawer').getAttribute('data-open') === 'true');
 root.querySelectorAll('.tab')[0].fire('click');
 check('tab switches', root.querySelectorAll('.tabActive').length === 1);
+check('session files tab explains standalone limitation',
+  root.querySelector('.content')?.getAttribute('data-content-state') === 'unavailable'
+  && /not available in the standalone Studio bridge/i.test(root.querySelector('.fileList')?.textContent || ''));
+root.querySelectorAll('.tab')[1].fire('click');
+check('workspace tab restores runtime/tool diagnostics',
+  root.querySelector('.content')?.getAttribute('data-content-state') === 'workspace'
+  && root.querySelectorAll('.runtimeMetric').length >= 4);
 check('memory control is disabled when standalone bridge cannot enforce it',
   root.querySelector('.memoryToggleBtn')?.disabled === true
   && root.querySelector('.memoryToggleBtn')?._classes().includes('memoryToggleBtnDisabled')

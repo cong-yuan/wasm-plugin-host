@@ -25,6 +25,7 @@ return (function () {
 
   function render() {
     const state = { tab: 'workspace', jianOpen: false };
+    let latestData = { tools: [], plugins: [], runtime: { mode: 'unknown', sessions: [] } };
 
     // <div className={styles.workspaceHeader}> + workspaceTitle
     const title = h('div', { class: 'workspaceTitle' }, t('desk.title'));
@@ -115,17 +116,29 @@ return (function () {
         btn.className = 'tab' + (selected ? ' tabActive' : '');
         btn.setAttribute('aria-selected', String(selected));
       }
+      renderData(latestData);
     }
 
-    function update(data) {
+    function renderData(data) {
       const tools = (data && data.tools) || [];
       const plugins = (data && data.plugins) || [];
       const runtime = (data && data.runtime) || { mode: 'unknown', sessions: [] };
+      clear(runtimeSummary);
+      clear(slotSummary);
+      clear(fileList);
+
+      if (state.tab === 'session-files') {
+        content.setAttribute('data-content-state', 'unavailable');
+        fileList.appendChild(h('div', { class: 'emptyState railUnavailableState' },
+          'Session files are not available in the standalone Studio bridge yet.'));
+        return;
+      }
+
+      content.setAttribute('data-content-state', 'workspace');
       const sessions = Array.isArray(runtime.sessions) ? runtime.sessions : [];
       const running = sessions.filter((session) => session.status === 'running' || session.isStreaming).length;
       const errors = sessions.filter((session) => session.status === 'error' || session.error).length;
       const activeTools = sessions.reduce((sum, session) => sum + (Number(session.activeToolCount) || 0), 0);
-      clear(runtimeSummary);
       const metrics = [
         ['Sessions', sessions.length],
         ['Running', running],
@@ -144,10 +157,8 @@ return (function () {
       const slotState = slots.snapshot();
       slotSummary.textContent = `Slots ${slotState.mounted}/${slotState.total} · visible ${slotState.visible} · contributions ${slotState.contributions}`;
       slotSummary.setAttribute('data-contributions', String(slotState.contributions));
-      clear(fileList);
       if (!tools.length) {
-        fileList.appendChild(h('div', { class: 'emptyState' },
-          t('rightWorkspace.sessionFiles.empty')));
+        fileList.appendChild(h('div', { class: 'emptyState' }, 'No host tools available'));
         return;
       }
       for (const tool of tools.slice(0, 12)) {
@@ -155,6 +166,11 @@ return (function () {
           h('div', { class: 'fileMain' },
             h('div', { class: 'fileName' }, tool.name || 'tool'))));
       }
+    }
+
+    function update(data) {
+      latestData = data || latestData;
+      renderData(latestData);
     }
 
     const unsubscribeSlots = slots.subscribe((slotState) => {
