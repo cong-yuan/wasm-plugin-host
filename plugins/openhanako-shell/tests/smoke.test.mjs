@@ -438,7 +438,10 @@ check('jian drawer opens',
   root.querySelector('.jianDrawer').getAttribute('data-open') === 'true');
 root.querySelectorAll('.tab')[0].fire('click');
 check('tab switches', root.querySelectorAll('.tabActive').length === 1);
-root.querySelector('.memoryToggleBtn').fire('click');
+check('memory control is disabled when standalone bridge cannot enforce it',
+  root.querySelector('.memoryToggleBtn')?.disabled === true
+  && root.querySelector('.memoryToggleBtn')?._classes().includes('memoryToggleBtnDisabled')
+  && /memoryEnabled/.test(root.querySelector('.memoryToggleBtn')?.title || ''));
 
 const settingsButton = root.querySelector('.sidebar-settings-button');
 settingsButton?.fire('click');

@@ -63,13 +63,10 @@ return (function () {
     const folderBtn = h('button', { class: 'folderSelectBtn', type: 'button' },
       svg(FOLDER), h('span', {}, t('input.selectWorkspace')), svg(FOLDER_SWAP));
     markUnsupported(folderBtn, 'Workspace selection is not available in the standalone Studio bridge yet.');
-    const memoryBtn = h('button', { class: 'memoryToggleBtn memoryToggleBtnActive', type: 'button' },
-      svg(MEMORY), h('span', {}, t('welcome.memoryOn')));
-    memoryBtn.onclick = () => {
-      state.memory = !state.memory;
-      memoryBtn.classList.toggle('memoryToggleBtnActive', state.memory);
-      memoryBtn.lastChild.textContent = t(state.memory ? 'welcome.memoryOn' : 'welcome.memoryOff');
-    };
+    const memoryBtn = h('button', { class: 'memoryToggleBtn memoryToggleBtnDisabled', type: 'button' },
+      svg(MEMORY), h('span', {}, t('welcome.memoryDisabled')));
+    markUnsupported(memoryBtn,
+      'Memory controls are unavailable until the standalone Studio bridge can pass memoryEnabled to sessions.');
 
     const welcomeInner = h('div', { class: 'welcome' },
       h('img', { class: 'welcomeAvatar', src: avatar, alt: AGENT_NAME, draggable: 'false' }),
