@@ -10,6 +10,7 @@ return (function () {
   const sessionBulk = studio.require('lib/session-bulk');
   const sessionRuntime = studio.require('lib/session-runtime');
   const sessionRow = studio.require('lib/session-row');
+  const sessionRowView = studio.require('lib/session-row-view');
   const sessionActionLock = studio.require('lib/session-action-lock');
   const sessionMutations = studio.require('lib/session-mutations');
   const { t } = studio.require('lib/i18n');
@@ -200,23 +201,6 @@ return (function () {
       }
     });
 
-    const highlightedText = (text, query) => {
-      const parts = sessionSearch.highlightParts(text, query);
-      if (!parts.match) return h('span', { class: 'sessionItemTitle' }, parts.before);
-      return h('span', { class: 'sessionItemTitle' },
-        parts.before,
-        h('mark', { class: 'sessionSearchHighlight' }, parts.match),
-        parts.after);
-    };
-    const highlightedSnippet = (text, query) => {
-      const parts = sessionSearch.highlightParts(text, query);
-      if (!parts.match) return h('div', { class: 'sessionSearchSnippet' }, parts.before);
-      return h('div', { class: 'sessionSearchSnippet' },
-        parts.before,
-        h('mark', { class: 'sessionSearchHighlight' }, parts.match),
-        parts.after);
-    };
-
     async function draw(selected, runtimeOverride = null) {
       const [activeRows, archivedRows, runtime] = await Promise.all([
         adapter.http('GET', '/api/sessions').catch(async () => (await api.sessions()).map((row) => ({
@@ -276,18 +260,10 @@ return (function () {
         const state = runtimeById.get(s.id) || null;
         const rowRuntime = sessionRow.deriveRuntime(s, state, view.archived);
         const { running: isRunning, error: isError, toolCount } = rowRuntime;
-        const statusNode = toolCount > 0
-          ? h('span', { class: 'sessionToolCount', title: `${toolCount} active tool${toolCount === 1 ? '' : 's'}` }, String(toolCount))
-          : isError ? h('span', { class: 'sessionErrorDot', title: state?.error || 'Session error' }) : null;
-        const runtimeAction = isRunning
-          ? h('button', { class: 'sessionStopBtn', type: 'button', title: 'Stop session' }, '■')
-          : isError ? h('button', { class: 'sessionRetryBtn', type: 'button', title: 'Retry session' }, '↻') : null;
+        const statusNode = sessionRowView.status(rowRuntime, state);
+        const runtimeAction = sessionRowView.runtimeButton(rowRuntime);
         const rowActions = h('span', { class: 'sessionItemActions' });
-        const selectBox = h('input', {
-          class: 'sessionSelectBox', type: 'checkbox',
-          'aria-label': `Select ${s.title || 'session'}`,
-        });
-        selectBox.checked = view.selectedIds.has(s.id);
+        const selectBox = sessionRowView.selectionBox(s, view.selectedIds.has(s.id));
         selectBox.onclick = (event) => {
           event?.stopPropagation?.();
           if (selectBox.checked) view.selectedIds.add(s.id);
@@ -433,17 +409,12 @@ return (function () {
           rowActions.appendChild(archive);
         }
 
-        const detailsToggle = h('button', {
-          class: 'sessionDetailsBtn', type: 'button',
-          title: view.expanded.has(s.id) ? 'Hide session details' : 'Show session details',
-          'aria-expanded': view.expanded.has(s.id) ? 'true' : 'false',
-          'aria-label': view.expanded.has(s.id) ? 'Hide session details' : 'Show session details',
-        }, view.expanded.has(s.id) ? '⌃' : '…');
+        const detailsToggle = sessionRowView.detailsButton(view.expanded.has(s.id));
         rowActions.appendChild(detailsToggle);
         const renaming = view.renamingId === s.id;
         const titleNode = renaming
           ? h('span', { class: 'sessionRenameEditor' })
-          : highlightedText(s.title || t('session.untitled'), rawQuery);
+          : sessionRowView.title(s.title || t('session.untitled'), rawQuery);
         if (renaming) {
           const renameInput = h('input', { class: 'sessionRenameInput', type: 'text', 'aria-label': 'Session title' });
           renameInput.value = s.title || '';
@@ -494,37 +465,22 @@ return (function () {
           titleNode.appendChild(saveRename);
           titleNode.appendChild(cancelRename);
         }
-        const row = h('div', {
-          class: 'sessionItem sessionItemSingleLine'
-            + (selected === s.id ? ' sessionItemActive' : '')
-            + (view.keyboardId === s.id ? ' sessionItemKeyboard' : ''),
-          role: 'button', tabindex: '0',
-          'aria-selected': selected === s.id ? 'true' : 'false',
-          'aria-expanded': view.expanded.has(s.id) ? 'true' : 'false',
-          ...(s.pinnedAt ? { 'data-pinned': 'true' } : {}),
-          'data-session-id': s.id,
-          ...(view.archived ? { 'data-archived': 'true' } : {}),
-          ...(isError ? { 'data-runtime-state': 'error' } : isRunning ? { 'data-runtime-state': 'running' } : {}),
-        }, h('div', { class: 'sessionItemHeader' },
+        const row = sessionRowView.shell({
+          session: s,
+          selected,
+          keyboardId: view.keyboardId,
+          archived: view.archived,
+          runtime: rowRuntime,
+          expanded: view.expanded.has(s.id),
           selectBox,
-          isRunning ? h('span', { class: 'sessionStreamingDot', 'data-state': 'running' }) : null,
           titleNode,
-          statusNode, runtimeAction, rowActions));
-        row.appendChild(h('div', { class: 'sessionItemMeta' },
-          sessionRow.metaText(s, rowRuntime, view.archived)));
-        if (view.expanded.has(s.id)) {
-          const detailLines = sessionRow.detailEntries(s, state, rowRuntime, view.archived);
-          const panel = h('div', { class: 'sessionDetailsPanel' });
-          detailLines.forEach(([label, value]) => {
-            panel.appendChild(h('div', { class: 'sessionDetailsLine' },
-              h('span', { class: 'sessionDetailsLabel' }, label),
-              h('span', { class: 'sessionDetailsValue' }, String(value))));
-          });
-          row.appendChild(panel);
-        }
-        if (s.searchSnippet) {
-          row.appendChild(highlightedSnippet(s.searchSnippet, rawQuery));
-        }
+          statusNode,
+          runtimeAction,
+          rowActions,
+        });
+        sessionRowView.appendContext(
+          row, s, state, rowRuntime, view.archived, view.expanded.has(s.id), rawQuery,
+        );
 
         detailsToggle.onclick = (event) => {
           event?.stopPropagation?.();

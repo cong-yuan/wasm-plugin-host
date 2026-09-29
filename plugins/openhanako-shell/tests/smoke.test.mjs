@@ -134,7 +134,7 @@ global.MutationObserver = class {
 const sources = new Map();
 for (const name of [
   'lib/dom.js', 'lib/slots.js', 'lib/tauri-invoke.js', 'lib/api.js', 'lib/hana-adapter.js', 'lib/avatar.js',
-  'lib/session-search.js', 'lib/session-search-controller.js', 'lib/session-bulk.js', 'lib/session-runtime.js', 'lib/session-row.js', 'lib/session-action-lock.js', 'lib/session-mutations.js',
+  'lib/session-search.js', 'lib/session-search-controller.js', 'lib/session-bulk.js', 'lib/session-runtime.js', 'lib/session-row.js', 'lib/session-row-view.js', 'lib/session-action-lock.js', 'lib/session-mutations.js',
   'lib/theme.js', 'lib/i18n.js', 'lib/resize.js',
   'lib/motion.js', 'lib/tokens.js',
   'panels/titlebar.js', 'panels/sidebar.js', 'panels/conversation.js',
