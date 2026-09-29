@@ -458,6 +458,23 @@ return (function () {
     return '';
   };
 
+  const summarizeBaseUrl = (value) => {
+    const raw = typeof value === 'string' ? value.trim() : '';
+    if (!raw) return '';
+    const withoutTail = raw.replace(/[?#].*$/, '');
+    const schemeAt = withoutTail.indexOf('://');
+    if (schemeAt < 0) return withoutTail;
+    const authorityStart = schemeAt + 3;
+    const pathAt = withoutTail.indexOf('/', authorityStart);
+    const authorityEnd = pathAt < 0 ? withoutTail.length : pathAt;
+    const authority = withoutTail.slice(authorityStart, authorityEnd);
+    const at = authority.lastIndexOf('@');
+    if (at < 0) return withoutTail;
+    return withoutTail.slice(0, authorityStart)
+      + authority.slice(at + 1)
+      + withoutTail.slice(authorityEnd);
+  };
+
   const studioProvidersToHana = (llm) => {
     const root = llm && typeof llm === 'object' ? llm : {};
     const providersIn = root.providers && typeof root.providers === 'object' ? root.providers : {};
@@ -505,7 +522,7 @@ return (function () {
         supports_oauth: false,
         is_coding_plan: false,
         models,
-        base_url: typeof entry.base_url === 'string' ? entry.base_url : '',
+        base_url: summarizeBaseUrl(entry.base_url),
         api: typeof over.api === 'string' && over.api ? over.api : 'openai-completions',
       };
     });
