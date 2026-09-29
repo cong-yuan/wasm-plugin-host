@@ -1093,6 +1093,41 @@ return (function () {
 
   const sessionIdFromBody = (body, query) => sessionIdOf(body, query);
 
+  const purgeSessionMetadata = (sessionId) => {
+    if (!sessionId) return;
+    const path = pathFor(sessionId);
+    runtimeTranscriptCache.delete(sessionId);
+    clearPinForSession(sessionId);
+
+    const titles = loadTitles();
+    if (titles[path] || titles[String(sessionId)]) {
+      delete titles[path];
+      delete titles[String(sessionId)];
+      saveTitles(titles);
+    }
+
+    const archived = loadArchived();
+    if (archived[path] || archived[String(sessionId)]) {
+      delete archived[path];
+      delete archived[String(sessionId)];
+      saveArchived(archived);
+    }
+
+    const models = loadSessionModels();
+    if (models[path] || models[String(sessionId)]) {
+      delete models[path];
+      delete models[String(sessionId)];
+      saveSessionModels(models);
+    }
+
+    const assignments = loadAssignments();
+    if (assignments[path] || assignments[String(sessionId)]) {
+      delete assignments[path];
+      delete assignments[String(sessionId)];
+      saveAssignments(assignments);
+    }
+  };
+
   /** Archive/delete must dispose the driver AND purge the JSONL (Studio side). */
   const disposeSession = async (sessionId) => {
     if (!sessionId) return { ok: false, error: 'missing session' };
@@ -1102,14 +1137,7 @@ return (function () {
     try {
       await api.dispose(sessionId);
       disposedIds.add(sessionId);
-      runtimeTranscriptCache.delete(sessionId);
-      clearPinForSession(sessionId);
-      const assignments = loadAssignments();
-      const path = pathFor(sessionId);
-      if (assignments[path]) {
-        delete assignments[path];
-        saveAssignments(assignments);
-      }
+      purgeSessionMetadata(sessionId);
       return { ok: true, sessionId, removed: true };
     } catch (err) {
       return {
@@ -1506,11 +1534,7 @@ return (function () {
     if (pathname === '/api/sessions/archived/delete' && verb === 'POST') {
       const sessionId = sessionIdFromBody(body, query);
       const result = await disposeSession(sessionId);
-      if (result.ok && sessionId) {
-        const archived = loadArchived();
-        delete archived[pathFor(sessionId)];
-        saveArchived(archived);
-      }
+      if (result.ok && sessionId) purgeSessionMetadata(sessionId);
       return result;
     }
 

@@ -775,6 +775,16 @@ check('host bridge correlates requestId',
   check('restore resumes archived agent',
     restored && restored.ok === true && restored.restored === true
     && calls.some((c) => c.cmd === 'resume_session' && c.args.sessionId === 'agent-1'));
+
+  await adapter.http('POST', '/api/sessions/rename', { sessionId: 'agent-1', title: 'Disposable title' });
+  await adapter.http('POST', '/api/sessions/pin', { sessionId: 'agent-1', pinned: true });
+  await adapter.http('POST', '/api/sessions/archive', { sessionId: 'agent-1' });
+  calls.length = 0;
+  const deletedArchived = await adapter.http('POST', '/api/sessions/archived/delete', { sessionId: 'agent-1' });
+  check('permanent delete disposes archived session', deletedArchived?.ok === true);
+  const afterPermanentDelete = await adapter.http('GET', '/api/sessions/archived');
+  check('permanent delete removes archived metadata',
+    !afterPermanentDelete.some((row) => row.sessionId === 'agent-1'));
 }
 
 // Standalone session search mirrors the server's title/content phases and
