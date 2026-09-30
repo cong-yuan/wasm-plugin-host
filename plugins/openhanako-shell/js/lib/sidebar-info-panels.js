@@ -40,6 +40,8 @@ return (function () {
       const activeProvider = status?.provider || status?.providers?.[0] || '';
       const activeModel = status?.model || '';
       const defaultProvider = typeof llm?.default === 'string' ? llm.default : '';
+      const currentProvider = typeof llm?.current?.provider === 'string' ? llm.current.provider : '';
+      const newChatProvider = currentProvider || defaultProvider;
       const settingsMessage = h('div', { class: 'sidebarSettingsMessage', 'aria-live': 'polite' }, '');
       const refresh = h('button', { class: 'sidebarSettingsRefresh', type: 'button' }, 'Refresh');
       refresh.onclick = () => loadSettings();
@@ -70,28 +72,33 @@ return (function () {
           row.appendChild(h('div', { class: 'sidebarSettingsProviderMeta' }, String(provider.base_url)));
         }
         const actions = h('div', { class: 'sidebarSettingsProviderActions' });
-        if (name === defaultProvider) {
-          actions.appendChild(h('span', { class: 'sidebarSettingsDefaultBadge' }, 'Default'));
-        } else if (configured) {
-          const setDefault = h('button', {
+        if (name === newChatProvider) {
+          actions.appendChild(h('span', { class: 'sidebarSettingsDefaultBadge' }, 'New chats'));
+        } else if (configured && models.length) {
+          const useForNewChats = h('button', {
             class: 'sidebarSettingsSetDefault',
             type: 'button',
-          }, 'Set default');
-          setDefault.onclick = async () => {
-            setDefault.disabled = true;
-            settingsMessage.textContent = `Setting ${name} as default…`;
+          }, 'Use for new chats');
+          useForNewChats.onclick = async () => {
+            useForNewChats.disabled = true;
+            settingsMessage.textContent = `Using ${name} for new chats…`;
             settingsMessage.className = 'sidebarSettingsMessage';
+            const configuredModel = llm?.providers?.[name]?.model;
+            const model = configuredModel || models[0];
             try {
-              const result = await api.setLlmConfig({ default: name });
+              const result = await api.setLlmConfig({
+                default: name,
+                current: { provider: name, model },
+              });
               if (result && result.ok === false) throw new Error(result.error || 'Provider update failed');
               await loadSettings();
             } catch (err) {
-              settingsMessage.textContent = err?.message || 'Unable to update default provider';
+              settingsMessage.textContent = err?.message || 'Unable to update new-chat provider';
               settingsMessage.className = 'sidebarSettingsMessage error';
-              setDefault.disabled = false;
+              useForNewChats.disabled = false;
             }
           };
-          actions.appendChild(setDefault);
+          actions.appendChild(useForNewChats);
         }
         if (actions.children?.length) row.appendChild(actions);
         settingsPanel.appendChild(row);

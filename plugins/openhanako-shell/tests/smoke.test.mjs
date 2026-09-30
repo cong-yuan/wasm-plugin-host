@@ -496,21 +496,38 @@ adapterForSettings.http = async (method, path, body) => {
   return originalSettingsHttp(method, path, body);
 };
 api.status = async () => ({ provider: 'providerA', model: 'a-model', providers: ['providerA', 'providerB'] });
-api.getLlmConfig = async () => ({ default: 'providerA' });
+api.getLlmConfig = async () => ({
+  default: 'providerA',
+  current: { provider: 'providerA', model: 'a-model' },
+  providers: {
+    providerA: { model: 'a-model' },
+    providerB: { model: 'b-model' },
+  },
+});
 api.setLlmConfig = async (patch) => {
   defaultProviderPatch = patch;
-  api.getLlmConfig = async () => ({ default: patch.default });
+  api.getLlmConfig = async () => ({
+    default: patch.default,
+    current: patch.current,
+    providers: {
+      providerA: { model: 'a-model' },
+      providerB: { model: 'b-model' },
+    },
+  });
   return { ok: true };
 };
 root.querySelector('.sidebarSettingsRefresh')?.fire('click');
 await new Promise((resolve) => setTimeout(resolve, 0));
-check('settings marks current default provider',
-  root.querySelectorAll('.sidebarSettingsDefaultBadge').length === 1);
+check('settings marks provider used for new chats',
+  root.querySelectorAll('.sidebarSettingsDefaultBadge').length === 1
+  && /New chats/.test(root.querySelector('.sidebarSettingsDefaultBadge')?.textContent || ''));
 root.querySelector('.sidebarSettingsSetDefault')?.fire('click');
 await new Promise((resolve) => setTimeout(resolve, 0));
 await new Promise((resolve) => setTimeout(resolve, 0));
-check('settings can update default provider without exposing credentials',
+check('settings can update provider and model used for new chats',
   defaultProviderPatch?.default === 'providerB'
+  && defaultProviderPatch?.current?.provider === 'providerB'
+  && defaultProviderPatch?.current?.model === 'b-model'
   && root.querySelectorAll('.sidebarSettingsDefaultBadge').length === 1
   && !/api[_ -]?key/i.test(root.querySelector('.sidebarSettingsPanel')?.textContent || ''));
 api.status = originalStatusForSettings;
