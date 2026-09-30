@@ -505,6 +505,7 @@ return (function () {
         state.cancelling = false;
         renderSendState();
         draw();
+        options.onChanged();
       }
     }
 

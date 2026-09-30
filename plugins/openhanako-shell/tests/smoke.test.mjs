@@ -1066,6 +1066,48 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.cancel = originalCancel;
 }
 
+// Cancel failures must restore an actionable Stop state and surface the error.
+{
+  const originalProgress = api.sendWithProgress;
+  const originalCancel = api.cancel;
+  let releaseTurn = null;
+  let cancelAttempts = 0;
+  api.sendWithProgress = async () => new Promise((resolve) => {
+    releaseTurn = () => resolve(true);
+  });
+  api.cancel = async () => {
+    cancelAttempts += 1;
+    if (cancelAttempts === 1) throw new Error('cancel failed');
+    return null;
+  };
+
+  const cancelFailureHost = new El('div');
+  const disposeCancelFailureShell = shell.render(cancelFailureHost);
+  const cancelFailureRoot = cancelFailureHost.children[0];
+  const cancelFailureInput = cancelFailureRoot.querySelector('.input-box');
+  const cancelFailureButton = cancelFailureRoot.querySelector('.send-btn');
+  cancelFailureInput.textContent = 'cancel failure smoke';
+  cancelFailureButton.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  cancelFailureButton.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('cancel failure restores Stop button for another attempt',
+    cancelAttempts === 1
+    && cancelFailureButton.getAttribute('data-mode') === 'stop'
+    && cancelFailureButton.disabled === false
+    && /cancel failed/.test(cancelFailureRoot.textContent || ''));
+
+  cancelFailureButton.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('cancel can be retried after failure', cancelAttempts === 2);
+  releaseTurn?.();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  if (typeof disposeCancelFailureShell === 'function') disposeCancelFailureShell();
+  api.sendWithProgress = originalProgress;
+  api.cancel = originalCancel;
+}
+
 // Model pill is a real selector: new sessions update the pending model, while
 // opened sessions use the adapter's rebind-aware switch endpoint.
 {
