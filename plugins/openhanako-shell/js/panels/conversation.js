@@ -81,6 +81,10 @@ return (function () {
     const stream = h('div', { class: 'message-stream' });
     slots.mount('openhanako.conversation.stream', stream);
     const chat = h('div', { class: 'chat-area' }, welcome, stream);
+    const conversationStatus = h('div', {
+      class: 'conversation-status',
+      'aria-live': 'polite',
+    }, '');
 
     // ── InputArea.tsx ──
     const dock = h('div', { class: 'input-dock hana-slot' });
@@ -149,7 +153,7 @@ return (function () {
     slots.mount('openhanako.conversation.header', headerSlot);
 
     // MainContent.tsx: <div className={`main-content${welcomeMode ? ' welcome-mode' : ''}`}>
-    const root = h('div', { class: 'main-content welcome-mode' }, headerSlot, chat, inputArea);
+    const root = h('div', { class: 'main-content welcome-mode' }, headerSlot, conversationStatus, chat, inputArea);
 
     function setModelLabel(label) {
       modelPill.firstChild.textContent = label || '—';
@@ -331,6 +335,7 @@ return (function () {
 
     async function open(session) {
       const previousId = state.id;
+      const previousTurns = state.turns.slice();
       const wasBusy = state.busy;
       state.epoch += 1;
       const openEpoch = state.epoch;
@@ -338,22 +343,42 @@ return (function () {
       state.busy = false;
       state.cancelling = false;
       state.switchingModel = false;
+      conversationStatus.textContent = 'Opening session…';
+      conversationStatus.className = 'conversation-status';
       renderSendState();
       if (wasBusy && previousId && previousId !== session.id) {
         api.cancel(previousId).catch(() => {});
       }
-      if (session.live === false) {
-        const resumed = await api.resume(session.id);
-        if (state.epoch !== openEpoch) return;
-        if (resumed && (resumed.id || typeof resumed === 'string')) state.id = resumed.id || resumed;
+      try {
+        if (session.live === false) {
+          const resumed = await api.resume(session.id);
+          if (state.epoch !== openEpoch) return false;
+          if (resumed && (resumed.id || typeof resumed === 'string')) state.id = resumed.id || resumed;
+        }
+        const transcript = await api.transcript(state.id);
+        if (state.epoch !== openEpoch) return false;
+        state.turns = transcript;
+        await refreshModels().catch(() => {});
+        if (state.epoch !== openEpoch) return false;
+        conversationStatus.textContent = '';
+        conversationStatus.className = 'conversation-status';
+        draw();
+        options.onOpened(state.id);
+        return true;
+      } catch (err) {
+        if (state.epoch !== openEpoch) return false;
+        state.id = previousId;
+        state.turns = previousTurns;
+        state.busy = false;
+        state.cancelling = false;
+        state.switchingModel = false;
+        conversationStatus.textContent = `Could not open session: ${(err && err.message) ? err.message : String(err)}`;
+        conversationStatus.className = 'conversation-status error';
+        renderSendState();
+        draw();
+        options.onChanged();
+        return false;
       }
-      const transcript = await api.transcript(state.id);
-      if (state.epoch !== openEpoch) return;
-      state.turns = transcript;
-      await refreshModels().catch(() => {});
-      if (state.epoch !== openEpoch) return;
-      draw();
-      options.onOpened(state.id);
     }
 
     const failSubmit = (err, submitEpoch = state.epoch, retryText = '') => {
@@ -529,6 +554,8 @@ return (function () {
         state.busy = false;
         state.cancelling = false;
         state.switchingModel = false;
+        conversationStatus.textContent = '';
+        conversationStatus.className = 'conversation-status';
         closeModels();
         renderSendState();
         draw();

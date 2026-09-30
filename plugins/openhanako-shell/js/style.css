@@ -9245,6 +9245,19 @@ html[data-platform="linux"] .onboarding {
     background: rgba(176,74,63,0.06);
     border-color: rgba(176,74,63,0.4);
 }
+.conversation-status {
+    min-height: 0;
+    padding: 0 1rem;
+    font-size: var(--fs-hint);
+    color: var(--text-muted);
+}
+.conversation-status:empty {
+    display: none;
+}
+.conversation-status.error {
+    padding-top: 0.4rem;
+    color: #b04a3f;
+}
 
 .input-surface-mobile .model-selector {
     flex: 0 1 auto;

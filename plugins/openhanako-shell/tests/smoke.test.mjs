@@ -791,6 +791,37 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.dispose = originalDispose;
 }
 
+// Failed session opens roll back to the previous conversation instead of
+// leaving a new session id paired with stale message content.
+{
+  const originalTranscript = api.transcript;
+  const openFailureHost = new El('div');
+  const disposeOpenFailureShell = shell.render(openFailureHost);
+  const openFailureRoot = openFailureHost.children[0];
+  for (let i = 0; i < 20 && openFailureRoot.querySelectorAll('.sessionItem').length < 2; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  const openRows = openFailureRoot.querySelectorAll('.sessionItem');
+  openRows[0]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const beforeFailureText = openFailureRoot.querySelector('.message-stream')?.textContent || '';
+  const failedId = openRows[1]?.getAttribute('data-session-id');
+  api.transcript = async (id) => {
+    if (id === failedId) throw new Error('transcript unavailable');
+    return originalTranscript(id);
+  };
+  openRows[1]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  check('failed session open preserves previous conversation',
+    (openFailureRoot.querySelector('.message-stream')?.textContent || '') === beforeFailureText);
+  check('failed session open exposes visible error state',
+    /could not open session/i.test(openFailureRoot.querySelector('.conversation-status')?.textContent || '')
+    && /transcript unavailable/i.test(openFailureRoot.querySelector('.conversation-status')?.textContent || ''));
+
+  if (typeof disposeOpenFailureShell === 'function') disposeOpenFailureShell();
+  api.transcript = originalTranscript;
+}
+
 // Session creation failures must restore the composer instead of leaving
 // the conversation stuck in busy/Stop mode.
 {
