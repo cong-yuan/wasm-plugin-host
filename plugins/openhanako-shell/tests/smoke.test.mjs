@@ -1157,8 +1157,10 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   let holdModelSwitch = false;
   let releaseModelSwitch = null;
   let failModelSwitch = false;
+  let failModelLoad = false;
   adapter.http = async (method, path, body) => {
     if (method === 'GET' && path === '/api/models') {
+      if (failModelLoad) throw new Error('model list unavailable');
       return {
         models: [
           { id: 'model-1', name: 'Model One', provider: 'provider-a', isCurrent: true },
@@ -1254,6 +1256,17 @@ adapterForShellRefresh.http = originalHttpForRefresh;
     /model switch failed/i.test(modelRoot.querySelector('.model-switch-status')?.textContent || '')
     && /Model One/.test(modelPill.textContent));
   failModelSwitch = false;
+
+  failModelLoad = true;
+  const modelLoadFailureHost = new El('div');
+  const disposeModelLoadFailureShell = shell.render(modelLoadFailureHost);
+  const modelLoadFailureRoot = modelLoadFailureHost.children[0];
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('initial model load failure exposes visible status',
+    /models unavailable/i.test(modelLoadFailureRoot.querySelector('.model-switch-status')?.textContent || '')
+    && /model list unavailable/i.test(modelLoadFailureRoot.querySelector('.model-switch-status')?.textContent || ''));
+  if (typeof disposeModelLoadFailureShell === 'function') disposeModelLoadFailureShell();
+  failModelLoad = false;
 
   if (typeof disposeModelShell === 'function') disposeModelShell();
   adapter.http = originalHttp;

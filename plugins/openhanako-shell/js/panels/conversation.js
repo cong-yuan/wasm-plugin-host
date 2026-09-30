@@ -204,6 +204,7 @@ return (function () {
 
     const refreshModels = async () => {
       const result = await adapter.http('GET', '/api/models');
+      modelStatus.className = 'model-switch-status';
       const models = result && Array.isArray(result.models) ? result.models : [];
       clear(modelDropdown);
       for (const model of models) {
@@ -228,6 +229,19 @@ return (function () {
       return result;
     };
 
+    const refreshModelsWithStatus = async () => {
+      try {
+        const result = await refreshModels();
+        modelStatus.textContent = '';
+        modelStatus.className = 'model-switch-status';
+        return result;
+      } catch (err) {
+        modelStatus.textContent = `Models unavailable: ${(err && err.message) ? err.message : String(err)}`;
+        modelStatus.className = 'model-switch-status error';
+        return null;
+      }
+    };
+
     modelPill.onclick = async () => {
       if (state.busy || state.switchingModel) return;
       const opening = !modelSelector.classList.contains('open');
@@ -235,14 +249,7 @@ return (function () {
         closeModels();
         return;
       }
-      try {
-        await refreshModels();
-        modelStatus.textContent = '';
-        modelStatus.className = 'model-switch-status';
-      } catch (err) {
-        modelStatus.textContent = `Models unavailable: ${(err && err.message) ? err.message : String(err)}`;
-        modelStatus.className = 'model-switch-status error';
-      }
+      await refreshModelsWithStatus();
       modelSelector.classList.add('open');
       modelPill.setAttribute('data-open', 'true');
     };
@@ -358,7 +365,7 @@ return (function () {
         const transcript = await api.transcript(state.id);
         if (state.epoch !== openEpoch) return false;
         state.turns = transcript;
-        await refreshModels().catch(() => {});
+        await refreshModelsWithStatus();
         if (state.epoch !== openEpoch) return false;
         conversationStatus.textContent = '';
         conversationStatus.className = 'conversation-status';
@@ -543,7 +550,7 @@ return (function () {
     });
 
     renderSendState();
-    refreshModels().catch(() => {});
+    refreshModelsWithStatus();
     draw();
     return {
       root, open, setModelLabel,
