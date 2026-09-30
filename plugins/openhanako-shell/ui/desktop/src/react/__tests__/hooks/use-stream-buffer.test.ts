@@ -320,10 +320,7 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
     expect(snapshotStreamBuffer(PATH)).toBeNull();
   });
 
-  it('工具前/后两段文字各自成块，工具组夹在中间且不被并进段落', () => {
-    // 回合内一次工具调用会把文本切成两段。旧实现用 findIndex 永远覆盖第一个
-    // text 块，且 textAcc 跨整个 turn 累积、tool_start 不清空，于是「工具后的正文」
-    // 被并回「工具前的段落」、tool_group 被推到末尾 —— 表现为文字粘连/错位。
+  it('工具调用前后的正文合并成一个尾部文本块', () => {
     streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '我先读文件。' });
     streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'c1', name: 'read', args: { file_path: '/tmp/a.ts' } });
     streamBufferManager.handle({ type: 'tool_end', sessionPath: PATH, id: 'c1', name: 'read', success: true });
@@ -331,12 +328,11 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
     streamBufferManager.handle({ type: 'turn_end', sessionPath: PATH });
 
     const blocks = getAssistantMessage()?.blocks ?? [];
-    expect(blocks.map((block) => block.type)).toEqual(['text', 'tool_group', 'text']);
-    expect(blocks[0]).toMatchObject({ type: 'text', source: '我先读文件。' });
-    expect(blocks[2]).toMatchObject({ type: 'text', source: '读完了，结论是 X。' });
+    expect(blocks.map((block) => block.type)).toEqual(['tool_group', 'text']);
+    expect(blocks[1]).toMatchObject({ type: 'text', source: '我先读文件。读完了，结论是 X。' });
   });
 
-  it('keeps consecutive completed tools between the first and second prose segments', () => {
+  it('连续工具调用保持一个工具组，正文统一放在其后', () => {
     streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '上一轮已经完整测过一轮了，这次换个角度压测。' });
     streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'edge-1', name: 'read' });
     streamBufferManager.handle({ type: 'tool_end', sessionPath: PATH, id: 'edge-1', name: 'read', success: true });
@@ -350,23 +346,21 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
     });
 
     const blocks = getAssistantMessage()?.blocks ?? [];
-    expect(blocks.map((block) => block.type)).toEqual(['text', 'tool_group', 'text']);
-    expect(blocks[0]).toMatchObject({
-      type: 'text',
-      source: '上一轮已经完整测过一轮了，这次换个角度压测。',
-    });
-    const group = blocks[1];
+    expect(blocks.map((block) => block.type)).toEqual(['tool_group', 'text']);
+    const group = blocks[0];
     expect(group?.type).toBe('tool_group');
     if (!group || group.type !== 'tool_group') throw new Error('expected tool group');
     expect(group.tools.map((tool) => tool.id)).toEqual(['edge-1', 'edge-2']);
-    expect(blocks[2]).toMatchObject({ type: 'text', source: '第二段描述。' });
+    expect(blocks[1]).toMatchObject({
+      type: 'text',
+      source: '上一轮已经完整测过一轮了，这次换个角度压测。第二段描述。',
+    });
   });
 
-  it('authoritative assistant snapshot restores text lost between tool calls', () => {
+  it('authoritative assistant snapshot restores dropped text into one trailing answer', () => {
     streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '开头。' });
     streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'snap-tool', name: 'read' });
     streamBufferManager.handle({ type: 'tool_end', sessionPath: PATH, id: 'snap-tool', name: 'read', success: true });
-    // Simulate a dropped push chunk: only final suffix reached renderer.
     streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '结尾。' });
     streamBufferManager.handle({
       type: 'assistant_snapshot',
@@ -375,25 +369,30 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
     });
 
     const blocks = getAssistantMessage()?.blocks ?? [];
-    expect(blocks.map((block) => block.type)).toEqual(['text', 'tool_group', 'text']);
-    expect(blocks[0]).toMatchObject({ type: 'text', source: '开头完整。' });
-    expect(blocks[2]).toMatchObject({ type: 'text', source: '工具后完整结论。' });
+    expect(blocks.map((block) => block.type)).toEqual(['tool_group', 'text']);
+    expect(blocks[1]).toMatchObject({ type: 'text', source: '开头完整。工具后完整结论。' });
   });
 
-  it('inserts a fully dropped pre-tool segment before the matching tool group', () => {
-    streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'missing-pre', name: 'read' });
-    streamBufferManager.handle({ type: 'tool_end', sessionPath: PATH, id: 'missing-pre', name: 'read', success: true });
-    streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '残缺结尾。' });
+  it('多轮工具调用始终只保留一个尾部正文块', () => {
+    streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '第一段。' });
+    for (const [id, name] of [['t1', 'read'], ['t2', 'grep'], ['t3', 'bash']] as const) {
+      streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id, name });
+      streamBufferManager.handle({ type: 'tool_end', sessionPath: PATH, id, name, success: true });
+      streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: `${id} 后正文。` });
+    }
     streamBufferManager.handle({
       type: 'assistant_snapshot',
       sessionPath: PATH,
-      segments: ['完整前言。', '完整结论。'],
+      segments: ['第一段。', 't1 后正文。', 't2 后正文。', 't3 后正文。'],
     });
 
     const blocks = getAssistantMessage()?.blocks ?? [];
-    expect(blocks.map((block) => block.type)).toEqual(['text', 'tool_group', 'text']);
-    expect(blocks[0]).toMatchObject({ type: 'text', source: '完整前言。' });
-    expect(blocks[2]).toMatchObject({ type: 'text', source: '完整结论。' });
+    expect(blocks.filter((block) => block.type === 'text')).toHaveLength(1);
+    expect(blocks.map((block) => block.type)).toEqual(['tool_group', 'text']);
+    expect(blocks[1]).toMatchObject({
+      type: 'text',
+      source: '第一段。t1 后正文。t2 后正文。t3 后正文。',
+    });
   });
 
   it('duplicate tool events with the same call id are idempotent', () => {

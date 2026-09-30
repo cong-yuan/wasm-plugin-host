@@ -1421,6 +1421,34 @@ return (function () {
     return row;
   };
 
+  const historyMessages = (rows, transcriptResults) => {
+    const out = [];
+    for (let index = 0; index < rows.length; index += 1) {
+      const message = rows[index];
+      const transportOnly = message?.role === 'user'
+        && !message.text
+        && !message.reasoning
+        && (!Array.isArray(message.tool_calls) || message.tool_calls.length === 0)
+        && Array.isArray(message.tool_results)
+        && message.tool_results.length > 0;
+      if (transportOnly) continue;
+
+      const row = historyMessage(message, index, transcriptResults);
+      const previous = out[out.length - 1];
+      if (row.role === 'assistant' && previous?.role === 'assistant') {
+        previous.content = String(previous.content || '') + String(row.content || '');
+        if (row.thinking) previous.thinking = String(previous.thinking || '') + String(row.thinking || '');
+        if (Array.isArray(row.toolCalls) && row.toolCalls.length) {
+          previous.toolCalls = [...(previous.toolCalls || []), ...row.toolCalls];
+        }
+        previous.timestamp = row.timestamp;
+        continue;
+      }
+      out.push(row);
+    }
+    return out;
+  };
+
   // Soft stubs for openhanako surfaces that are not part of the Studio agent
   // vertical slice. Returning empty/ok stops noisy 404s in the harness and
   // iframe console without pretending the feature exists.
@@ -2086,17 +2114,7 @@ return (function () {
       const rows = await api.transcript(liveId);
       const results = toolResultsFromTranscript(rows);
       return {
-        messages: rows
-          .map((message, index) => {
-            const transportOnly = message?.role === 'user'
-              && !message.text
-              && !message.reasoning
-              && (!Array.isArray(message.tool_calls) || message.tool_calls.length === 0)
-              && Array.isArray(message.tool_results)
-              && message.tool_results.length > 0;
-            return transportOnly ? null : historyMessage(message, index, results);
-          })
-          .filter(Boolean),
+        messages: historyMessages(rows, results),
         blocks: [],
         todos: todosFromTranscript(rows, results),
         sessionFiles: [],
