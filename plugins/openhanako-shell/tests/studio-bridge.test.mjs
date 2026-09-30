@@ -217,6 +217,19 @@ check('create resolves model within explicitly selected provider',
   calls.some((call) => call.cmd === 'create_agent'
     && call.args.provider === 'mock'
     && call.args.model === 'mock-1'));
+const sessionModelKey = 'openhanako.sessionModels.v1';
+const previousSessionModels = global.localStorage?.getItem?.(sessionModelKey) ?? null;
+global.localStorage?.setItem?.(sessionModelKey, JSON.stringify({
+  'studio://agent-1': { provider: 'mock', modelId: 'mock-1' },
+}));
+const sessionModels = await adapter.http('GET', '/api/models?sessionPath=studio%3A%2F%2Fagent-1');
+check('model listing is session-aware for opened conversations',
+  sessionModels.activeModel?.provider === 'mock'
+  && sessionModels.activeModel?.id === 'mock-1'
+  && sessionModels.models.some((model) =>
+    model.provider === 'mock' && model.id === 'mock-1' && model.isCurrent === true));
+if (previousSessionModels == null) global.localStorage?.removeItem?.(sessionModelKey);
+else global.localStorage?.setItem?.(sessionModelKey, previousSessionModels);
 const live = await api.sessions();
 check('sessions call list_sessions', calls.some((c) => c.cmd === 'list_sessions') && live[0].id === 'agent-1');
 const projectedLive = await adapter.http('GET', '/api/sessions');

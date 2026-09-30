@@ -208,7 +208,10 @@ return (function () {
     };
 
     const refreshModels = async () => {
-      const result = await adapter.http('GET', '/api/models');
+      const modelEndpoint = state.id
+        ? `/api/models?sessionPath=${encodeURIComponent('studio://' + state.id)}`
+        : '/api/models';
+      const result = await adapter.http('GET', modelEndpoint);
       modelStatus.className = 'model-switch-status';
       const models = result && Array.isArray(result.models) ? result.models : [];
       clear(modelDropdown);

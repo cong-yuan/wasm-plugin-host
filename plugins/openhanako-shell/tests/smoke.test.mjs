@@ -1356,7 +1356,7 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   let failModelSwitch = false;
   let failModelLoad = false;
   adapter.http = async (method, path, body) => {
-    if (method === 'GET' && path === '/api/models') {
+    if (method === 'GET' && path.startsWith('/api/models')) {
       if (failModelLoad) throw new Error('model list unavailable');
       return {
         models: [

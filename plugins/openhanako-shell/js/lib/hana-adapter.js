@@ -1195,12 +1195,18 @@ return (function () {
       try {
         const llm = await api.getLlmConfig();
         const current = llm && llm.current && typeof llm.current === 'object' ? llm.current : {};
-        const provider = typeof current.provider === 'string' && current.provider
-          ? current.provider
-          : (typeof llm.default === 'string' ? llm.default : api.DEFAULT_PROVIDER);
-        const model = typeof current.model === 'string' && current.model
-          ? current.model
-          : api.DEFAULT_MODEL;
+        const requestedSessionPath = typeof query.sessionPath === 'string' && query.sessionPath
+          ? query.sessionPath
+          : (typeof query.sessionId === 'string' && query.sessionId ? pathFor(query.sessionId) : '');
+        const assigned = requestedSessionPath ? modelForPath(requestedSessionPath) : null;
+        const provider = assigned?.provider
+          || (typeof current.provider === 'string' && current.provider
+            ? current.provider
+            : (typeof llm.default === 'string' ? llm.default : api.DEFAULT_PROVIDER));
+        const model = assigned?.modelId
+          || (typeof current.model === 'string' && current.model
+            ? current.model
+            : api.DEFAULT_MODEL);
         const lists = llm && llm.model_lists && typeof llm.model_lists === 'object' ? llm.model_lists : {};
         const models = [];
         Object.keys(lists).forEach((prov) => {
@@ -1216,6 +1222,9 @@ return (function () {
             });
           });
         });
+        if (!models.some((entry) => entry.provider === provider && entry.id === model)) {
+          models.push({ id: model, name: model, provider, isCurrent: true });
+        }
         if (!models.length) {
           models.push({ id: model, name: model, provider, isCurrent: true });
         }
