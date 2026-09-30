@@ -9225,6 +9225,26 @@ html[data-platform="linux"] .onboarding {
 .model-switch-status.error {
     color: #b04a3f;
 }
+.messageGroupError .messageAssistant {
+    border-left: 2px solid rgba(176,74,63,0.45);
+    padding-left: 0.6rem;
+}
+.messageRetryBtn {
+    align-self: flex-start;
+    margin-top: 0.35rem;
+    padding: 0.2rem 0.55rem;
+    border: 1px solid rgba(176,74,63,0.25);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: #b04a3f;
+    font: inherit;
+    font-size: var(--fs-hint);
+    cursor: pointer;
+}
+.messageRetryBtn:hover {
+    background: rgba(176,74,63,0.06);
+    border-color: rgba(176,74,63,0.4);
+}
 
 .input-surface-mobile .model-selector {
     flex: 0 1 auto;

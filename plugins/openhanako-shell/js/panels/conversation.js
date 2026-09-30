@@ -276,7 +276,9 @@ return (function () {
         const isUser = m.role === 'user';
         const name = isUser ? USER_NAME : AGENT_NAME;
         const group = h('div', {
-          class: 'messageGroup ' + (isUser ? 'messageGroupUser' : 'messageGroupAssistant'),
+          class: 'messageGroup ' + (isUser ? 'messageGroupUser' : 'messageGroupAssistant')
+            + (!isUser && m.retryText ? ' messageGroupError' : ''),
+          ...(!isUser && m.retryText ? { 'data-message-state': 'error' } : {}),
         });
         if (isUser) {
           group.appendChild(h('div', { class: 'avatarRow avatarRowUser' },

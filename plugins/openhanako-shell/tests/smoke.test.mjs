@@ -881,6 +881,40 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.cancel = originalCancel;
 }
 
+// A send failure with no partial assistant output is retryable in place.
+{
+  const originalProgress = api.sendWithProgress;
+  let attempts = 0;
+  api.sendWithProgress = async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error('send failed');
+    return true;
+  };
+
+  const sendFailureHost = new El('div');
+  const disposeSendFailureShell = shell.render(sendFailureHost);
+  const sendFailureRoot = sendFailureHost.children[0];
+  const sendFailureInput = sendFailureRoot.querySelector('.input-box');
+  sendFailureInput.textContent = 'send retry smoke';
+  sendFailureRoot.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  check('failed send is marked retryable',
+    sendFailureRoot.querySelectorAll('[data-message-state="error"]').length === 1
+    && sendFailureRoot.querySelectorAll('.messageRetryBtn').length === 1);
+
+  sendFailureRoot.querySelector('.messageRetryBtn')?.fire('click');
+  for (let i = 0; i < 20 && attempts < 2; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  check('failed send retry resubmits once without duplicate user message',
+    attempts === 2
+    && sendFailureRoot.querySelectorAll('.messageUser').filter((el) => /send retry smoke/.test(el.textContent)).length === 1
+    && sendFailureRoot.querySelectorAll('.messageRetryBtn').length === 0);
+
+  if (typeof disposeSendFailureShell === 'function') disposeSendFailureShell();
+  api.sendWithProgress = originalProgress;
+}
+
 // A lagging transcript snapshot must not overwrite the just-streamed local turn.
 {
   const originalProgress = api.sendWithProgress;
