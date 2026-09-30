@@ -1086,12 +1086,9 @@ return (function () {
     if (pathname.startsWith('/api/bridge')) {
       return { ok: true, studioBridge: api.mode() };
     }
-    if (pathname === '/api/sessions/archived' && verb === 'GET') return [];
     if (pathname === '/api/sessions/cleanup' && verb === 'POST') return { ok: true };
     if (pathname === '/api/sessions/continue-deleted-agent' && verb === 'POST') return { ok: false };
     if (pathname === '/api/sessions/fresh-compact' && verb === 'POST') return { ok: true };
-    if (pathname === '/api/sessions/rename' && verb === 'POST') return { ok: true };
-    if (pathname === '/api/sessions/restore' && verb === 'POST') return { ok: true };
     if (pathname === '/api/sessions/todos/complete' && verb === 'POST') return { ok: true };
     return null;
   };
