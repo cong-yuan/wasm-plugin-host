@@ -245,6 +245,11 @@ check('session projection preserves backend model metadata',
     session.sessionId === 'agent-1'
     && session.modelProvider === 'deepseek'
     && session.modelId === 'deepseek-reasoner'));
+check('session projection falls back to configured host model',
+  projectedLive.some((session) =>
+    session.sessionId === 'agent-2'
+    && session.modelProvider === 'deepseek'
+    && session.modelId === 'deepseek-chat'));
 
 // Runtime-state is the shell's stable projection for busy/error/tool activity.
 // Keep this independent of the renderer so React/slot surfaces consume one

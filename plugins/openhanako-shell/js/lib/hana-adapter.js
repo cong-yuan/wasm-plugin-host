@@ -705,7 +705,32 @@ return (function () {
   };
 
 
-  const projection = (row) => {
+  const configuredModelFallback = async () => {
+    try {
+      const llm = await api.getLlmConfig();
+      const current = llm && llm.current && typeof llm.current === 'object' ? llm.current : {};
+      const provider = (typeof current.provider === 'string' && current.provider)
+        || (typeof llm?.default === 'string' && llm.default)
+        || api.DEFAULT_PROVIDER;
+      const currentMatchesProvider = current.provider === provider;
+      const providerModel = llm?.providers?.[provider]?.model;
+      const listed = Array.isArray(llm?.model_lists?.[provider]) ? llm.model_lists[provider] : [];
+      const firstListed = listed
+        .map((entry) => (typeof entry === 'string' ? entry : entry?.id))
+        .find(Boolean);
+      return {
+        provider,
+        modelId: (currentMatchesProvider && typeof current.model === 'string' && current.model)
+          || providerModel
+          || firstListed
+          || (provider === api.DEFAULT_PROVIDER ? api.DEFAULT_MODEL : provider),
+      };
+    } catch (_) {
+      return { provider: api.DEFAULT_PROVIDER, modelId: api.DEFAULT_MODEL };
+    }
+  };
+
+  const projection = (row, fallbackModel = null) => {
     const path = pathFor(row.id);
     const pin = loadPins()[path] || null;
     const localTitle = loadTitles()[path] || null;
@@ -716,7 +741,7 @@ return (function () {
     const rowModel = typeof row.model === 'string' && row.model ? row.model : '';
     const sessionModel = rowProvider && rowModel
       ? { provider: rowProvider, modelId: rowModel }
-      : storedModel || { provider: api.DEFAULT_PROVIDER, modelId: api.DEFAULT_MODEL };
+      : storedModel || fallbackModel || { provider: api.DEFAULT_PROVIDER, modelId: api.DEFAULT_MODEL };
     const status = row.busy || isStreaming
       ? 'running'
       : (row.status || (row.error ? 'error' : 'idle'));
@@ -1358,10 +1383,13 @@ return (function () {
     }
 
     if (pathname === '/api/sessions' && verb === 'GET') {
-      const rows = await api.sessions();
+      const [rows, fallbackModel] = await Promise.all([
+        api.sessions(),
+        configuredModelFallback(),
+      ]);
       return rows
         .filter((row) => !archivedRecord(row.id) && !disposedIds.has(row.id))
-        .map(projection);
+        .map((row) => projection(row, fallbackModel));
     }
 
 
@@ -1376,9 +1404,10 @@ return (function () {
       const needle = rawQuery.toLocaleLowerCase();
       const rows = (await api.sessions())
         .filter((row) => !archivedRecord(row.id) && !disposedIds.has(row.id));
+      const fallbackModel = await configuredModelFallback();
       const results = [];
       for (const row of rows) {
-        const projected = projection(row);
+        const projected = projection(row, fallbackModel);
         if (phase === 'title') {
           const haystack = `${projected.title || ''} ${projected.sessionId || ''}`.toLocaleLowerCase();
           if (!haystack.includes(needle)) continue;
@@ -1398,7 +1427,7 @@ return (function () {
           rows,
           rawQuery,
           (row) => cachedTranscriptForRow(row),
-          projection,
+          (row) => projection(row, fallbackModel),
           limit,
           4,
         );
@@ -1558,9 +1587,12 @@ return (function () {
       const sessionId = sessionIdFromBody(body, query);
       if (!sessionId) return { ok: false, error: 'missing session' };
       deactivateTurn(activeTurns.get(sessionId));
-      const rows = await api.sessions();
+      const [rows, fallbackModel] = await Promise.all([
+        api.sessions(),
+        configuredModelFallback(),
+      ]);
       const row = rows.find((item) => item.id === sessionId) || { id: sessionId };
-      const projected = projection(row);
+      const projected = projection(row, fallbackModel);
       try {
         await api.softUnbind(sessionId);
         runtimeTranscriptCache.delete(sessionId);
