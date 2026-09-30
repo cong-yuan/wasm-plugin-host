@@ -440,11 +440,17 @@ export async function completeSessionTodos(sessionPath: string): Promise<boolean
   if (sessionScopedListIncludes(state as Record<string, any>, state.streamingSessions, sessionPath)) return false;
 
   try {
-    await hanaFetch('/api/sessions/todos/complete', {
+    const res = await hanaFetch('/api/sessions/todos/complete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: sessionPath }),
+      throwOnHttpError: false,
     });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.error) {
+      const routeError = normalizeSessionRouteError(data);
+      throw errorWithCode(routeError.message || res.statusText, routeError.code);
+    }
     useStore.getState().setSessionTodosForPath(sessionPath, []);
     useStore.getState().bumpTodosLiveVersion(sessionPath);
     return true;

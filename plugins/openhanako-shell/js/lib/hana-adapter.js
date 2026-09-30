@@ -1476,10 +1476,21 @@ return (function () {
     if (pathname.startsWith('/api/bridge')) {
       return { ok: true, studioBridge: api.mode() };
     }
-    if (pathname === '/api/sessions/cleanup' && verb === 'POST') return { ok: true };
     if (pathname === '/api/sessions/continue-deleted-agent' && verb === 'POST') return { ok: false };
-    if (pathname === '/api/sessions/fresh-compact' && verb === 'POST') return { ok: true };
-    if (pathname === '/api/sessions/todos/complete' && verb === 'POST') return { ok: true };
+    if (pathname === '/api/sessions/fresh-compact' && verb === 'POST') {
+      return {
+        ok: false,
+        code: 'capability_unavailable',
+        error: 'studio backend does not support session compaction yet',
+      };
+    }
+    if (pathname === '/api/sessions/todos/complete' && verb === 'POST') {
+      return {
+        ok: false,
+        code: 'capability_unavailable',
+        error: 'studio backend does not support mutating persisted session todos yet',
+      };
+    }
     return null;
   };
 
@@ -2030,6 +2041,39 @@ return (function () {
       } catch (err) {
         return { ok: false, sessionId, error: err && err.message ? err.message : String(err) };
       }
+    }
+
+    if (pathname === '/api/sessions/cleanup' && verb === 'POST') {
+      const maxAgeDays = Number(body && body.maxAgeDays);
+      if (!Number.isFinite(maxAgeDays) || maxAgeDays <= 0) {
+        return { ok: false, error: 'maxAgeDays must be a positive number' };
+      }
+      const cutoff = Date.now() - (maxAgeDays * 24 * 60 * 60 * 1000);
+      const archived = loadArchived();
+      const candidates = Object.values(archived).filter((row) => {
+        if (!row || !row.sessionId || !row.archivedAt) return false;
+        const archivedAt = Date.parse(row.archivedAt);
+        return Number.isFinite(archivedAt) && archivedAt <= cutoff;
+      });
+      let deleted = 0;
+      const failures = [];
+      for (const row of candidates) {
+        const result = await disposeSession(row.sessionId);
+        if (result && result.ok) {
+          deleted += 1;
+        } else {
+          failures.push({
+            sessionId: row.sessionId,
+            error: result && result.error ? result.error : 'delete failed',
+          });
+        }
+      }
+      return {
+        ok: failures.length === 0,
+        deleted,
+        failed: failures.length,
+        ...(failures.length ? { failures } : {}),
+      };
     }
 
     if (pathname === '/api/sessions/archived/delete' && verb === 'POST') {

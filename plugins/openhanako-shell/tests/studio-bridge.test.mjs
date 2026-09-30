@@ -1222,6 +1222,30 @@ check('host bridge correlates requestId',
     !searchAfterPermanentDelete.results.some((row) => row.sessionId === 'agent-1'));
 }
 
+// Cleanup must really dispose archived sessions older than the requested age;
+// unsupported compact/todo mutation routes must fail closed instead of lying.
+{
+  await adapter.http('POST', '/api/sessions/archive', { sessionId: 'agent-2' });
+  calls.length = 0;
+  await new Promise((resolve) => setTimeout(resolve, 2));
+  const cleaned = await adapter.http('POST', '/api/sessions/cleanup', { maxAgeDays: 0.000000001 });
+  check('archived cleanup permanently disposes expired sessions',
+    cleaned?.deleted >= 1
+    && cleaned?.failed === 0
+    && calls.some((c) => c.cmd === 'dispose_agent' && c.args.agentId === 'agent-2'));
+  const archivedAfterCleanup = await adapter.http('GET', '/api/sessions/archived');
+  check('archived cleanup removes disposed metadata',
+    !archivedAfterCleanup.some((row) => row.sessionId === 'agent-2'));
+
+  const compactUnsupported = await adapter.http('POST', '/api/sessions/fresh-compact', { path: 'studio://agent-2' });
+  check('fresh compact fails closed without a Studio compaction primitive',
+    compactUnsupported?.ok === false && compactUnsupported?.code === 'capability_unavailable');
+
+  const todosUnsupported = await adapter.http('POST', '/api/sessions/todos/complete', { path: 'studio://agent-2' });
+  check('todo completion fails closed without persisted todo mutation',
+    todosUnsupported?.ok === false && todosUnsupported?.code === 'capability_unavailable');
+}
+
 // Busy session must refuse a second prompt (send lock).
 {
   calls.length = 0;

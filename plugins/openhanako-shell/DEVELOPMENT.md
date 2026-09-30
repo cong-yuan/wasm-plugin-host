@@ -30,11 +30,10 @@
    - OpenHanako 侧 `tests/studio-bridge.test.mjs` 已覆盖 retry/fork command 投影，UI `message-turn-actions` 已在 retry 后重新 hydrate authoritative transcript。
    - 宿主已有 `src-tauri/tests/session_branch.rs` 专门覆盖 branch 语义；当前开发机 shell 缺少 `cargo`，因此本轮无法重新执行宿主 Rust test，环境恢复后应补跑 `cargo test --test session_branch`。
 
-2. **Fresh compact / cleanup / todo complete** — P1
-   - `/api/sessions/fresh-compact`
-   - `/api/sessions/cleanup`
-   - `/api/sessions/todos/complete`
-   - 目前仍有 no-op / soft-success，需要接真实 session 状态。
+2. **Fresh compact / cleanup / todo complete** — P1 / 部分完成
+   - `/api/sessions/cleanup`：已按本地归档元数据的 `archivedAt` + `maxAgeDays` 选择候选，并通过真实 `dispose_agent` 永久删除；返回实际 `deleted/failed`。
+   - `/api/sessions/fresh-compact`：Studio 当前没有会话摘要/压缩原语，已从 soft-success 改为 `capability_unavailable`，等待宿主命令。
+   - `/api/sessions/todos/complete`：Studio 当前没有持久化 todo mutation 原语，已从 soft-success 改为 `capability_unavailable`；UI 只有后端真实成功才清本地 todo，避免刷新后复活。
 
 3. **Search / summary / authorized folders / continue-deleted-agent** — P1
    - `/api/sessions/search`

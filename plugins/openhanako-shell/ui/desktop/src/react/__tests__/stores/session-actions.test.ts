@@ -422,6 +422,7 @@ function mockPermissionDefault(mode = 'ask') {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: sessionPath }),
+      throwOnHttpError: false,
     });
     expect(mockState.setSessionTodosForPath).toHaveBeenCalledWith(sessionPath, []);
     expect(mockState.bumpTodosLiveVersion).toHaveBeenCalledWith(sessionPath);
@@ -437,6 +438,21 @@ function mockPermissionDefault(mode = 'ask') {
 
     expect(ok).toBe(false);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps local todos when the backend cannot persist todo completion', async () => {
+    const sessionPath = '/session/todo-unsupported.jsonl';
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      ok: false,
+      code: 'capability_unavailable',
+      error: 'studio backend does not support mutating persisted session todos yet',
+    }));
+
+    const ok = await completeSessionTodos(sessionPath);
+
+    expect(ok).toBe(false);
+    expect(mockState.setSessionTodosForPath).not.toHaveBeenCalledWith(sessionPath, []);
+    expect(mockState.bumpTodosLiveVersion).not.toHaveBeenCalledWith(sessionPath);
   });
 
   it('clears unread output marker when switching into a normal session', async () => {
