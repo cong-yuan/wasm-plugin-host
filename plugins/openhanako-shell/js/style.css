@@ -9213,6 +9213,18 @@ html[data-platform="linux"] .onboarding {
     min-width: 0;
     flex-shrink: 1;
 }
+.model-switch-status {
+    max-width: 170px;
+    margin-left: 0.35rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-hint);
+    color: var(--text-muted);
+}
+.model-switch-status.error {
+    color: #b04a3f;
+}
 
 .input-surface-mobile .model-selector {
     flex: 0 1 auto;

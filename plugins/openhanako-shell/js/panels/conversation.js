@@ -104,7 +104,11 @@ return (function () {
     const modelPill = h('button', { class: 'model-pill', type: 'button', 'data-open': 'false' },
       h('span', { class: 'model-pill-label' }, '—'), svg(CHEVRON_DOWN));
     const modelDropdown = h('div', { class: 'model-dropdown' });
-    const modelSelector = h('div', { class: 'model-selector' }, modelPill, modelDropdown);
+    const modelStatus = h('span', {
+      class: 'model-switch-status',
+      'aria-live': 'polite',
+    }, '');
+    const modelSelector = h('div', { class: 'model-selector' }, modelPill, modelStatus, modelDropdown);
 
     const send = h('button', { class: 'send-btn', type: 'button' },
       h('span', { class: 'send-label' }, svg(SEND_ENTER), h('span', {}, t('chat.send'))));
@@ -160,6 +164,8 @@ return (function () {
       if (!model || state.busy || state.switchingModel) return;
       state.switchingModel = true;
       const switchEpoch = state.epoch;
+      modelStatus.textContent = 'Switching model…';
+      modelStatus.className = 'model-switch-status';
       renderSendState();
       const optionsNow = modelDropdown.querySelectorAll('.model-option');
       optionsNow.forEach((option) => { option.disabled = true; });
@@ -176,6 +182,13 @@ return (function () {
         setModelLabel(selected.name || selected.id || model.id);
         closeModels();
         options.onChanged();
+        modelStatus.textContent = '';
+      } catch (err) {
+        if (state.epoch === switchEpoch) {
+          modelStatus.textContent = `Model switch failed: ${(err && err.message) ? err.message : String(err)}`;
+          modelStatus.className = 'model-switch-status error';
+        }
+        throw err;
       } finally {
         optionsNow.forEach((option) => { option.disabled = false; });
         if (state.epoch === switchEpoch) {
@@ -218,7 +231,14 @@ return (function () {
         closeModels();
         return;
       }
-      await refreshModels().catch(() => {});
+      try {
+        await refreshModels();
+        modelStatus.textContent = '';
+        modelStatus.className = 'model-switch-status';
+      } catch (err) {
+        modelStatus.textContent = `Models unavailable: ${(err && err.message) ? err.message : String(err)}`;
+        modelStatus.className = 'model-switch-status error';
+      }
       modelSelector.classList.add('open');
       modelPill.setAttribute('data-open', 'true');
     };

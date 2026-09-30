@@ -1040,6 +1040,7 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   const modelCalls = [];
   let holdModelSwitch = false;
   let releaseModelSwitch = null;
+  let failModelSwitch = false;
   adapter.http = async (method, path, body) => {
     if (method === 'GET' && path === '/api/models') {
       return {
@@ -1052,6 +1053,7 @@ adapterForShellRefresh.http = originalHttpForRefresh;
     }
     if (method === 'POST' && (path === '/api/models/set' || path === '/api/models/switch')) {
       modelCalls.push({ method, path, body });
+      if (failModelSwitch) throw new Error('model switch unavailable');
       if (holdModelSwitch) {
         return new Promise((resolve) => {
           releaseModelSwitch = () => resolve({
@@ -1126,6 +1128,16 @@ adapterForShellRefresh.http = originalHttpForRefresh;
     modelRoot.querySelector('.model-selector')?.getAttribute('aria-busy') === 'false'
     && modelPill.disabled === false);
   holdModelSwitch = false;
+
+  modelPill.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  failModelSwitch = true;
+  modelRoot.querySelectorAll('.model-option')[1]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('model switch failure exposes visible status without replacing current label',
+    /model switch failed/i.test(modelRoot.querySelector('.model-switch-status')?.textContent || '')
+    && /Model One/.test(modelPill.textContent));
+  failModelSwitch = false;
 
   if (typeof disposeModelShell === 'function') disposeModelShell();
   adapter.http = originalHttp;
