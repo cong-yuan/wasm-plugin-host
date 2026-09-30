@@ -94,6 +94,7 @@ return (function () {
   const APPEARANCE_KEY = 'openhanako.appearancePreferences.v1';
   const SIDEBAR_UI_KEY = 'openhanako.sidebarUiPreferences.v1';
   const QUICK_CHAT_KEY = 'openhanako.quickChatPreferences.v1';
+  const NOTIFICATION_PREFS_KEY = 'openhanako.notificationPreferences.v1';
   const PIN_ORDER_STEP = 1024;
   const UNCATEGORIZED_PROJECT_ID = 'cwd:';
 
@@ -302,6 +303,45 @@ return (function () {
     }
     saveQuickChat(merged);
     return { ok: true, quickChat: loadQuickChat() };
+  };
+
+  const normalizeChatNotificationMode = (value) => (
+    value === 'when_unfocused' || value === 'when_session_unfocused' ? value : 'never'
+  );
+  const normalizeBackgroundNotificationMode = (value) => (
+    value === 'when_unfocused' || value === 'always' ? value : 'never'
+  );
+  const normalizeNotificationPrefs = (raw) => {
+    const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    const chatCompletion = Object.prototype.hasOwnProperty.call(src, 'chatCompletion')
+      ? src.chatCompletion
+      : src.turnCompletion;
+    return {
+      chatCompletion: normalizeChatNotificationMode(chatCompletion),
+      scheduledTaskCompletion: normalizeBackgroundNotificationMode(src.scheduledTaskCompletion),
+      patrolCompletion: normalizeBackgroundNotificationMode(src.patrolCompletion),
+    };
+  };
+  const loadNotificationPrefs = () => normalizeNotificationPrefs(readJson(NOTIFICATION_PREFS_KEY, {}));
+  const saveNotificationPrefs = (value) => writeJson(NOTIFICATION_PREFS_KEY, normalizeNotificationPrefs(value));
+  const applyNotificationPatch = (raw) => {
+    const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+    if (!src) return { ok: false, error: 'notification preferences object required' };
+    const current = loadNotificationPrefs();
+    const merged = { ...current };
+    if (Object.prototype.hasOwnProperty.call(src, 'chatCompletion')) {
+      merged.chatCompletion = src.chatCompletion;
+    } else if (Object.prototype.hasOwnProperty.call(src, 'turnCompletion')) {
+      merged.chatCompletion = src.turnCompletion;
+    }
+    if (Object.prototype.hasOwnProperty.call(src, 'scheduledTaskCompletion')) {
+      merged.scheduledTaskCompletion = src.scheduledTaskCompletion;
+    }
+    if (Object.prototype.hasOwnProperty.call(src, 'patrolCompletion')) {
+      merged.patrolCompletion = src.patrolCompletion;
+    }
+    saveNotificationPrefs(merged);
+    return { ok: true, notifications: loadNotificationPrefs() };
   };
 
   const loadTitles = () => readJson(TITLE_KEY, {}) || {};
@@ -838,6 +878,18 @@ return (function () {
         ? body.quickChat
         : body;
       return applyQuickChatPatch(patch);
+    }
+
+    if (pathname === '/api/preferences/notifications' && verb === 'GET') {
+      return { notifications: loadNotificationPrefs() };
+    }
+
+    if (pathname === '/api/preferences/notifications'
+      && (verb === 'PUT' || verb === 'PATCH' || verb === 'POST')) {
+      const patch = body && body.notifications && typeof body.notifications === 'object'
+        ? body.notifications
+        : body;
+      return applyNotificationPatch(patch);
     }
 
     if (pathname === '/api/providers/summary' && verb === 'GET') {

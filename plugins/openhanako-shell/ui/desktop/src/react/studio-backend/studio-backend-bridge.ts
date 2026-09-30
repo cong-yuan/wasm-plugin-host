@@ -235,6 +235,7 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/preferences/appearance') return true;
   if (pathname === '/api/preferences/sidebar-ui') return true;
   if (pathname === '/api/preferences/quick-chat') return true;
+  if (pathname === '/api/preferences/notifications') return true;
   if (pathname === '/api/session-permission-mode') return true;
   if (pathname === '/api/preferences/models') return true;
   if (pathname === '/api/session-thinking-level') return true;

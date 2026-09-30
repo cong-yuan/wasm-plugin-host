@@ -230,6 +230,47 @@ await adapter.http('PUT', '/api/preferences/quick-chat', {
   reuseTimeoutMinutes: 10,
 });
 
+const initialNotifications = await adapter.http('GET', '/api/preferences/notifications');
+check('notification preferences expose upstream-compatible defaults',
+  initialNotifications?.notifications?.chatCompletion === 'never'
+  && initialNotifications?.notifications?.scheduledTaskCompletion === 'never'
+  && initialNotifications?.notifications?.patrolCompletion === 'never');
+const savedNotifications = await adapter.http('PUT', '/api/preferences/notifications', {
+  notifications: {
+    chatCompletion: 'when_session_unfocused',
+    scheduledTaskCompletion: 'always',
+    patrolCompletion: 'when_unfocused',
+  },
+});
+check('notification preferences persist supported modes',
+  savedNotifications?.ok === true
+  && savedNotifications?.notifications?.chatCompletion === 'when_session_unfocused'
+  && savedNotifications?.notifications?.scheduledTaskCompletion === 'always'
+  && savedNotifications?.notifications?.patrolCompletion === 'when_unfocused');
+const legacyNotificationPatch = await adapter.http('PATCH', '/api/preferences/notifications', {
+  turnCompletion: 'when_unfocused',
+});
+check('notification preferences accept legacy turnCompletion patches',
+  legacyNotificationPatch?.ok === true
+  && legacyNotificationPatch?.notifications?.chatCompletion === 'when_unfocused'
+  && legacyNotificationPatch?.notifications?.scheduledTaskCompletion === 'always');
+const normalizedInvalidNotification = await adapter.http('PUT', '/api/preferences/notifications', {
+  patrolCompletion: 'sometimes',
+});
+check('notification preferences normalize unsupported modes to never',
+  normalizedInvalidNotification?.ok === true
+  && normalizedInvalidNotification?.notifications?.patrolCompletion === 'never'
+  && normalizedInvalidNotification?.notifications?.chatCompletion === 'when_unfocused');
+const rejectedNotificationBody = await adapter.http('PUT', '/api/preferences/notifications', null);
+check('notification preferences reject non-object writes',
+  rejectedNotificationBody?.ok === false
+  && rejectedNotificationBody?.error === 'notification preferences object required');
+await adapter.http('PUT', '/api/preferences/notifications', {
+  chatCompletion: 'never',
+  scheduledTaskCompletion: 'never',
+  patrolCompletion: 'never',
+});
+
 const permissionDefault = await adapter.http('GET', '/api/preferences/session-permission-default');
 check('permission default is explicitly locked to ask without backend support',
   permissionDefault?.permissionMode === 'ask'
@@ -265,6 +306,8 @@ check('iframe bridge intercepts sidebar UI preference requests',
   iframeBridgeSource.includes("pathname === '/api/preferences/sidebar-ui'"));
 check('iframe bridge intercepts quick chat preference requests',
   iframeBridgeSource.includes("pathname === '/api/preferences/quick-chat'"));
+check('iframe bridge intercepts notification preference requests',
+  iframeBridgeSource.includes("pathname === '/api/preferences/notifications'"));
 
 // Pin / unpin persists locally and is reflected in GET /api/sessions
 {
