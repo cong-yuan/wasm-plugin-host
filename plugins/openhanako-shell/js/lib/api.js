@@ -195,6 +195,12 @@ return (function () {
       }
       return agentId;
     },
+    retryTurn: async () => {
+      throw new Error('studio backend retry_session_turn is unavailable in mock mode');
+    },
+    forkSession: async () => {
+      throw new Error('studio backend fork_session is unavailable in mock mode');
+    },
     listModels: () => ([{
       id: DEFAULT_MODEL,
       name: DEFAULT_MODEL,
@@ -788,6 +794,27 @@ return (function () {
         provider,
         model,
       }));
+    },
+
+    // Core branch operations. These intentionally invoke explicit Studio
+    // commands instead of emulating retry/fork by re-sending text or creating
+    // an empty session; older hosts fail closed with an unknown-command error.
+    retryTurn: async (sessionId, target, replacementText, msgId) => {
+      if (!tauri.available()) return mock.retryTurn(sessionId, target, replacementText, msgId);
+      return tauri.invoke('retry_session_turn', {
+        sessionId,
+        target: target || null,
+        replacementText: replacementText == null ? null : String(replacementText),
+        msgId: msgId || null,
+      });
+    },
+
+    forkSession: async (sessionId, target) => {
+      if (!tauri.available()) return mock.forkSession(sessionId, target);
+      return tauri.invoke('fork_session', {
+        sessionId,
+        target: target || null,
+      });
     },
 
     listModels: async () => {

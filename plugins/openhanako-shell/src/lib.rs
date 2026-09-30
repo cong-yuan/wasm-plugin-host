@@ -124,6 +124,8 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
         "dispose_agent",
         "soft_unbind_agent",
         "rebind_agent_model",
+        "retry_session_turn",
+        "fork_session",
         "list_models",
         "set_llm_config",
         "fetch_llm_models",

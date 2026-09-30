@@ -3,7 +3,7 @@ import {
   sessionIdForPathFromLocatorState,
   sessionScopedListIncludes,
 } from './session-slice';
-import { loadSessions, switchSession } from './session-actions';
+import { loadMessages, loadSessions, switchSession } from './session-actions';
 import type { ChatMessage } from './chat-types';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { collectUiContext } from '../utils/ui-context';
@@ -101,6 +101,10 @@ export async function retrySessionTurn(
       }),
     });
     await readSessionActionResponse(response, 'Retry failed');
+    // Hana Server normally pushes branch-reset/retry events. Studio's bridge
+    // performs retry as one Tauri command, so re-hydrate the authoritative
+    // transcript after it completes instead of leaving the old branch visible.
+    await loadMessages(sessionPath);
     return true;
   } catch (error) {
     reportActionError(sessionPath, error);

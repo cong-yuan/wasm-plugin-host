@@ -473,6 +473,12 @@ global.window.__TAURI_INTERNALS__ = {
       },
     });
     if (cmd === 'resume_session') return Promise.resolve(args.sessionId);
+    if (cmd === 'retry_session_turn') {
+      return Promise.resolve({ sessionId: args.sessionId, retried: true, target: args.target });
+    }
+    if (cmd === 'fork_session') {
+      return Promise.resolve({ sessionId: 'agent-fork', sourceSessionId: args.sessionId, target: args.target });
+    }
     if (cmd === 'send_message') {
       sendStarted = Date.now();
       // Grow transcript while the invoke is outstanding so poll can stream.
@@ -704,6 +710,39 @@ check('cold session resumes without rebuilding its model driver',
 const messages = await adapter.http('GET', '/api/sessions/messages?path=' + encodeURIComponent('studio://agent-1') + '&sessionId=agent-1');
 check('transcript becomes history content',
   messages.messages[1].role === 'assistant' && messages.messages[1].content === 'pong' && messages.messages[1].thinking === 'because');
+check('studio history exposes stable entry ids for branch actions',
+  messages.messages[0].entryId === 'studio-entry:0:user'
+  && messages.messages[1].entryId === 'studio-entry:1:assistant'
+  && messages.messages[1].turnInputEntryId === 'studio-entry:0:user');
+
+calls.length = 0;
+const retriedTurn = await adapter.http('POST', '/api/sessions/turns/retry', {
+  sessionId: 'agent-1',
+  path: 'studio://agent-1',
+  target: { role: 'assistant_turn', turnInputEntryId: 'studio-entry:0:user' },
+  clientMessageId: 'retry-msg',
+});
+check('retry route invokes the explicit Studio branch command',
+  retriedTurn?.ok === true
+  && retriedTurn?.retried === true
+  && calls.some((c) => c.cmd === 'retry_session_turn'
+    && c.args.sessionId === 'agent-1'
+    && c.args.target?.turnInputEntryId === 'studio-entry:0:user'
+    && c.args.msgId === 'retry-msg'));
+
+calls.length = 0;
+const forkedTurn = await adapter.http('POST', '/api/sessions/fork', {
+  sessionId: 'agent-1',
+  path: 'studio://agent-1',
+  target: { role: 'assistant', entryId: 'studio-entry:1:assistant' },
+});
+check('fork route invokes the explicit Studio branch command and projects the child locator',
+  forkedTurn?.ok === true
+  && forkedTurn?.sessionId === 'agent-fork'
+  && forkedTurn?.sessionPath === 'studio://agent-fork'
+  && calls.some((c) => c.cmd === 'fork_session'
+    && c.args.sessionId === 'agent-1'
+    && c.args.target?.entryId === 'studio-entry:1:assistant'));
 
 // ---- tauri path: incremental deltas while send_message is in flight ----
 {

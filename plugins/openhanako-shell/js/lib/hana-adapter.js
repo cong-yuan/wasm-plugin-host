@@ -1364,14 +1364,19 @@ return (function () {
     return latest || [];
   };
 
-  const historyMessage = (m, index, transcriptResults) => {
+  const transcriptEntryId = (index, role) => `studio-entry:${index}:${role}`;
+
+  const historyMessage = (m, index, transcriptResults, turnInputEntryId = null) => {
     const role = m.role === 'user' ? 'user' : 'assistant';
     const text = m.text || '';
+    const entryId = transcriptEntryId(index, role);
     const row = {
       id: String(index),
+      entryId,
       role,
       content: text,
       timestamp: Date.now(),
+      ...(role === 'assistant' && turnInputEntryId ? { turnInputEntryId } : {}),
     };
     if (role === 'assistant' && m.reasoning) row.thinking = m.reasoning;
     // Tools must survive history hydration or they vanish on reload / switch:
@@ -1419,6 +1424,25 @@ return (function () {
         });
     }
     return row;
+  };
+
+  const historyMessages = (rows, transcriptResults) => {
+    const out = [];
+    let lastUserEntryId = null;
+    for (let index = 0; index < (rows || []).length; index += 1) {
+      const message = rows[index];
+      const transportOnly = message?.role === 'user'
+        && !message.text
+        && !message.reasoning
+        && (!Array.isArray(message.tool_calls) || message.tool_calls.length === 0)
+        && Array.isArray(message.tool_results)
+        && message.tool_results.length > 0;
+      if (transportOnly) continue;
+      const row = historyMessage(message, index, transcriptResults, lastUserEntryId);
+      out.push(row);
+      if (row.role === 'user') lastUserEntryId = row.entryId;
+    }
+    return out;
   };
 
   // Soft stubs for openhanako surfaces that are not part of the Studio agent
@@ -2076,6 +2100,44 @@ return (function () {
       return disposeSession(sessionIdFromBody(body, query));
     }
 
+    if (pathname === '/api/sessions/turns/retry' && verb === 'POST') {
+      const sessionId = sessionIdFromBody(body, query);
+      if (!sessionId) throw new Error('missing session');
+      if (!body?.target || typeof body.target !== 'object') throw new Error('session node target is required');
+      if (activeTurns.has(sessionId)) throw new Error('session_busy');
+      const liveId = await ensureLive(sessionId);
+      const result = await api.retryTurn(
+        liveId,
+        body.target,
+        typeof body.text === 'string' ? body.text : null,
+        body.clientMessageId || null,
+      );
+      runtimeTranscriptCache.delete(sessionId);
+      return { ok: true, sessionId: liveId, ...(result && typeof result === 'object' ? result : {}) };
+    }
+
+    if (pathname === '/api/sessions/fork' && verb === 'POST') {
+      const sessionId = sessionIdFromBody(body, query);
+      if (!sessionId) throw new Error('missing session');
+      if (!body?.target || typeof body.target !== 'object') throw new Error('session node target is required');
+      if (activeTurns.has(sessionId)) throw new Error('session_busy');
+      const liveId = await ensureLive(sessionId);
+      const result = await api.forkSession(liveId, body.target);
+      const childId = idFrom(result?.sessionId || result?.agentId || result?.id || result);
+      if (!childId) throw new Error('fork response is missing sessionId');
+      const childPath = pathFor(childId);
+      return {
+        ok: true,
+        sessionId: childId,
+        sessionPath: childPath,
+        path: childPath,
+        agentId: childId,
+        sourceSessionId: liveId,
+        target: body.target,
+        ...(result && typeof result === 'object' ? result : {}),
+      };
+    }
+
     if (pathname === '/api/sessions/messages' && verb === 'GET') {
       if (query.before) {
         return { messages: [], blocks: [], todos: [], sessionFiles: [], hasMore: false, revision: null };
@@ -2086,17 +2148,7 @@ return (function () {
       const rows = await api.transcript(liveId);
       const results = toolResultsFromTranscript(rows);
       return {
-        messages: rows
-          .map((message, index) => {
-            const transportOnly = message?.role === 'user'
-              && !message.text
-              && !message.reasoning
-              && (!Array.isArray(message.tool_calls) || message.tool_calls.length === 0)
-              && Array.isArray(message.tool_results)
-              && message.tool_results.length > 0;
-            return transportOnly ? null : historyMessage(message, index, results);
-          })
-          .filter(Boolean),
+        messages: historyMessages(rows, results),
         blocks: [],
         todos: todosFromTranscript(rows, results),
         sessionFiles: [],

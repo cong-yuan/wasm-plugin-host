@@ -40,7 +40,11 @@ describe('message turn actions', () => {
   });
 
   it('retries an arbitrary persisted user node with explicit session identity and display envelope', async () => {
-    vi.mocked(hanaFetch).mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.mocked(hanaFetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        messages: [], blocks: [], todos: [], sessionFiles: [], hasMore: false,
+      }), { status: 200 }));
     const message = {
       id: 'client-u1',
       sourceEntryId: 'entry-u1',
@@ -79,6 +83,8 @@ describe('message turn actions', () => {
         quotedText: '引用',
       }),
     }));
+    expect(hanaFetch).toHaveBeenCalledTimes(2);
+    expect(String(vi.mocked(hanaFetch).mock.calls[1][0])).toContain('/api/sessions/messages');
   });
 
   it('forks an assistant node and normalizes the returned child locator', async () => {

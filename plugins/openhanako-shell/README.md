@@ -55,6 +55,8 @@ iframe 也用 `{ "source": "openhanako-studio-bridge", "type": "hello" }` 探测
 | `POST /api/sessions/new`、`/new-detached` | `create_agent { provider, model, cwd: null, id: null }` | 返回 `{ path, sessionId, agentId: "studio" }`，`ensureSession` 要这三个字段 |
 | `POST /api/sessions/switch` | 若 `live === false` 则 `resume_session { sessionId }` | `{ sessionId, isStreaming: false, agentId: "studio" }` |
 | `GET /api/sessions/messages?path=&sessionId=` | `transcript { agentId }` | `{ messages: [{ role, content, thinking? }], hasMore: false }`。`content` 是 `ChatMessage.text` |
+| `POST /api/sessions/turns/retry` | `retry_session_turn { sessionId, target, replacementText?, msgId? }` | 使用历史投影里的稳定 `studio-entry:<index>:<role>` target；宿主缺命令时 fail-closed，不回落到 Hana Server |
+| `POST /api/sessions/fork` | `fork_session { sessionId, target }` | 目标语义由 Studio 基于 dsh session event boundary 实现；返回新的 `studio://<childId>` |
 | `GET/PUT /api/preferences/session-permission-default`、`/api/session-permission-mode` | — | Studio 当前没有底层权限模式命令，因此 fail-closed 固定为 `ask`，写请求返回 `locked: true`，避免 UI 假装进入 `auto`/`operate`/`read_only` |
 | `GET/PUT /api/preferences/appearance` | — | theme / serif / paperTexture / leavesOverlay 本地持久化；校验主题 id 与布尔字段，兼容旧 `claude-design` → `new-warm-paper` |
 | `GET/PUT /api/preferences/sidebar-ui` | — | projectView 折叠/展开集合与 sessionList 行模式本地持久化；沿用上游去重、长度/数量边界和 `single-line` / `two-line` 约束 |
@@ -86,6 +88,8 @@ Hana 前端已经迁进本插件的 `ui/`，不再依赖外部 `openhanako` / `o
 `patches/` 只是 Studio 相关改动的快照，方便对照；**日常改前端直接改 `ui/`**。
 
 基于 [liliMozi/openhanako](https://github.com/liliMozi/openhanako)（Apache-2.0）快照，此后在本仓库内演进。
+
+开发阶段、未接能力和优先级见 [`DEVELOPMENT.md`](./DEVELOPMENT.md)。
 
 ## 跑起来
 

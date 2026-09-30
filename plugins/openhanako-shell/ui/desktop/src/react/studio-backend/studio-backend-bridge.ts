@@ -259,6 +259,8 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/sessions/rename') return true;
   if (pathname === '/api/sessions/restore') return true;
   if (pathname === '/api/sessions/todos/complete') return true;
+  if (pathname === '/api/sessions/turns/retry') return true;
+  if (pathname === '/api/sessions/fork') return true;
   if (pathname === '/api/session-projects' || pathname.startsWith('/api/session-projects/')) return true;
   if (pathname.startsWith('/api/bridge')) return true;
   if (/^\/api\/agents\/[^/]+\/config$/.test(pathname)) return true;
