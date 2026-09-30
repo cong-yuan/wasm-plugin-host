@@ -217,19 +217,24 @@ check('create resolves model within explicitly selected provider',
   calls.some((call) => call.cmd === 'create_agent'
     && call.args.provider === 'mock'
     && call.args.model === 'mock-1'));
-const sessionModelKey = 'openhanako.sessionModels.v1';
-const previousSessionModels = global.localStorage?.getItem?.(sessionModelKey) ?? null;
-global.localStorage?.setItem?.(sessionModelKey, JSON.stringify({
-  'studio://agent-1': { provider: 'mock', modelId: 'mock-1' },
-}));
-const sessionModels = await adapter.http('GET', '/api/models?sessionPath=studio%3A%2F%2Fagent-1');
+await adapter.http('POST', '/api/models/set', {
+  provider: 'mock',
+  modelId: 'mock-1',
+});
+const createdWithPending = await adapter.http('POST', '/api/sessions/new', {});
+const sessionModels = await adapter.http(
+  'GET',
+  `/api/models?sessionPath=${encodeURIComponent(createdWithPending.path)}`,
+);
 check('model listing is session-aware for opened conversations',
   sessionModels.activeModel?.provider === 'mock'
   && sessionModels.activeModel?.id === 'mock-1'
   && sessionModels.models.some((model) =>
     model.provider === 'mock' && model.id === 'mock-1' && model.isCurrent === true));
-if (previousSessionModels == null) global.localStorage?.removeItem?.(sessionModelKey);
-else global.localStorage?.setItem?.(sessionModelKey, previousSessionModels);
+const unmappedSessionModels = await adapter.http('GET', '/api/models?sessionPath=studio%3A%2F%2Fagent-unmapped');
+check('unmapped existing session does not inherit pending new-chat model',
+  unmappedSessionModels.activeModel?.provider === 'deepseek'
+  && unmappedSessionModels.activeModel?.id === 'deepseek-chat');
 const live = await api.sessions();
 check('sessions call list_sessions', calls.some((c) => c.cmd === 'list_sessions') && live[0].id === 'agent-1');
 const projectedLive = await adapter.http('GET', '/api/sessions');

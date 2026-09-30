@@ -151,7 +151,7 @@ return (function () {
     map[String(sessionPath)] = { modelId: String(modelId), provider: String(provider) };
     saveSessionModels(map);
   };
-  const modelForPath = (sessionPathOrId) => {
+  const storedModelForPath = (sessionPathOrId) => {
     const path = sessionPathOrId && String(sessionPathOrId).startsWith(PATH_PREFIX)
       ? String(sessionPathOrId)
       : pathFor(sessionPathOrId || '');
@@ -160,6 +160,11 @@ return (function () {
     if (hit && hit.modelId && hit.provider) {
       return { modelId: String(hit.modelId), provider: String(hit.provider) };
     }
+    return null;
+  };
+  const modelForPath = (sessionPathOrId) => {
+    const stored = storedModelForPath(sessionPathOrId);
+    if (stored) return stored;
     const pending = readJson(PENDING_MODEL_KEY, null);
     if (pending && pending.modelId && pending.provider) {
       return { modelId: String(pending.modelId), provider: String(pending.provider) };
@@ -1198,7 +1203,7 @@ return (function () {
         const requestedSessionPath = typeof query.sessionPath === 'string' && query.sessionPath
           ? query.sessionPath
           : (typeof query.sessionId === 'string' && query.sessionId ? pathFor(query.sessionId) : '');
-        const assigned = requestedSessionPath ? modelForPath(requestedSessionPath) : null;
+        const assigned = requestedSessionPath ? storedModelForPath(requestedSessionPath) : null;
         const provider = assigned?.provider
           || (typeof current.provider === 'string' && current.provider
             ? current.provider
@@ -1462,7 +1467,30 @@ return (function () {
       // rebind during navigation: rebind stops and recreates the driver, making
       // every session click expensive and risking loss of live runtime state.
       const liveId = await ensureLive(sessionId);
-      const assigned = modelForPath(pathFor(liveId));
+      let assigned = storedModelForPath(pathFor(liveId));
+      if (!assigned) {
+        try {
+          const llm = await api.getLlmConfig();
+          const current = llm && llm.current && typeof llm.current === 'object' ? llm.current : {};
+          const provider = (typeof current.provider === 'string' && current.provider)
+            || (typeof llm?.default === 'string' && llm.default)
+            || api.DEFAULT_PROVIDER;
+          const providerModel = llm?.providers?.[provider]?.model;
+          const listed = Array.isArray(llm?.model_lists?.[provider]) ? llm.model_lists[provider] : [];
+          const firstListed = listed
+            .map((entry) => (typeof entry === 'string' ? entry : entry?.id))
+            .find(Boolean);
+          assigned = {
+            provider,
+            modelId: (typeof current.model === 'string' && current.model)
+              || providerModel
+              || firstListed
+              || (provider === api.DEFAULT_PROVIDER ? api.DEFAULT_MODEL : provider),
+          };
+        } catch (_) {
+          assigned = { modelId: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER };
+        }
+      }
       return {
         ok: true,
         path: pathFor(liveId),
