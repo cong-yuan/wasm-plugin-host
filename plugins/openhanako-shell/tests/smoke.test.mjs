@@ -817,6 +817,15 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   check('failed session open exposes visible error state',
     /could not open session/i.test(openFailureRoot.querySelector('.conversation-status')?.textContent || '')
     && /transcript unavailable/i.test(openFailureRoot.querySelector('.conversation-status')?.textContent || ''));
+  const originalProgressAfterOpenFailure = api.sendWithProgress;
+  api.sendWithProgress = async () => true;
+  const preservedInput = openFailureRoot.querySelector('.input-box');
+  preservedInput.textContent = 'continue after open failure';
+  openFailureRoot.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  check('continuing previous conversation clears stale open error',
+    !(openFailureRoot.querySelector('.conversation-status')?.textContent || '').trim());
+  api.sendWithProgress = originalProgressAfterOpenFailure;
 
   if (typeof disposeOpenFailureShell === 'function') disposeOpenFailureShell();
   api.transcript = originalTranscript;

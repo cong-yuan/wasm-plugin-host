@@ -407,6 +407,8 @@ return (function () {
       if (!text || state.busy) return;
       state.busy = true;
       const submitEpoch = state.epoch;
+      conversationStatus.textContent = '';
+      conversationStatus.className = 'conversation-status';
       state.cancelling = false;
       renderSendState();
       input.textContent = '';
