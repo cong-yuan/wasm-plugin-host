@@ -93,6 +93,7 @@ return (function () {
   const USER_PREFS_KEY = 'openhanako.userPreferences.v1';
   const APPEARANCE_KEY = 'openhanako.appearancePreferences.v1';
   const SIDEBAR_UI_KEY = 'openhanako.sidebarUiPreferences.v1';
+  const QUICK_CHAT_KEY = 'openhanako.quickChatPreferences.v1';
   const PIN_ORDER_STEP = 1024;
   const UNCATEGORIZED_PROJECT_ID = 'cwd:';
 
@@ -249,6 +250,58 @@ return (function () {
     }
     saveSidebarUi(next);
     return { ok: true, sidebarUi: loadSidebarUi() };
+  };
+
+  const normalizeQuickChatShortcutPart = (value) => {
+    const raw = String(value == null ? '' : value);
+    if (raw === ' ' || raw === '\u00A0' || raw === 'Spacebar' || (raw && !raw.trim())) return 'Space';
+    const trimmed = raw.trim();
+    if (trimmed === 'CmdOrCtrl' || trimmed === 'CommandOrCtrl' || trimmed === 'CtrlOrCommand') {
+      return 'CommandOrControl';
+    }
+    if (trimmed === 'Esc') return 'Escape';
+    if (trimmed === 'Spacebar') return 'Space';
+    return trimmed;
+  };
+  const normalizeQuickChatShortcut = (value) => {
+    if (typeof value !== 'string') return 'Alt+Space';
+    const raw = value.trim();
+    if (!raw) return 'Alt+Space';
+    const parts = raw.split('+').map(normalizeQuickChatShortcutPart);
+    return parts.some((part) => !part) ? 'Alt+Space' : parts.join('+');
+  };
+  const normalizeQuickChatTimeout = (value) => {
+    if (value === null || value === undefined || value === '') return 10;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 10;
+    return Math.max(0, Math.min(120, Math.round(numeric)));
+  };
+  const normalizeQuickChat = (raw) => {
+    const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    return {
+      shortcut: normalizeQuickChatShortcut(src.shortcut),
+      reuseTimeoutMinutes: normalizeQuickChatTimeout(
+        Object.prototype.hasOwnProperty.call(src, 'reuseTimeoutMinutes')
+          ? src.reuseTimeoutMinutes
+          : src.reuse_timeout_minutes,
+      ),
+    };
+  };
+  const loadQuickChat = () => normalizeQuickChat(readJson(QUICK_CHAT_KEY, {}));
+  const saveQuickChat = (value) => writeJson(QUICK_CHAT_KEY, normalizeQuickChat(value));
+  const applyQuickChatPatch = (raw) => {
+    const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+    if (!src) return { ok: false, error: 'quick chat object required' };
+    const current = loadQuickChat();
+    const merged = { ...current };
+    if (Object.prototype.hasOwnProperty.call(src, 'shortcut')) merged.shortcut = src.shortcut;
+    if (Object.prototype.hasOwnProperty.call(src, 'reuseTimeoutMinutes')) {
+      merged.reuseTimeoutMinutes = src.reuseTimeoutMinutes;
+    } else if (Object.prototype.hasOwnProperty.call(src, 'reuse_timeout_minutes')) {
+      merged.reuseTimeoutMinutes = src.reuse_timeout_minutes;
+    }
+    saveQuickChat(merged);
+    return { ok: true, quickChat: loadQuickChat() };
   };
 
   const loadTitles = () => readJson(TITLE_KEY, {}) || {};
@@ -773,6 +826,18 @@ return (function () {
         ? body.sidebarUi
         : body;
       return applySidebarUiPatch(patch);
+    }
+
+    if (pathname === '/api/preferences/quick-chat' && verb === 'GET') {
+      return { quickChat: loadQuickChat() };
+    }
+
+    if (pathname === '/api/preferences/quick-chat'
+      && (verb === 'PUT' || verb === 'PATCH' || verb === 'POST')) {
+      const patch = body && body.quickChat && typeof body.quickChat === 'object'
+        ? body.quickChat
+        : body;
+      return applyQuickChatPatch(patch);
     }
 
     if (pathname === '/api/providers/summary' && verb === 'GET') {

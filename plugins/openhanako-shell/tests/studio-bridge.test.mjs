@@ -194,6 +194,42 @@ await adapter.http('PUT', '/api/preferences/sidebar-ui', {
   },
 });
 
+const initialQuickChat = await adapter.http('GET', '/api/preferences/quick-chat');
+check('quick chat preferences expose upstream-compatible defaults',
+  initialQuickChat?.quickChat?.shortcut === 'Alt+Space'
+  && initialQuickChat?.quickChat?.reuseTimeoutMinutes === 10);
+const savedQuickChat = await adapter.http('PUT', '/api/preferences/quick-chat', {
+  quickChat: {
+    shortcut: 'CmdOrCtrl+Spacebar',
+    reuseTimeoutMinutes: 999,
+  },
+});
+check('quick chat preferences normalize shortcut aliases and clamp reuse timeout',
+  savedQuickChat?.ok === true
+  && savedQuickChat?.quickChat?.shortcut === 'CommandOrControl+Space'
+  && savedQuickChat?.quickChat?.reuseTimeoutMinutes === 120);
+const partialQuickChat = await adapter.http('PATCH', '/api/preferences/quick-chat', {
+  reuse_timeout_minutes: -5,
+});
+check('quick chat preferences merge snake-case partial patches',
+  partialQuickChat?.ok === true
+  && partialQuickChat?.quickChat?.shortcut === 'CommandOrControl+Space'
+  && partialQuickChat?.quickChat?.reuseTimeoutMinutes === 0);
+const resetInvalidQuickChatShortcut = await adapter.http('PUT', '/api/preferences/quick-chat', {
+  shortcut: 'Control+',
+});
+check('quick chat preferences fall back for malformed shortcuts like upstream normalization',
+  resetInvalidQuickChatShortcut?.ok === true
+  && resetInvalidQuickChatShortcut?.quickChat?.shortcut === 'Alt+Space'
+  && resetInvalidQuickChatShortcut?.quickChat?.reuseTimeoutMinutes === 0);
+const rejectedQuickChatBody = await adapter.http('PUT', '/api/preferences/quick-chat', null);
+check('quick chat preferences reject non-object writes',
+  rejectedQuickChatBody?.ok === false && rejectedQuickChatBody?.error === 'quick chat object required');
+await adapter.http('PUT', '/api/preferences/quick-chat', {
+  shortcut: 'Alt+Space',
+  reuseTimeoutMinutes: 10,
+});
+
 const permissionDefault = await adapter.http('GET', '/api/preferences/session-permission-default');
 check('permission default is explicitly locked to ask without backend support',
   permissionDefault?.permissionMode === 'ask'
@@ -227,6 +263,8 @@ check('iframe bridge intercepts appearance preference requests',
   iframeBridgeSource.includes("pathname === '/api/preferences/appearance'"));
 check('iframe bridge intercepts sidebar UI preference requests',
   iframeBridgeSource.includes("pathname === '/api/preferences/sidebar-ui'"));
+check('iframe bridge intercepts quick chat preference requests',
+  iframeBridgeSource.includes("pathname === '/api/preferences/quick-chat'"));
 
 // Pin / unpin persists locally and is reflected in GET /api/sessions
 {
