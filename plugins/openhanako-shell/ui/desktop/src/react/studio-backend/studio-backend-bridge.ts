@@ -232,6 +232,7 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/server/identity') return true;
   if (pathname === '/api/ws-ticket') return true;
   if (pathname === '/api/preferences/session-permission-default') return true;
+  if (pathname === '/api/session-permission-mode') return true;
   if (pathname === '/api/preferences/models') return true;
   if (pathname === '/api/session-thinking-level') return true;
   if (pathname === '/api/user-profile') return true;

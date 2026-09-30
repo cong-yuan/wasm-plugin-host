@@ -1360,7 +1360,35 @@ return (function () {
     }
 
     if (pathname === '/api/preferences/session-permission-default' && verb === 'GET') {
-      return { permissionMode: 'ask' };
+      return {
+        permissionMode: 'ask',
+        locked: true,
+        supportedModes: ['ask'],
+      };
+    }
+
+    if (pathname === '/api/preferences/session-permission-default'
+      && (verb === 'PUT' || verb === 'POST' || verb === 'PATCH')) {
+      return {
+        ok: false,
+        locked: true,
+        permissionMode: 'ask',
+        mode: 'ask',
+        error: 'studio backend does not support permission mode changes',
+      };
+    }
+
+    if (pathname === '/api/session-permission-mode'
+      && (verb === 'GET' || verb === 'POST' || verb === 'PUT' || verb === 'PATCH')) {
+      return {
+        ok: verb === 'GET',
+        locked: true,
+        mode: 'ask',
+        permissionMode: 'ask',
+        ...(verb === 'GET'
+          ? {}
+          : { error: 'studio backend does not support permission mode changes' }),
+      };
     }
 
     if (pathname === '/api/agents' && verb === 'GET') {

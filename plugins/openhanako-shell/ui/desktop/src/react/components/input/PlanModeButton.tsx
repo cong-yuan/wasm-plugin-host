@@ -79,7 +79,12 @@ export function PlanModeButton({ mode, onChange, locked = false }: {
           body: JSON.stringify({ permissionMode: nextMode }),
         });
         const data = await res.json();
-        onChange((data.permissionMode || nextMode) as PermissionMode);
+        if (data.locked) {
+          window.dispatchEvent(new CustomEvent('hana-inline-notice', {
+            detail: { text: t('input.accessModeLocked'), type: 'error' },
+          }));
+        }
+        onChange((data.permissionMode || (data.locked ? mode : nextMode)) as PermissionMode);
         return;
       }
       const body = {

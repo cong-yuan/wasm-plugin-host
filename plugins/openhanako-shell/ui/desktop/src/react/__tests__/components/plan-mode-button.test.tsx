@@ -47,6 +47,28 @@ describe('PlanModeButton', () => {
     expect(onChange).toHaveBeenCalledWith('auto');
   });
 
+  it('keeps pending new-session mode unchanged when the Studio backend locks permission changes', async () => {
+    vi.mocked(hanaFetch).mockResolvedValueOnce(jsonResponse({
+      ok: false,
+      locked: true,
+      permissionMode: 'ask',
+    }));
+    useStore.setState({ pendingNewSession: true } as never);
+    const onChange = vi.fn();
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+
+    render(<PlanModeButton mode="ask" onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: 'input.askMode' }));
+    fireEvent.click(screen.getByRole('button', { name: 'input.readOnlyMode' }));
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith('ask'));
+    const notice = dispatchSpy.mock.calls
+      .map(([event]) => event)
+      .find((event) => event.type === 'hana-inline-notice') as CustomEvent | undefined;
+    expect(notice?.detail).toEqual({ text: 'input.accessModeLocked', type: 'error' });
+    dispatchSpy.mockRestore();
+  });
+
   it('targets the active session when changing an existing conversation permission mode', async () => {
     vi.mocked(hanaFetch).mockResolvedValueOnce(jsonResponse({ mode: 'operate' }));
     useStore.setState({

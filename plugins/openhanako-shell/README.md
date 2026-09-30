@@ -55,6 +55,7 @@ iframe 也用 `{ "source": "openhanako-studio-bridge", "type": "hello" }` 探测
 | `POST /api/sessions/new`、`/new-detached` | `create_agent { provider, model, cwd: null, id: null }` | 返回 `{ path, sessionId, agentId: "studio" }`，`ensureSession` 要这三个字段 |
 | `POST /api/sessions/switch` | 若 `live === false` 则 `resume_session { sessionId }` | `{ sessionId, isStreaming: false, agentId: "studio" }` |
 | `GET /api/sessions/messages?path=&sessionId=` | `transcript { agentId }` | `{ messages: [{ role, content, thinking? }], hasMore: false }`。`content` 是 `ChatMessage.text` |
+| `GET/PUT /api/preferences/session-permission-default`、`/api/session-permission-mode` | — | Studio 当前没有底层权限模式命令，因此 fail-closed 固定为 `ask`，写请求返回 `locked: true`，避免 UI 假装进入 `auto`/`operate`/`read_only` |
 | WS `{ type: "prompt", text, sessionId, sessionPath, clientMessageId }` | `send_message { agentId, text, msgId }` | 见下方入站事件 |
 | WS `{ type: "interject", ... }` | `steer_agent { agentId, text, msgId }` | 与 `send_message` 同参；缺 `msgId` 会在 Studio 侧失败 |
 | WS `{ type: "abort", sessionId, sessionPath }` | `cancel_agent { agentId }` | 随后 `turn_end` + `status isStreaming: false` |
@@ -71,7 +72,7 @@ iframe 也用 `{ "source": "openhanako-studio-bridge", "type": "hello" }` 探测
 | `{ type: "turn_end", sessionPath }` | `send_message` 返回后 |
 | `{ type: "status", isStreaming: false, sessionPath, sessionId }` | 结束 streaming |
 
-另外几条只为了让 `initApp` 在没有 Hana API 时也能走到 `loadSessions`：`GET /api/server/identity`、`GET /api/models`、`POST /api/ws-ticket`、`GET /api/agents/:id/config`、`GET /api/preferences/session-permission-default`。它们不是 agent 协议。
+另外几条只为了让 `initApp` 在没有 Hana API 时也能走到 `loadSessions`：`GET /api/server/identity`、`GET /api/models`、`POST /api/ws-ticket`、`GET /api/agents/:id/config`。权限模式端点虽然也由 bridge 接管，但在 Studio 暂无可执行的权限控制命令时会明确锁定为 `ask`，而不是伪造成功。它们不是 agent 协议。
 
 会话的 archive/restore/rename/delete 已由 Studio bridge 实现：archive 通过 `soft_unbind_agent` 保留历史并写入本地归档元数据，restore 重新 `resume_session`，rename 只接受真实活动会话或已归档会话，永久删除才会 dispose agent。其余仍会 404 的周边表面（user-profile、desk/cron、preferences/models 等）由 shim 返回空/`{ ok: true }` 软桩，避免 harness 控制台噪音；不实现真实行为。`/api/sessions/pin` 与 `/api/sessions/pin-order` 以及 `/api/session-projects*` 在本地 `localStorage` 持久化（Studio 无上游等价 API）。
 

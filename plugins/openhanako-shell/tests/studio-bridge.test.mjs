@@ -73,6 +73,36 @@ check('rename rejects missing sessions',
 const stubProfile = await adapter.http('GET', '/api/user-profile');
 check('user-profile stub', stubProfile && stubProfile.name === 'User');
 
+const permissionDefault = await adapter.http('GET', '/api/preferences/session-permission-default');
+check('permission default is explicitly locked to ask without backend support',
+  permissionDefault?.permissionMode === 'ask'
+  && permissionDefault?.locked === true
+  && Array.isArray(permissionDefault?.supportedModes)
+  && permissionDefault.supportedModes.length === 1
+  && permissionDefault.supportedModes[0] === 'ask');
+const lockedPermissionDefault = await adapter.http('PUT', '/api/preferences/session-permission-default', {
+  permissionMode: 'auto',
+});
+check('permission default writes fail closed instead of faking success',
+  lockedPermissionDefault?.ok === false
+  && lockedPermissionDefault?.locked === true
+  && lockedPermissionDefault?.permissionMode === 'ask');
+const lockedSessionPermission = await adapter.http('POST', '/api/session-permission-mode', {
+  sessionPath: listed[0].path,
+  mode: 'read_only',
+});
+check('session permission writes fail closed instead of faking read-only enforcement',
+  lockedSessionPermission?.ok === false
+  && lockedSessionPermission?.locked === true
+  && lockedSessionPermission?.mode === 'ask');
+
+const iframeBridgeSource = readFileSync(
+  join(ROOT, 'ui/desktop/src/react/studio-backend/studio-backend-bridge.ts'),
+  'utf8',
+);
+check('iframe bridge intercepts session permission mode requests',
+  iframeBridgeSource.includes("pathname === '/api/session-permission-mode'"));
+
 // Pin / unpin persists locally and is reflected in GET /api/sessions
 {
   const target = listed[0].sessionId;
