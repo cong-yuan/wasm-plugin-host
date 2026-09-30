@@ -1641,14 +1641,29 @@ return (function () {
       const sessionId = sessionIdOf(body, query);
       if (!sessionId) return { ok: false, error: 'missing session' };
       const archived = loadArchived();
-      if (!archived[pathFor(sessionId)]) return { ok: false, error: 'session is not archived' };
+      const archivedEntry = archived[pathFor(sessionId)] || null;
+      if (!archivedEntry) return { ok: false, error: 'session is not archived' };
       try {
         const resumed = await api.resume(sessionId);
         runtimeTranscriptCache.delete(sessionId);
+        const restoredId = resumed || sessionId;
+        if (archivedEntry.modelId && archivedEntry.modelProvider) {
+          rememberSessionModel(
+            pathFor(restoredId),
+            archivedEntry.modelId,
+            archivedEntry.modelProvider,
+          );
+          if (restoredId !== sessionId) {
+            rememberSessionModel(
+              pathFor(sessionId),
+              archivedEntry.modelId,
+              archivedEntry.modelProvider,
+            );
+          }
+        }
         delete archived[pathFor(sessionId)];
         saveArchived(archived);
         disposedIds.delete(sessionId);
-        const restoredId = resumed || sessionId;
         return { ok: true, sessionId: restoredId, path: pathFor(restoredId), restored: true };
       } catch (err) {
         return { ok: false, sessionId, error: err && err.message ? err.message : String(err) };

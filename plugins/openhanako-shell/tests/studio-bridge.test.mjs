@@ -806,6 +806,7 @@ check('host bridge correlates requestId',
     && calls.some((c) => c.cmd === 'soft_unbind_agent' && c.args.agentId === 'agent-1')
     && !calls.some((c) => c.cmd === 'dispose_agent'));
   const archivedRows = await adapter.http('GET', '/api/sessions/archived');
+  const archivedAgent = archivedRows.find((row) => row.sessionId === 'agent-1') || null;
   check('archived session is listed', archivedRows.some((row) => row.sessionId === 'agent-1'));
   const activeRows = await adapter.http('GET', '/api/sessions');
   check('archived session is hidden from active list', !activeRows.some((row) => row.sessionId === 'agent-1'));
@@ -821,6 +822,12 @@ check('host bridge correlates requestId',
   check('restore resumes archived agent',
     restored && restored.ok === true && restored.restored === true
     && calls.some((c) => c.cmd === 'resume_session' && c.args.sessionId === 'agent-1'));
+  const restoredModels = await adapter.http('GET', '/api/models?sessionPath=studio%3A%2F%2Fagent-1');
+  check('restore preserves archived session model metadata',
+    !!archivedAgent?.modelProvider
+    && !!archivedAgent?.modelId
+    && restoredModels.activeModel?.provider === archivedAgent.modelProvider
+    && restoredModels.activeModel?.id === archivedAgent.modelId);
 }
 
 // Standalone session search mirrors the server's title/content phases and
