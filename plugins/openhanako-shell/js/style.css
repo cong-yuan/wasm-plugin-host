@@ -9258,6 +9258,20 @@ html[data-platform="linux"] .onboarding {
     padding-top: 0.4rem;
     color: #b04a3f;
 }
+.sidebarSettingsModelSelect {
+    width: 100%;
+    margin-top: 0.35rem;
+    padding: 0.24rem 0.35rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: var(--fs-hint);
+}
+.sidebarSettingsModelSelect:disabled {
+    opacity: 0.5;
+}
 .sidebarSettingsProviderActions {
     display: flex;
     align-items: center;

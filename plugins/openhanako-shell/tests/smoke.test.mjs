@@ -490,7 +490,7 @@ adapterForSettings.http = async (method, path, body) => {
     return {
       providers: {
         providerA: { display_name: 'Provider A', is_configured: true, models: ['a-model'] },
-        providerB: { display_name: 'Provider B', is_configured: true, models: ['b-model'] },
+        providerB: { display_name: 'Provider B', is_configured: true, models: ['b-model', 'b-model-2'] },
       },
     };
   }
@@ -526,15 +526,21 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 check('settings marks provider used for new chats',
   root.querySelectorAll('.sidebarSettingsDefaultBadge').length === 1
   && /New chats/.test(root.querySelector('.sidebarSettingsDefaultBadge')?.textContent || ''));
-root.querySelector('.sidebarSettingsSetDefault')?.fire('click');
+check('settings exposes model selector for configured providers',
+  root.querySelectorAll('.sidebarSettingsModelSelect').length === 2);
+const providerBModelSelect = root.querySelectorAll('.sidebarSettingsModelSelect')[1];
+if (providerBModelSelect) providerBModelSelect.value = 'b-model-2';
+root.querySelectorAll('.sidebarSettingsSetDefault')
+  .find((button) => button.getAttribute('data-provider') === 'providerB')
+  ?.fire('click');
 await new Promise((resolve) => setTimeout(resolve, 0));
 await new Promise((resolve) => setTimeout(resolve, 0));
 check('settings can update provider and model used for new chats',
   defaultProviderPatch?.default === 'providerB'
   && defaultProviderPatch?.current?.provider === 'providerB'
-  && defaultProviderPatch?.current?.model === 'b-model'
+  && defaultProviderPatch?.current?.model === 'b-model-2'
   && pendingProviderUpdate?.provider === 'providerB'
-  && pendingProviderUpdate?.modelId === 'b-model'
+  && pendingProviderUpdate?.modelId === 'b-model-2'
   && root.querySelectorAll('.sidebarSettingsDefaultBadge').length === 1
   && !/api[_ -]?key/i.test(root.querySelector('.sidebarSettingsPanel')?.textContent || ''));
 api.status = originalStatusForSettings;

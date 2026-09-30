@@ -68,23 +68,41 @@ return (function () {
           row.appendChild(h('div', { class: 'sidebarSettingsProviderMeta' },
             `${models.length} model${models.length === 1 ? '' : 's'} · ${models.slice(0, 3).join(', ')}${models.length > 3 ? '…' : ''}`));
         }
+        let modelSelect = null;
+        if (configured && models.length) {
+          modelSelect = h('select', {
+            class: 'sidebarSettingsModelSelect',
+            'aria-label': `Model for ${provider?.display_name || name}`,
+          });
+          models.forEach((modelId) => {
+            modelSelect.appendChild(h('option', { value: modelId }, modelId));
+          });
+          const configuredModel = llm?.providers?.[name]?.model;
+          const currentModel = name === currentProvider && typeof llm?.current?.model === 'string'
+            ? llm.current.model
+            : '';
+          modelSelect.value = currentModel || configuredModel || models[0];
+          row.appendChild(modelSelect);
+        }
         if (provider?.base_url) {
           row.appendChild(h('div', { class: 'sidebarSettingsProviderMeta' }, String(provider.base_url)));
         }
         const actions = h('div', { class: 'sidebarSettingsProviderActions' });
         if (name === newChatProvider) {
           actions.appendChild(h('span', { class: 'sidebarSettingsDefaultBadge' }, 'New chats'));
-        } else if (configured && models.length) {
+        }
+        if (configured && models.length && modelSelect) {
           const useForNewChats = h('button', {
             class: 'sidebarSettingsSetDefault',
             type: 'button',
-          }, 'Use for new chats');
+            'data-provider': name,
+          }, name === newChatProvider ? 'Apply model' : 'Use for new chats');
           useForNewChats.onclick = async () => {
             useForNewChats.disabled = true;
+            modelSelect.disabled = true;
             settingsMessage.textContent = `Using ${name} for new chats…`;
             settingsMessage.className = 'sidebarSettingsMessage';
-            const configuredModel = llm?.providers?.[name]?.model;
-            const model = configuredModel || models[0];
+            const model = modelSelect.value || models[0];
             try {
               const result = await api.setLlmConfig({
                 default: name,
@@ -103,6 +121,7 @@ return (function () {
               settingsMessage.textContent = err?.message || 'Unable to update new-chat provider';
               settingsMessage.className = 'sidebarSettingsMessage error';
               useForNewChats.disabled = false;
+              modelSelect.disabled = false;
             }
           };
           actions.appendChild(useForNewChats);
