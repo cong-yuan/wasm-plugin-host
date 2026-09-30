@@ -562,6 +562,24 @@ check('activity Open closes panel after successful navigation',
   && root.querySelector('.sidebarActivityPanel')?.style?.display === 'none');
 activityButton?.fire('click');
 await new Promise((resolve) => setTimeout(resolve, 0));
+const sidebarModuleForFailedActivityOpen = studio.require('panels/sidebar');
+const failedActivitySide = sidebarModuleForFailedActivityOpen.render({
+  selected: null,
+  onNew() {},
+  onCollapse() {},
+  async onSelect() { return false; },
+});
+await failedActivitySide.refresh(null);
+const failedActivityButton = failedActivitySide.root.querySelector('.sidebar-activity-button');
+failedActivityButton?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+failedActivitySide.root.querySelector('.sidebarActivityOpen')?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('activity Open stays visible when navigation fails',
+  failedActivityButton?.getAttribute('aria-expanded') === 'true'
+  && failedActivitySide.root.querySelector('.sidebarActivityPanel')?.style?.display !== 'none');
+failedActivitySide.destroy?.();
+
 const adapterForActivity = studio.require('lib/hana-adapter');
 const originalActivityHttp = adapterForActivity.http;
 let activityRefreshCalls = 0;

@@ -81,8 +81,9 @@ return (function () {
         skills: t('skills.panel.title'),
       },
       onOpenSession: async (session) => {
-        await options.onSelect(session);
-        infoPanels.close(activityPanel, activity);
+        const opened = await options.onSelect(session);
+        if (opened !== false) infoPanels.close(activityPanel, activity);
+        return opened;
       },
     });
     const { settingsPanel, activityPanel, skillsPanel } = infoPanels;
