@@ -703,8 +703,21 @@ return (function () {
               || fallbackProvider;
           }
           if (!chosenModel) {
-            chosenModel = (typeof current.model === 'string' && current.model)
-              || (llm.providers && llm.providers[chosenProvider] && llm.providers[chosenProvider].model)
+            const currentMatchesProvider = typeof current.provider === 'string'
+              && current.provider === chosenProvider;
+            const providerModel = llm.providers
+              && llm.providers[chosenProvider]
+              && llm.providers[chosenProvider].model;
+            const providerModels = llm.model_lists
+              && Array.isArray(llm.model_lists[chosenProvider])
+              ? llm.model_lists[chosenProvider]
+              : [];
+            const firstProviderModel = providerModels
+              .map((entry) => (typeof entry === 'string' ? entry : entry?.id))
+              .find(Boolean);
+            chosenModel = (currentMatchesProvider && typeof current.model === 'string' && current.model)
+              || providerModel
+              || firstProviderModel
               || (chosenProvider === DEFAULT_PROVIDER ? DEFAULT_MODEL : chosenProvider);
           }
         } catch (_) { /* keep defaults below */ }
@@ -836,17 +849,19 @@ return (function () {
 
     pickProvider: async () => {
       if (!tauri.available()) return mock.pickProvider();
+      let statusProviders = [];
       try {
         const s = await tauri.invoke('studio_status');
-        const list = (s && s.providers) || [];
-        if (list.length) return list.find((p) => p !== 'mock') || list[0];
+        if (typeof s?.provider === 'string' && s.provider) return s.provider;
+        statusProviders = Array.isArray(s?.providers) ? s.providers : [];
       } catch (_) { /* older hosts may omit studio_status */ }
       try {
         const llm = await tauri.invoke('get_llm_config');
         const current = llm && llm.current && typeof llm.current === 'object' ? llm.current : {};
         if (typeof current.provider === 'string' && current.provider) return current.provider;
         if (typeof llm?.default === 'string' && llm.default) return llm.default;
-      } catch (_) { /* fall through to the offline demo pair */ }
+      } catch (_) { /* use status provider list below */ }
+      if (statusProviders.length) return statusProviders.find((p) => p !== 'mock') || statusProviders[0];
       return DEFAULT_PROVIDER;
     },
   };

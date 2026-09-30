@@ -154,7 +154,18 @@ global.window.__TAURI_INTERNALS__ = {
     }
     if (cmd === 'list_agents') return Promise.resolve([]);
     if (cmd === 'create_agent') return Promise.resolve('agent-new');
-    if (cmd === 'get_llm_config') return Promise.resolve({ current: { provider: 'deepseek', model: 'deepseek-chat' }, default: 'deepseek' });
+    if (cmd === 'get_llm_config') return Promise.resolve({
+      current: { provider: 'deepseek', model: 'deepseek-chat' },
+      default: 'deepseek',
+      providers: {
+        mock: { model: 'mock-1' },
+        deepseek: { model: 'deepseek-chat' },
+      },
+      model_lists: {
+        mock: ['mock-1'],
+        deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+      },
+    });
     if (cmd === 'resume_session') return Promise.resolve(args.sessionId);
     if (cmd === 'send_message') {
       sendStarted = Date.now();
@@ -200,6 +211,12 @@ check('status falls back to configured provider and model without studio_status'
   && configuredStatus.providers.includes('deepseek')
   && configuredStatus.model === 'deepseek-chat'
   && /get_llm_config/.test(configuredStatus.note || ''));
+calls.length = 0;
+await api.create('mock');
+check('create resolves model within explicitly selected provider',
+  calls.some((call) => call.cmd === 'create_agent'
+    && call.args.provider === 'mock'
+    && call.args.model === 'mock-1'));
 const live = await api.sessions();
 check('sessions call list_sessions', calls.some((c) => c.cmd === 'list_sessions') && live[0].id === 'agent-1');
 const projectedLive = await adapter.http('GET', '/api/sessions');
