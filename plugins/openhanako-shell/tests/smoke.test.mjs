@@ -965,6 +965,29 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.cancel = originalCancel;
 }
 
+// An empty transport result is retryable when no assistant output arrived.
+{
+  const originalProgress = api.sendWithProgress;
+  const originalTranscript = api.transcript;
+  api.sendWithProgress = async () => false;
+  api.transcript = async () => [];
+
+  const emptyResponseHost = new El('div');
+  const disposeEmptyResponseShell = shell.render(emptyResponseHost);
+  const emptyResponseRoot = emptyResponseHost.children[0];
+  const emptyResponseInput = emptyResponseRoot.querySelector('.input-box');
+  emptyResponseInput.textContent = 'empty response smoke';
+  emptyResponseRoot.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  check('empty response exposes retry action',
+    emptyResponseRoot.querySelectorAll('.messageRetryBtn').length === 1
+    && emptyResponseRoot.querySelectorAll('[data-message-state="error"]').length === 1);
+
+  if (typeof disposeEmptyResponseShell === 'function') disposeEmptyResponseShell();
+  api.sendWithProgress = originalProgress;
+  api.transcript = originalTranscript;
+}
+
 // A send failure with no partial assistant output is retryable in place.
 {
   const originalProgress = api.sendWithProgress;

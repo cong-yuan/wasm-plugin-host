@@ -503,7 +503,15 @@ return (function () {
             options.onChanged();
           },
         );
-        if (state.epoch === submitEpoch && !sent && !assistant.text) assistant.text = t('error.llmEmptyResponse');
+        if (state.epoch === submitEpoch
+          && !sent
+          && !assistant.text
+          && !assistant.reasoning
+          && !assistant.tool_calls.length
+          && !assistant.tool_results.length) {
+          assistant.text = t('error.llmEmptyResponse');
+          assistant.retryText = text;
+        }
         try {
           const minimumTranscriptLength = state.turns.length;
           const transcript = await api.transcript(state.id);
