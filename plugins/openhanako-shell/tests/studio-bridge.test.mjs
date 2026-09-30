@@ -148,7 +148,7 @@ global.window.__TAURI_INTERNALS__ = {
     calls.push({ cmd, args });
     if (cmd === 'list_sessions') {
       return Promise.resolve([
-        { id: 'agent-1', title: 'Hello', busy: false, live: true, messages: 2, turns: 1, status: 'idle', usage: null },
+        { id: 'agent-1', title: 'Hello', busy: false, live: true, messages: 2, turns: 1, status: 'idle', usage: null, provider: 'deepseek', model: 'deepseek-reasoner' },
         { id: 'agent-2', title: 'Cold', busy: false, live: false, messages: 1, turns: 1, status: 'idle', usage: null },
       ]);
     }
@@ -240,6 +240,11 @@ check('sessions call list_sessions', calls.some((c) => c.cmd === 'list_sessions'
 const projectedLive = await adapter.http('GET', '/api/sessions');
 check('sessions without backend timestamps do not become just-now on every refresh',
   projectedLive.every((session) => session.modified == null && session.created == null));
+check('session projection preserves backend model metadata',
+  projectedLive.some((session) =>
+    session.sessionId === 'agent-1'
+    && session.modelProvider === 'deepseek'
+    && session.modelId === 'deepseek-reasoner'));
 
 // Runtime-state is the shell's stable projection for busy/error/tool activity.
 // Keep this independent of the renderer so React/slot surfaces consume one

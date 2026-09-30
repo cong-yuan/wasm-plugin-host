@@ -711,6 +711,12 @@ return (function () {
     const localTitle = loadTitles()[path] || null;
     const activeTurn = activeTurns.get(String(row.id || ''));
     const isStreaming = !!(activeTurn && isActiveTurn(activeTurn));
+    const storedModel = storedModelForPath(path);
+    const rowProvider = typeof row.provider === 'string' && row.provider ? row.provider : '';
+    const rowModel = typeof row.model === 'string' && row.model ? row.model : '';
+    const sessionModel = rowProvider && rowModel
+      ? { provider: rowProvider, modelId: rowModel }
+      : storedModel || { provider: api.DEFAULT_PROVIDER, modelId: api.DEFAULT_MODEL };
     const status = row.busy || isStreaming
       ? 'running'
       : (row.status || (row.error ? 'error' : 'idle'));
@@ -729,8 +735,8 @@ return (function () {
       cwd: null,
       agentId: ASSISTANT_ID,
       agentName: ASSISTANT_NAME,
-      modelId: api.DEFAULT_MODEL,
-      modelProvider: api.DEFAULT_PROVIDER,
+      modelId: sessionModel.modelId,
+      modelProvider: sessionModel.provider,
       pinnedAt: pin ? pin.pinnedAt : null,
       pinOrder: pin && Number.isFinite(pin.pinOrder) ? pin.pinOrder : null,
       live: row.live !== false,

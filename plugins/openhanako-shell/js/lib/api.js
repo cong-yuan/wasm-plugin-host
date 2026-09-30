@@ -41,6 +41,12 @@ return (function () {
     error: row && (row.error || row.last_error || row.lastError)
       ? String(row.error || row.last_error || row.lastError)
       : '',
+    provider: row && (row.provider || row.model_provider || row.modelProvider)
+      ? String(row.provider || row.model_provider || row.modelProvider)
+      : '',
+    model: row && (row.model || row.model_id || row.modelId)
+      ? String(row.model || row.model_id || row.modelId)
+      : '',
     messages: (row && row.messages) || 0,
     turns: (row && row.turns) || 0,
     usage: (row && row.usage) || null,
