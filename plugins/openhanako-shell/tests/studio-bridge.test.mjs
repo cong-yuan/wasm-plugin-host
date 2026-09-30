@@ -705,25 +705,6 @@ const messages = await adapter.http('GET', '/api/sessions/messages?path=' + enco
 check('transcript becomes history content',
   messages.messages[1].role === 'assistant' && messages.messages[1].content === 'pong' && messages.messages[1].thinking === 'because');
 
-{
-  const originalTranscript = api.transcript;
-  api.transcript = async () => [
-    { role: 'user', text: 'inspect', reasoning: '', tool_calls: [], tool_results: [] },
-    { role: 'assistant', text: '先检查。', reasoning: '', tool_calls: [{ id: 'hist-t1', name: 'read_file', arguments: '{"path":"a"}' }], tool_results: [] },
-    { role: 'user', text: '', reasoning: '', tool_calls: [], tool_results: [{ tool_call_id: 'hist-t1', content: 'ok', is_error: false }] },
-    { role: 'assistant', text: '再确认。', reasoning: '', tool_calls: [{ id: 'hist-t2', name: 'grep', arguments: '{"q":"x"}' }], tool_results: [] },
-    { role: 'user', text: '', reasoning: '', tool_calls: [], tool_results: [{ tool_call_id: 'hist-t2', content: 'ok', is_error: false }] },
-    { role: 'assistant', text: '最终结论。', reasoning: '', tool_calls: [], tool_results: [] },
-  ];
-  const mergedHistory = await adapter.http('GET', '/api/sessions/messages?path=studio%3A%2F%2Fagent-1&sessionId=agent-1');
-  check('history merges one tool-using turn into one assistant answer',
-    mergedHistory.messages.length === 2
-    && mergedHistory.messages[1].role === 'assistant'
-    && mergedHistory.messages[1].content === '先检查。再确认。最终结论。'
-    && mergedHistory.messages[1].toolCalls?.length === 2);
-  api.transcript = originalTranscript;
-}
-
 // ---- tauri path: incremental deltas while send_message is in flight ----
 {
   calls.length = 0;

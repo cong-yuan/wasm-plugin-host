@@ -319,14 +319,17 @@ class StreamBufferManager {
       if (buf.textAcc) {
         const displayText = buf.textAcc.replace(/<tool_code>[\s\S]*?<\/tool_code>\s*/g, '');
         const html = renderMarkdown(displayText);
-        // The assistant answer is one logical body for the whole turn. Tool
-        // calls are process information, so keep every structural block first
-        // and collapse all provisional prose into one trailing text block.
-        // This prevents multi-tool turns from rendering as
-        // text → tool → text → tool → text.
-        const structuralBlocks = blocks.filter((block) => block.type !== 'text') as ContentBlock[];
-        structuralBlocks.push({ type: 'text', html, source: displayText });
-        blocks.splice(0, blocks.length, ...structuralBlocks);
+        // Only grow the text block the stream is currently inside — i.e. the
+        // LAST block. A text block that a tool group already followed is a
+        // sealed earlier segment; overwriting it (the old `findIndex` did)
+        // merged post-tool prose back into the pre-tool paragraph and pushed
+        // the tool group to the end, which read as duplicated / reordered text.
+        const last = blocks.length - 1;
+        if (last >= 0 && blocks[last].type === 'text') {
+          blocks[last] = { type: 'text', html, source: displayText };
+        } else {
+          blocks.push({ type: 'text', html, source: displayText });
+        }
       }
 
       return { ...msg, blocks };
@@ -436,20 +439,24 @@ class StreamBufferManager {
         this.ensureMessage(buf);
         // 工具事件频率低，直接写 store
         this.flush(buf); // 先 flush 文本
-        // Keep textAcc cumulative for the whole turn. A tool is process
-        // information, not a prose boundary: insert/extend the tool group ahead
-        // of the single trailing answer block.
+        // Seal the current text segment. The next text_delta begins a NEW block
+        // after the tool group instead of accumulating into the pre-tool one.
+        buf.textAcc = '';
         this.updateTargetMessage(buf, (m) => {
-          const existingBlocks = [...(m.blocks || [])];
+          const blocks = [...(m.blocks || [])];
           const id = toolCallIdFromEvent(msg);
-          if (id && existingBlocks.some((block) => (
+          if (id && blocks.some((block) => (
             block.type === 'tool_group'
             && block.tools.some((tool) => tool.id === id)
           ))) {
             return m;
           }
-          const textBlocks = existingBlocks.filter((block) => block.type === 'text');
-          const blocks = existingBlocks.filter((block) => block.type !== 'text');
+          // Consecutive calls belong to one visual step even when an earlier
+          // call already finished before the next starts. Text is the only
+          // boundary that opens a new group. Keeping adjacent tools together
+          // also gives assistant_snapshot one stable slot before and after the
+          // whole run instead of accidentally inserting suffix prose between
+          // completed tools.
           const last = blocks.length - 1;
           if (last >= 0 && blocks[last].type === 'tool_group') {
             const group = blocks[last] as Extract<ContentBlock, { type: 'tool_group' }>;
@@ -457,14 +464,15 @@ class StreamBufferManager {
               ...group,
               tools: [...group.tools, toolCallFromStartEvent(msg)],
             };
-          } else {
-            blocks.push({
-              type: 'tool_group',
-              tools: [toolCallFromStartEvent(msg)],
-              collapsed: false,
-            });
+            return { ...m, blocks };
           }
-          return { ...m, blocks: [...blocks, ...textBlocks] };
+          // New group after text or another structural block.
+          blocks.push({
+            type: 'tool_group',
+            tools: [toolCallFromStartEvent(msg)],
+            collapsed: false,
+          });
+          return { ...m, blocks };
         });
         break;
 
@@ -511,17 +519,30 @@ class StreamBufferManager {
         if (segments.length === 0) break;
         this.flush(buf);
         this.updateTargetMessage(buf, (m) => {
-          const structuralBlocks = (m.blocks || []).filter((block) => block.type !== 'text');
-          const source = segments.join('').replace(/<tool_code>[\s\S]*?<\/tool_code>\s*/g, '');
-          return {
-            ...m,
-            blocks: source
-              ? [...structuralBlocks, { type: 'text', source, html: renderMarkdown(source) }]
-              : structuralBlocks,
-          };
+          const blocks = m.blocks || [];
+          const structuralBlocks = blocks.filter((block) => block.type !== 'text');
+          const rebuilt: ContentBlock[] = [];
+          let segmentIndex = 0;
+
+          // Transcript emits one assistant row per model step. Tool groups mark
+          // those step boundaries, so fill one authoritative text slot before
+          // each group and put the remaining slot after the final group.
+          for (const block of structuralBlocks) {
+            if (block.type === 'tool_group' && segmentIndex < segments.length) {
+              const source = segments[segmentIndex++];
+              if (source) rebuilt.push({ type: 'text', source, html: renderMarkdown(source) });
+            }
+            rebuilt.push(block);
+          }
+          while (segmentIndex < segments.length) {
+            const source = segments[segmentIndex++];
+            if (source) rebuilt.push({ type: 'text', source, html: renderMarkdown(source) });
+          }
+          return { ...m, blocks: rebuilt };
         });
-        // Snapshot is authoritative for the complete answer body. Keep textAcc
-        // empty so turn_end cannot publish the same text a second time.
+        // Snapshot already committed all authoritative text. Keeping its last
+        // segment in textAcc would make turn_end flush it again after a trailing
+        // tool group.
         buf.textAcc = '';
         break;
       }
