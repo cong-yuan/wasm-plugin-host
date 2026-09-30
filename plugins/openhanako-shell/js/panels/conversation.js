@@ -48,7 +48,7 @@ return (function () {
   </svg>`;
 
   function render(options) {
-    const state = { id: null, turns: [], busy: false, cancelling: false, memory: true, epoch: 0, switchingModel: false };
+    const state = { id: null, turns: [], busy: false, cancelling: false, opening: false, memory: true, epoch: 0, switchingModel: false };
     const markUnsupported = (button, reason) => {
       button.disabled = true;
       button.setAttribute('aria-disabled', 'true');
@@ -119,7 +119,12 @@ return (function () {
 
     function renderSendState() {
       clear(send);
-      if (state.busy) {
+      if (state.opening) {
+        send.setAttribute('data-mode', 'opening');
+        send.classList.remove('send-btn-stop');
+        send.disabled = true;
+        send.appendChild(h('span', { class: 'send-label' }, h('span', {}, 'Opening…')));
+      } else if (state.busy) {
         send.setAttribute('data-mode', 'stop');
         send.classList.add('send-btn-stop');
         send.disabled = !!state.cancelling;
@@ -133,7 +138,7 @@ return (function () {
         send.appendChild(h('span', { class: 'send-label' },
           svg(SEND_ENTER), h('span', {}, t('chat.send'))));
       }
-      const modelDisabled = !!state.busy || !!state.switchingModel;
+      const modelDisabled = !!state.opening || !!state.busy || !!state.switchingModel;
       modelPill.disabled = modelDisabled;
       modelPill.classList.toggle('model-pill-disabled', modelDisabled);
       modelSelector.setAttribute('aria-busy', state.switchingModel ? 'true' : 'false');
@@ -165,7 +170,7 @@ return (function () {
     };
 
     const chooseModel = async (model) => {
-      if (!model || state.busy || state.switchingModel) return;
+      if (!model || state.opening || state.busy || state.switchingModel) return;
       state.switchingModel = true;
       const switchEpoch = state.epoch;
       modelStatus.textContent = 'Switching model…';
@@ -248,7 +253,7 @@ return (function () {
     };
 
     modelPill.onclick = async () => {
-      if (state.busy || state.switchingModel) return;
+      if (state.opening || state.busy || state.switchingModel) return;
       const opening = !modelSelector.classList.contains('open');
       if (!opening) {
         closeModels();
@@ -356,6 +361,7 @@ return (function () {
       state.cancelling = false;
       state.switchingModel = false;
       conversationStatus.textContent = 'Opening session…';
+      state.opening = true;
       conversationStatus.className = 'conversation-status';
       renderSendState();
       if (wasBusy && previousId && previousId !== session.id) {
@@ -372,6 +378,8 @@ return (function () {
         state.turns = transcript;
         await refreshModelsWithStatus();
         if (state.epoch !== openEpoch) return false;
+        state.opening = false;
+        renderSendState();
         conversationStatus.textContent = '';
         conversationStatus.className = 'conversation-status';
         draw();
@@ -385,6 +393,7 @@ return (function () {
         state.cancelling = false;
         state.switchingModel = false;
         conversationStatus.textContent = `Could not open session: ${(err && err.message) ? err.message : String(err)}`;
+        state.opening = false;
         conversationStatus.className = 'conversation-status error';
         renderSendState();
         draw();
@@ -416,7 +425,7 @@ return (function () {
 
     async function submit() {
       const text = input.textContent.trim();
-      if (!text || state.busy) return;
+      if (!text || state.opening || state.busy) return;
       state.busy = true;
       const submitEpoch = state.epoch;
       conversationStatus.textContent = '';
@@ -569,6 +578,7 @@ return (function () {
         state.cancelling = false;
         state.switchingModel = false;
         conversationStatus.textContent = '';
+        state.opening = false;
         conversationStatus.className = 'conversation-status';
         closeModels();
         renderSendState();

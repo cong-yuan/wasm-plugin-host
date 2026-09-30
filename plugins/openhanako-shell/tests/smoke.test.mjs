@@ -791,6 +791,50 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.dispose = originalDispose;
 }
 
+// Session opening locks composer/model controls until transcript hydration settles.
+{
+  const originalTranscript = api.transcript;
+  const originalProgress = api.sendWithProgress;
+  let releaseOpenTranscript = null;
+  let sendsWhileOpening = 0;
+  api.transcript = async (id) => new Promise((resolve) => {
+    releaseOpenTranscript = async () => resolve(await originalTranscript(id));
+  });
+  api.sendWithProgress = async () => {
+    sendsWhileOpening += 1;
+    return true;
+  };
+
+  const openingHost = new El('div');
+  const disposeOpeningShell = shell.render(openingHost);
+  const openingRoot = openingHost.children[0];
+  for (let i = 0; i < 20 && openingRoot.querySelectorAll('.sessionItem').length < 1; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  openingRoot.querySelector('.sessionItem')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const openingSend = openingRoot.querySelector('.send-btn');
+  const openingInput = openingRoot.querySelector('.input-box');
+  check('session open locks send and model controls',
+    openingSend.getAttribute('data-mode') === 'opening'
+    && openingSend.disabled === true
+    && openingRoot.querySelector('.model-pill')?.disabled === true);
+  openingInput.textContent = 'must not send during open';
+  openingSend.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('composer cannot send while session is opening', sendsWhileOpening === 0);
+  await releaseOpenTranscript?.();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  check('session open unlocks controls after hydration',
+    openingSend.getAttribute('data-mode') === 'send'
+    && openingSend.disabled === false
+    && openingRoot.querySelector('.model-pill')?.disabled === false);
+
+  if (typeof disposeOpeningShell === 'function') disposeOpeningShell();
+  api.transcript = originalTranscript;
+  api.sendWithProgress = originalProgress;
+}
+
 // Failed session opens roll back to the previous conversation instead of
 // leaving a new session id paired with stale message content.
 {
