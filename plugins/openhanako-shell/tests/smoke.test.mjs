@@ -812,6 +812,24 @@ adapterForShellRefresh.http = originalHttpForRefresh;
     failureSend.getAttribute('data-mode') === 'send' && failureSend.disabled === false);
   check('session creation failure is visible in conversation',
     failureRoot.querySelectorAll('.md-content').some((el) => /create failed/.test(el.textContent)));
+  check('session creation failure exposes retry action',
+    failureRoot.querySelectorAll('.messageRetryBtn').length === 1);
+  api.create = async () => 'retry-created-session';
+  const originalProgress = api.sendWithProgress;
+  let retrySendCalls = 0;
+  api.sendWithProgress = async () => {
+    retrySendCalls += 1;
+    return true;
+  };
+  failureRoot.querySelector('.messageRetryBtn')?.fire('click');
+  for (let i = 0; i < 20 && retrySendCalls === 0; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  check('retry action resubmits failed user turn without manual re-entry',
+    retrySendCalls === 1
+    && failureRoot.querySelectorAll('.messageRetryBtn').length === 0
+    && failureRoot.querySelectorAll('.messageUser').filter((el) => /creation failure smoke/.test(el.textContent)).length === 1);
+  api.sendWithProgress = originalProgress;
 
   if (typeof disposeFailureShell === 'function') disposeFailureShell();
   api.pickProvider = originalPickProvider;

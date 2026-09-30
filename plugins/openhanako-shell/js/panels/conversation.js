@@ -223,6 +223,21 @@ return (function () {
       modelPill.setAttribute('data-open', 'true');
     };
 
+    const retryFailedTurn = (index, message) => {
+      if (state.busy || !message?.retryText) return;
+      const retryText = String(message.retryText);
+      const previous = state.turns[index - 1];
+      if (previous?.role === 'user'
+        && String(previous.text || '').trim() === retryText.trim()) {
+        state.turns.splice(index - 1, 2);
+      } else {
+        state.turns.splice(index, 1);
+      }
+      input.textContent = retryText;
+      draw();
+      submit();
+    };
+
     function draw() {
       clear(stream);
       const empty = !state.turns.length;
@@ -237,7 +252,7 @@ return (function () {
         });
       });
       // UserMessage.tsx / AssistantMessage.tsx group markup (Chat.module.css).
-      state.turns.forEach((m) => {
+      state.turns.forEach((m, index) => {
         const isUser = m.role === 'user';
         const name = isUser ? USER_NAME : AGENT_NAME;
         const group = h('div', {
@@ -255,6 +270,16 @@ return (function () {
         group.appendChild(h('div', {
           class: 'message ' + (isUser ? 'messageUser' : 'messageAssistant'),
         }, h('div', { class: 'md-content' }, m.text || '')));
+        if (!isUser && m.retryText) {
+          const retry = h('button', {
+            class: 'messageRetryBtn',
+            type: 'button',
+            title: 'Retry this message',
+            'aria-label': 'Retry this message',
+          }, 'Retry');
+          retry.onclick = () => retryFailedTurn(index, m);
+          group.appendChild(retry);
+        }
         if (!isUser && m.reasoning) {
           group.appendChild(h('details', { class: 'thinkingBlock' },
             h('summary', { class: 'thinkingBlockSummary' }, 'Thinking'),
@@ -309,11 +334,12 @@ return (function () {
       options.onOpened(state.id);
     }
 
-    const failSubmit = (err, submitEpoch = state.epoch) => {
+    const failSubmit = (err, submitEpoch = state.epoch, retryText = '') => {
       if (state.epoch !== submitEpoch) return;
       state.turns.push({
         role: 'assistant',
         text: (err && err.message) ? err.message : String(err),
+        retryText: retryText || null,
       });
       state.busy = false;
       state.cancelling = false;
@@ -344,7 +370,7 @@ return (function () {
           const provider = await api.pickProvider();
           if (state.epoch !== submitEpoch) return;
           if (!provider) {
-            failSubmit(new Error(t('error.llmAuthFailed')), submitEpoch);
+            failSubmit(new Error(t('error.llmAuthFailed')), submitEpoch, text);
             return;
           }
           const createdId = provider === 'mock'
@@ -357,7 +383,7 @@ return (function () {
           state.id = createdId;
           options.onCreated(state.id);
         } catch (err) {
-          failSubmit(err, submitEpoch);
+          failSubmit(err, submitEpoch, text);
           return;
         }
       }
@@ -427,6 +453,9 @@ return (function () {
       } catch (err) {
         if (state.epoch === submitEpoch) {
           assistant.text = (err && err.message) ? err.message : String(err);
+          if (!assistant.reasoning && !assistant.tool_calls.length && !assistant.tool_results.length) {
+            assistant.retryText = text;
+          }
         }
       } finally {
         if (state.epoch === submitEpoch) {
