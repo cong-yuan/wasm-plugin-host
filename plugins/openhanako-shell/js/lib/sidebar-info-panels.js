@@ -91,6 +91,13 @@ return (function () {
                 current: { provider: name, model },
               });
               if (result && result.ok === false) throw new Error(result.error || 'Provider update failed');
+              const pendingResult = await adapter.http('POST', '/api/models/set', {
+                provider: name,
+                modelId: model,
+              });
+              if (pendingResult && pendingResult.ok === false) {
+                throw new Error(pendingResult.error || 'Unable to update new-chat model');
+              }
               await loadSettings();
             } catch (err) {
               settingsMessage.textContent = err?.message || 'Unable to update new-chat provider';

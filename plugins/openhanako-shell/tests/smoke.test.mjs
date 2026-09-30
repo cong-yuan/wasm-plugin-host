@@ -484,6 +484,7 @@ const originalStatusForSettings = api.status;
 const originalConfigForSettings = api.getLlmConfig;
 const originalSetConfigForSettings = api.setLlmConfig;
 let defaultProviderPatch = null;
+let pendingProviderUpdate = null;
 adapterForSettings.http = async (method, path, body) => {
   if (method === 'GET' && path === '/api/providers/summary') {
     return {
@@ -492,6 +493,10 @@ adapterForSettings.http = async (method, path, body) => {
         providerB: { display_name: 'Provider B', is_configured: true, models: ['b-model'] },
       },
     };
+  }
+  if (method === 'POST' && path === '/api/models/set') {
+    pendingProviderUpdate = body;
+    return { ok: true };
   }
   return originalSettingsHttp(method, path, body);
 };
@@ -528,6 +533,8 @@ check('settings can update provider and model used for new chats',
   defaultProviderPatch?.default === 'providerB'
   && defaultProviderPatch?.current?.provider === 'providerB'
   && defaultProviderPatch?.current?.model === 'b-model'
+  && pendingProviderUpdate?.provider === 'providerB'
+  && pendingProviderUpdate?.modelId === 'b-model'
   && root.querySelectorAll('.sidebarSettingsDefaultBadge').length === 1
   && !/api[_ -]?key/i.test(root.querySelector('.sidebarSettingsPanel')?.textContent || ''));
 api.status = originalStatusForSettings;
