@@ -9298,6 +9298,25 @@ html[data-platform="linux"] .onboarding {
 .sidebarSettingsMessage.error {
     color: #b04a3f;
 }
+.sidebarActivityStop {
+    margin-left: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.14rem 0.42rem;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--fs-hint);
+    cursor: pointer;
+}
+.sidebarActivityStop:hover {
+    color: var(--text-primary);
+    background: rgba(0,0,0,0.04);
+}
+.sidebarActivityStop:disabled {
+    opacity: 0.45;
+    cursor: progress;
+}
 
 .input-surface-mobile .model-selector {
     flex: 0 1 auto;

@@ -563,6 +563,34 @@ root.querySelector('.sidebarActivityRefresh')?.fire('click');
 await new Promise((resolve) => setTimeout(resolve, 0));
 check('activity refresh reloads runtime snapshot', activityRefreshCalls === 1);
 adapterForActivity.http = originalActivityHttp;
+const originalCancelForActivity = api.cancel;
+let activityStopCalls = 0;
+adapterForActivity.http = async (method, path, body) => {
+  if (method === 'GET' && path === '/api/runtime-state') {
+    return {
+      mode: 'mock',
+      sessions: [{
+        sessionId: 'activity-running',
+        title: 'Running activity session',
+        status: 'running',
+        isStreaming: true,
+      }],
+    };
+  }
+  return originalActivityHttp(method, path, body);
+};
+api.cancel = async (id) => {
+  activityStopCalls += id === 'activity-running' ? 1 : 0;
+};
+root.querySelector('.sidebarActivityRefresh')?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('activity panel exposes Stop for running sessions',
+  root.querySelectorAll('.sidebarActivityStop').length === 1);
+root.querySelector('.sidebarActivityStop')?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('activity Stop cancels running session', activityStopCalls === 1);
+api.cancel = originalCancelForActivity;
+adapterForActivity.http = originalActivityHttp;
 const runtimeResolvers = [];
 adapterForActivity.http = async (method, path, body) => {
   if (method === 'GET' && path === '/api/runtime-state') {

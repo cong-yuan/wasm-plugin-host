@@ -137,11 +137,30 @@ return (function () {
         const state = row.status === 'error' || row.error
           ? 'error'
           : row.status === 'running' || row.isStreaming ? 'running' : 'idle';
-        const item = h('div', { class: 'sidebarActivityItem', 'data-state': state },
-          h('div', { class: 'sidebarActivityItemHeader' },
-            h('span', { class: 'sidebarActivityStateDot', 'data-state': state }),
-            h('span', { class: 'sidebarActivityItemTitle' }, row.title || row.sessionId || 'Session'),
-            h('span', { class: 'sidebarActivityItemState' }, state)));
+        const itemHeader = h('div', { class: 'sidebarActivityItemHeader' },
+          h('span', { class: 'sidebarActivityStateDot', 'data-state': state }),
+          h('span', { class: 'sidebarActivityItemTitle' }, row.title || row.sessionId || 'Session'),
+          h('span', { class: 'sidebarActivityItemState' }, state));
+        const item = h('div', { class: 'sidebarActivityItem', 'data-state': state }, itemHeader);
+        if (state === 'running' && row.sessionId) {
+          const stop = h('button', {
+            class: 'sidebarActivityStop',
+            type: 'button',
+            title: 'Stop running session',
+          }, 'Stop');
+          stop.onclick = async () => {
+            stop.disabled = true;
+            try {
+              await api.cancel(row.sessionId);
+              await loadActivity();
+            } catch (err) {
+              stop.disabled = false;
+              item.appendChild(h('div', { class: 'sidebarActivityItemError' },
+                err?.message || 'Unable to stop session'));
+            }
+          };
+          itemHeader.appendChild(stop);
+        }
         const toolNames = (row.activeTools || []).map((tool) => tool?.name).filter(Boolean);
         if (toolNames.length) {
           item.appendChild(h('div', { class: 'sidebarActivityItemMeta' }, `Tools: ${toolNames.join(', ')}`));
