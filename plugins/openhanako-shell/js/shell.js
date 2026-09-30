@@ -52,6 +52,7 @@ return (function () {
       onNew: () => { state.selected = null; chat.reset(); side.refresh(null); },
       onCollapse: toggleSidebar,
       onSelect: (session) => chat.open(session),
+      onNewChatModelChanged: () => chat.refreshPendingModel(),
       onRetry: async (session) => {
         await chat.open(session);
         await side.refresh(session.id);

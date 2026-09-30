@@ -85,6 +85,7 @@ return (function () {
         if (opened !== false) infoPanels.close(activityPanel, activity);
         return opened;
       },
+      onNewChatModelChanged: (selection) => options.onNewChatModelChanged?.(selection),
     });
     const { settingsPanel, activityPanel, skillsPanel } = infoPanels;
 

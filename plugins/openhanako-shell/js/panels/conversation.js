@@ -255,6 +255,12 @@ return (function () {
       }
     };
 
+    const refreshPendingModel = async () => {
+      if (state.id || state.opening || state.busy) return false;
+      await refreshModelsWithStatus();
+      return true;
+    };
+
     modelPill.onclick = async () => {
       if (state.opening || state.busy || state.switchingModel) return;
       const opening = !modelSelector.classList.contains('open');
@@ -578,7 +584,7 @@ return (function () {
     refreshModelsWithStatus();
     draw();
     return {
-      root, open, setModelLabel,
+      root, open, setModelLabel, refreshPendingModel,
       reset: () => {
         const previousId = state.id;
         const wasBusy = state.busy;
@@ -598,6 +604,7 @@ return (function () {
         renderSendState();
         draw();
         input.focus?.();
+        refreshPendingModel();
         if (wasBusy && previousId) api.cancel(previousId).catch(() => {});
       },
     };

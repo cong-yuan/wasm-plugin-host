@@ -1,7 +1,7 @@
 return (function () {
   const { h, clear } = studio.require('lib/dom');
 
-  function create({ api, adapter, labels = {}, onOpenSession = null }) {
+  function create({ api, adapter, labels = {}, onOpenSession = null, onNewChatModelChanged = null }) {
     const settingsPanel = h('div', {
       class: 'sidebarSettingsPanel',
       role: 'region',
@@ -115,6 +115,9 @@ return (function () {
               });
               if (pendingResult && pendingResult.ok === false) {
                 throw new Error(pendingResult.error || 'Unable to update new-chat model');
+              }
+              if (typeof onNewChatModelChanged === 'function') {
+                await onNewChatModelChanged({ provider: name, model });
               }
               await loadSettings();
             } catch (err) {
