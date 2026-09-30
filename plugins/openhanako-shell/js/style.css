@@ -9298,6 +9298,7 @@ html[data-platform="linux"] .onboarding {
 .sidebarSettingsMessage.error {
     color: #b04a3f;
 }
+.sidebarActivityOpen,
 .sidebarActivityStop {
     margin-left: auto;
     border: 1px solid var(--border);
@@ -9309,10 +9310,12 @@ html[data-platform="linux"] .onboarding {
     font-size: var(--fs-hint);
     cursor: pointer;
 }
+.sidebarActivityOpen:hover,
 .sidebarActivityStop:hover {
     color: var(--text-primary);
     background: rgba(0,0,0,0.04);
 }
+.sidebarActivityOpen:disabled,
 .sidebarActivityStop:disabled {
     opacity: 0.45;
     cursor: progress;

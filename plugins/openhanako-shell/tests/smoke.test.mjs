@@ -552,6 +552,8 @@ check('activity button opens runtime panel',
 check('activity panel lists runtime sessions',
   /session/.test(root.querySelector('.sidebarActivityPanel')?.textContent || '')
   && /Welcome|Page design sketch/.test(root.querySelector('.sidebarActivityPanel')?.textContent || ''));
+check('activity panel exposes direct session open action',
+  root.querySelectorAll('.sidebarActivityOpen').length >= 1);
 const adapterForActivity = studio.require('lib/hana-adapter');
 const originalActivityHttp = adapterForActivity.http;
 let activityRefreshCalls = 0;

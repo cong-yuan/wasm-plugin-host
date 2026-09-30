@@ -80,6 +80,7 @@ return (function () {
         activity: t('sidebar.activity'),
         skills: t('skills.panel.title'),
       },
+      onOpenSession: (session) => options.onSelect(session),
     });
     const { settingsPanel, activityPanel, skillsPanel } = infoPanels;
 

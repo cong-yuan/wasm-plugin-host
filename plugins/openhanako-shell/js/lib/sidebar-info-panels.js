@@ -1,7 +1,7 @@
 return (function () {
   const { h, clear } = studio.require('lib/dom');
 
-  function create({ api, adapter, labels = {} }) {
+  function create({ api, adapter, labels = {}, onOpenSession = null }) {
     const settingsPanel = h('div', {
       class: 'sidebarSettingsPanel',
       role: 'region',
@@ -142,6 +142,25 @@ return (function () {
           h('span', { class: 'sidebarActivityItemTitle' }, row.title || row.sessionId || 'Session'),
           h('span', { class: 'sidebarActivityItemState' }, state));
         const item = h('div', { class: 'sidebarActivityItem', 'data-state': state }, itemHeader);
+        if (row.sessionId && typeof onOpenSession === 'function') {
+          const open = h('button', {
+            class: 'sidebarActivityOpen',
+            type: 'button',
+            title: 'Open session',
+          }, 'Open');
+          open.onclick = async () => {
+            open.disabled = true;
+            try {
+              await onOpenSession({ ...row, id: row.sessionId });
+            } catch (err) {
+              item.appendChild(h('div', { class: 'sidebarActivityItemError' },
+                err?.message || 'Unable to open session'));
+            } finally {
+              open.disabled = false;
+            }
+          };
+          itemHeader.appendChild(open);
+        }
         if (state === 'running' && row.sessionId) {
           const stop = h('button', {
             class: 'sidebarActivityStop',
