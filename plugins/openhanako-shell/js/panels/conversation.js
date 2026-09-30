@@ -238,6 +238,11 @@ return (function () {
       } catch (err) {
         modelStatus.textContent = `Models unavailable: ${(err && err.message) ? err.message : String(err)}`;
         modelStatus.className = 'model-switch-status error';
+        clear(modelDropdown);
+        modelDropdown.appendChild(h('div', {
+          class: 'model-option model-pill-disabled',
+          'data-model-state': 'unavailable',
+        }, 'Models unavailable'));
         return null;
       }
     };

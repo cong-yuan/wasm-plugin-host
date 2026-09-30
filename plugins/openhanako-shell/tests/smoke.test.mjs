@@ -1257,6 +1257,17 @@ adapterForShellRefresh.http = originalHttpForRefresh;
     && /Model One/.test(modelPill.textContent));
   failModelSwitch = false;
 
+  modelPill.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  failModelLoad = true;
+  modelPill.fire('click');
+  modelPill.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('failed model refresh removes stale model options',
+    modelRoot.querySelectorAll('.model-option').length === 1
+    && modelRoot.querySelector('.model-option')?.getAttribute('data-model-state') === 'unavailable');
+  modelPill.fire('click');
+
   failModelLoad = true;
   const modelLoadFailureHost = new El('div');
   const disposeModelLoadFailureShell = shell.render(modelLoadFailureHost);
