@@ -80,7 +80,10 @@ return (function () {
         activity: t('sidebar.activity'),
         skills: t('skills.panel.title'),
       },
-      onOpenSession: (session) => options.onSelect(session),
+      onOpenSession: async (session) => {
+        await options.onSelect(session);
+        infoPanels.close(activityPanel, activity);
+      },
     });
     const { settingsPanel, activityPanel, skillsPanel } = infoPanels;
 

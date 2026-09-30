@@ -554,6 +554,14 @@ check('activity panel lists runtime sessions',
   && /Welcome|Page design sketch/.test(root.querySelector('.sidebarActivityPanel')?.textContent || ''));
 check('activity panel exposes direct session open action',
   root.querySelectorAll('.sidebarActivityOpen').length >= 1);
+const firstActivityOpen = root.querySelector('.sidebarActivityOpen');
+firstActivityOpen?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 10));
+check('activity Open closes panel after successful navigation',
+  activityButton?.getAttribute('aria-expanded') === 'false'
+  && root.querySelector('.sidebarActivityPanel')?.style?.display === 'none');
+activityButton?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
 const adapterForActivity = studio.require('lib/hana-adapter');
 const originalActivityHttp = adapterForActivity.http;
 let activityRefreshCalls = 0;
