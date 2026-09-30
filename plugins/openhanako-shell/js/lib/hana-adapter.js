@@ -1622,16 +1622,23 @@ return (function () {
       const title = trimName(body && (body.title || body.name));
       if (!sessionId) return { ok: false, error: 'missing session' };
       if (!title) return { ok: false, error: 'title required' };
-      const titles = loadTitles();
-      titles[pathFor(sessionId)] = title;
-      saveTitles(titles);
+      const path = pathFor(sessionId);
       const archived = loadArchived();
-      if (archived[pathFor(sessionId)]) {
-        archived[pathFor(sessionId)].title = title;
-        archived[pathFor(sessionId)].firstMessage = title;
+      const archivedEntry = archived[path] || null;
+      if (!archivedEntry) {
+        const rows = await api.sessions();
+        const exists = rows.some((row) => row.id === sessionId && !disposedIds.has(row.id));
+        if (!exists) return { ok: false, error: 'session not found' };
+      }
+      const titles = loadTitles();
+      titles[path] = title;
+      saveTitles(titles);
+      if (archivedEntry) {
+        archivedEntry.title = title;
+        archivedEntry.firstMessage = title;
         saveArchived(archived);
       }
-      return { ok: true, sessionId, path: pathFor(sessionId), title };
+      return { ok: true, sessionId, path, title };
     }
 
     if (pathname === '/api/sessions/restore' && verb === 'POST') {

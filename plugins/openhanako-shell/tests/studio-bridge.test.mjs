@@ -65,10 +65,11 @@ check('mock sessions use studio:// paths',
   listed.length === 2 && listed[0].path === 'studio://sess-welcome' && listed[0].sessionId === 'sess-welcome');
 check('mock sessions keep a stable assistant id', listed.every((s) => s.agentId === 'studio'));
 
-const stubArchived = await adapter.http('GET', '/api/sessions/archived');
-check('archived sessions stub returns array', Array.isArray(stubArchived));
-const stubRename = await adapter.http('POST', '/api/sessions/rename', { sessionId: 'x', title: 'y' });
-check('rename stub returns ok', stubRename && stubRename.ok === true);
+const archivedSessions = await adapter.http('GET', '/api/sessions/archived');
+check('archived sessions endpoint returns array', Array.isArray(archivedSessions));
+const missingRename = await adapter.http('POST', '/api/sessions/rename', { sessionId: 'x', title: 'y' });
+check('rename rejects missing sessions',
+  missingRename && missingRename.ok === false && missingRename.error === 'session not found');
 const stubProfile = await adapter.http('GET', '/api/user-profile');
 check('user-profile stub', stubProfile && stubProfile.name === 'User');
 
@@ -816,6 +817,14 @@ check('host bridge correlates requestId',
   const archivedRuntimeLookup = await adapter.http('GET', '/api/runtime-state/agent-1');
   check('single runtime lookup treats archived session as unavailable',
     archivedRuntimeLookup?.code === 'session_not_found');
+  const renamedArchived = await adapter.http('POST', '/api/sessions/rename', {
+    sessionId: 'agent-1',
+    title: 'Hello archived agent',
+  });
+  const renamedArchivedRows = await adapter.http('GET', '/api/sessions/archived');
+  check('rename updates archived session metadata',
+    renamedArchived?.ok === true
+    && renamedArchivedRows.some((row) => row.sessionId === 'agent-1' && row.title === 'Hello archived agent'));
 
   calls.length = 0;
   const restored = await adapter.http('POST', '/api/sessions/restore', { sessionId: 'agent-1' });
