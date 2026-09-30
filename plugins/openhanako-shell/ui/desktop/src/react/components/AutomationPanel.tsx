@@ -124,13 +124,19 @@ export function AutomationPanel() {
   }, [loadData]);
 
   const updateJob = useCallback(async (jobId: string, fields: Record<string, unknown>) => {
-    await hanaFetch('/api/desk/cron', {
+    const res = await hanaFetch('/api/desk/cron', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'update', id: jobId, ...fields }),
+      throwOnHttpError: false,
     });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      const detail = normalizeSessionRouteError(data).message || data.error;
+      addToast(detail ? `${t('automation.createFailed')}: ${detail}` : t('automation.createFailed'), 'error');
+    }
     await loadData();
-  }, [loadData]);
+  }, [addToast, loadData, t]);
 
   const addManualJob = useCallback(async () => {
     if (addingManualJob) return;

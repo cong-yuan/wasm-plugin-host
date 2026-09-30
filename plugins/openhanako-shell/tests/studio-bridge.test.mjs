@@ -111,6 +111,75 @@ check('user-profile defaults to an empty local profile',
   await adapter.http('PUT', '/api/user-profile', { content: '' });
 }
 
+// Studio has no scheduler backend, but automation drafts should still be real,
+// editable local data instead of an always-empty GET stub.
+{
+  const initial = await adapter.http('GET', '/api/desk/cron');
+  check('automation drafts start empty and advertise scheduler capability honestly',
+    Array.isArray(initial?.jobs)
+    && initial.jobs.length === 0
+    && initial.schedulerAvailable === false
+    && initial.editableDrafts === true);
+
+  const added = await adapter.http('POST', '/api/desk/cron', {
+    action: 'add',
+    type: 'cron',
+    schedule: '0 9 * * *',
+    label: 'Morning draft',
+    prompt: 'Summarize the morning',
+    enabled: false,
+    actorAgentId: 'studio',
+  });
+  check('automation draft add persists a disabled job',
+    added?.ok === true && added?.job?.id && added.job.enabled === false);
+  const jobId = added?.job?.id;
+
+  const enabled = await adapter.http('POST', '/api/desk/cron', {
+    action: 'update',
+    id: jobId,
+    enabled: true,
+  });
+  check('automation enable fails closed when scheduler is unavailable',
+    enabled?.ok === false && enabled?.code === 'scheduler_unavailable');
+
+  const updated = await adapter.http('POST', '/api/desk/cron', {
+    action: 'update',
+    id: jobId,
+    label: 'Updated draft',
+    prompt: 'Updated prompt',
+  });
+  const afterUpdate = await adapter.http('GET', '/api/desk/cron');
+  check('automation draft update persists editable fields',
+    updated?.ok === true
+    && afterUpdate.jobs.some((job) => job.id === jobId
+      && job.label === 'Updated draft'
+      && job.prompt === 'Updated prompt'
+      && job.enabled === false));
+
+  const suggestion = await adapter.http('POST', '/api/desk/cron', {
+    action: 'apply_suggestion',
+    suggestionId: 's-1',
+    sessionId: listed[0].sessionId,
+    jobData: {
+      type: 'every',
+      schedule: 60,
+      label: 'Suggestion draft',
+      prompt: 'Draft only',
+    },
+  });
+  check('automation suggestion apply fails closed without a scheduler',
+    suggestion?.ok === false && suggestion?.code === 'scheduler_unavailable');
+
+  const removed = await adapter.http('POST', '/api/desk/cron', { action: 'remove', id: jobId });
+  check('automation draft remove deletes the selected job', removed?.ok === true);
+  const cleanupJobs = (await adapter.http('GET', '/api/desk/cron')).jobs || [];
+  for (const job of cleanupJobs) {
+    await adapter.http('POST', '/api/desk/cron', { action: 'remove', id: job.id });
+  }
+  check('automation draft cleanup returns to empty list',
+    (await adapter.http('GET', '/api/desk/cron')).jobs.length === 0);
+}
+
 const initialAppearance = await adapter.http('GET', '/api/preferences/appearance');
 check('appearance preferences expose stable defaults',
   initialAppearance?.appearance?.theme === 'warm-paper'

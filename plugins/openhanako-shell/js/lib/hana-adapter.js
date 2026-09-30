@@ -95,6 +95,7 @@ return (function () {
   const SIDEBAR_UI_KEY = 'openhanako.sidebarUiPreferences.v1';
   const QUICK_CHAT_KEY = 'openhanako.quickChatPreferences.v1';
   const NOTIFICATION_PREFS_KEY = 'openhanako.notificationPreferences.v1';
+  const AUTOMATION_DRAFTS_KEY = 'openhanako.automationDrafts.v1';
   const PIN_ORDER_STEP = 1024;
   const UNCATEGORIZED_PROJECT_ID = 'cwd:';
 
@@ -143,6 +144,88 @@ return (function () {
   };
   const loadUserPrefs = () => normalizeUserPrefs(readJson(USER_PREFS_KEY, {}));
   const saveUserPrefs = (value) => writeJson(USER_PREFS_KEY, normalizeUserPrefs(value));
+
+  const automationDrafts = () => {
+    const raw = readJson(AUTOMATION_DRAFTS_KEY, []);
+    return Array.isArray(raw) ? raw.filter((job) => job && typeof job === 'object' && job.id) : [];
+  };
+  const saveAutomationDrafts = (jobs) => writeJson(AUTOMATION_DRAFTS_KEY, Array.isArray(jobs) ? jobs : []);
+  const normalizeAutomationJob = (raw, existing = null) => {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const base = existing && typeof existing === 'object' ? existing : {};
+    const type = src.type === 'at' || src.type === 'every' || src.type === 'cron'
+      ? src.type
+      : (base.type === 'at' || base.type === 'every' || base.type === 'cron' ? base.type : 'cron');
+    const schedule = Object.prototype.hasOwnProperty.call(src, 'schedule') ? src.schedule : base.schedule;
+    return {
+      ...base,
+      ...src,
+      id: String(src.id || base.id || nextId('automation')),
+      type,
+      schedule: typeof schedule === 'number' || typeof schedule === 'string' ? schedule : '0 9 * * *',
+      enabled: false,
+      label: typeof src.label === 'string' ? src.label.slice(0, 160) : (base.label || ''),
+      prompt: typeof src.prompt === 'string' ? src.prompt.slice(0, 65536) : (base.prompt || ''),
+      createdAt: base.createdAt || new Date().toISOString(),
+      nextRunAt: null,
+    };
+  };
+  const handleAutomationHttp = (verb, body) => {
+    if (verb === 'GET') {
+      return {
+        jobs: automationDrafts(),
+        schedulerAvailable: false,
+        editableDrafts: true,
+      };
+    }
+    if (verb !== 'POST') return null;
+    const request = body && typeof body === 'object' ? body : {};
+    const action = request.action;
+    const jobs = automationDrafts();
+    if (action === 'add') {
+      if (request.enabled === true) {
+        return { ok: false, error: 'studio scheduler unavailable', code: 'scheduler_unavailable' };
+      }
+      const job = normalizeAutomationJob(request);
+      jobs.push(job);
+      saveAutomationDrafts(jobs);
+      return { ok: true, job, schedulerAvailable: false };
+    }
+    if (action === 'apply_suggestion') {
+      return {
+        ok: false,
+        error: 'studio scheduler unavailable',
+        code: 'scheduler_unavailable',
+      };
+    }
+    const id = request.id == null ? '' : String(request.id);
+    const index = jobs.findIndex((job) => String(job.id) === id);
+    if (!id || index < 0) return { ok: false, error: 'automation not found' };
+    if (action === 'remove') {
+      const [removed] = jobs.splice(index, 1);
+      saveAutomationDrafts(jobs);
+      return { ok: true, removed };
+    }
+    if (action === 'toggle') {
+      if (jobs[index].enabled) {
+        jobs[index] = { ...jobs[index], enabled: false, nextRunAt: null };
+        saveAutomationDrafts(jobs);
+        return { ok: true, job: jobs[index] };
+      }
+      return { ok: false, error: 'studio scheduler unavailable', code: 'scheduler_unavailable', job: jobs[index] };
+    }
+    if (action === 'update') {
+      if (request.enabled === true) {
+        return { ok: false, error: 'studio scheduler unavailable', code: 'scheduler_unavailable', job: jobs[index] };
+      }
+      const next = { ...request };
+      delete next.action;
+      jobs[index] = normalizeAutomationJob(next, jobs[index]);
+      saveAutomationDrafts(jobs);
+      return { ok: true, job: jobs[index] };
+    }
+    return { ok: false, error: 'unsupported automation action' };
+  };
 
   const APPEARANCE_THEMES = new Set([
     'auto',
@@ -1341,7 +1424,7 @@ return (function () {
   // Soft stubs for openhanako surfaces that are not part of the Studio agent
   // vertical slice. Returning empty/ok stops noisy 404s in the harness and
   // iframe console without pretending the feature exists.
-  const stubHttp = (pathname, verb) => {
+  const stubHttp = (pathname, verb, body) => {
     if (pathname === '/api/preferences/models' && verb === 'GET') {
       return {
         models: [{ id: api.DEFAULT_MODEL, name: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER }],
@@ -1351,8 +1434,8 @@ return (function () {
     if (pathname === '/api/session-thinking-level' && (verb === 'GET' || verb === 'POST')) {
       return { level: 'off' };
     }
-    if (pathname === '/api/desk/cron' && verb === 'GET') {
-      return { jobs: [] };
+    if (pathname === '/api/desk/cron') {
+      return handleAutomationHttp(verb, body);
     }
     if (pathname === '/api/agents/primary' && verb === 'GET') {
       return { id: ASSISTANT_ID, name: ASSISTANT_NAME };
@@ -2025,7 +2108,7 @@ return (function () {
     const projectResult = handleSessionProjects(pathname, verb, body);
     if (projectResult !== null) return projectResult;
 
-    const stub = stubHttp(pathname, verb);
+    const stub = stubHttp(pathname, verb, body);
     if (stub !== null) return stub;
 
     return { error: 'studio bridge: unhandled ' + verb + ' ' + pathname };
