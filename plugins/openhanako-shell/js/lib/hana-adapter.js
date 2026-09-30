@@ -90,6 +90,7 @@ return (function () {
   const PIN_KEY = 'openhanako.sessionPins.v1';
   const TITLE_KEY = 'openhanako.sessionTitles.v1';
   const ARCHIVE_KEY = 'openhanako.archivedSessions.v1';
+  const USER_PREFS_KEY = 'openhanako.userPreferences.v1';
   const PIN_ORDER_STEP = 1024;
   const UNCATEGORIZED_PROJECT_ID = 'cwd:';
 
@@ -128,6 +129,16 @@ return (function () {
       localStorage.setItem(key, JSON.stringify(value));
     } catch (_) { /* quota / private mode / broken Storage */ }
   };
+
+  const normalizeUserPrefs = (raw) => {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    return {
+      name: trimName(src.name) || 'User',
+      profile: typeof src.profile === 'string' ? src.profile : '',
+    };
+  };
+  const loadUserPrefs = () => normalizeUserPrefs(readJson(USER_PREFS_KEY, {}));
+  const saveUserPrefs = (value) => writeJson(USER_PREFS_KEY, normalizeUserPrefs(value));
 
   const loadTitles = () => readJson(TITLE_KEY, {}) || {};
   const saveTitles = (value) => writeJson(TITLE_KEY, value || {});
@@ -583,9 +594,11 @@ return (function () {
     // Returns null when this request is not a settings/provider route.
     if (pathname === '/api/config' && verb === 'GET') {
       const llm = await api.getLlmConfig();
+      const userPrefs = loadUserPrefs();
       return {
         locale: 'zh-CN',
         editor: null,
+        user: { name: userPrefs.name },
         studioBridge: api.mode(),
         providers: studioProvidersToHana(llm),
         llm,
@@ -594,16 +607,37 @@ return (function () {
 
     if (pathname === '/api/config' && (verb === 'PUT' || verb === 'PATCH' || verb === 'POST')) {
       const patch = body && typeof body === 'object' ? body : {};
+      if (patch.user && typeof patch.user.name === 'string') {
+        const name = trimName(patch.user.name);
+        if (!name) return { ok: false, error: 'user name required' };
+        saveUserPrefs({ ...loadUserPrefs(), name });
+      }
       if (patch.providers && typeof patch.providers === 'object') {
         await applyProvidersPatchToStudio(patch.providers);
       }
       const llm = await api.getLlmConfig();
+      const userPrefs = loadUserPrefs();
       return {
         ok: true,
         locale: 'zh-CN',
+        user: { name: userPrefs.name },
         studioBridge: api.mode(),
         providers: studioProvidersToHana(llm),
       };
+    }
+
+    if (pathname === '/api/user-profile' && verb === 'GET') {
+      const userPrefs = loadUserPrefs();
+      return { content: userPrefs.profile, name: userPrefs.name, avatar: null };
+    }
+
+    if (pathname === '/api/user-profile' && (verb === 'PUT' || verb === 'PATCH' || verb === 'POST')) {
+      if (!body || typeof body.content !== 'string') {
+        return { ok: false, error: 'profile content required' };
+      }
+      const profile = body.content.slice(0, 65536);
+      saveUserPrefs({ ...loadUserPrefs(), profile });
+      return { ok: true, content: profile };
     }
 
     if (pathname === '/api/providers/summary' && verb === 'GET') {
@@ -1065,9 +1099,6 @@ return (function () {
     if (pathname === '/api/session-thinking-level' && (verb === 'GET' || verb === 'POST')) {
       return { level: 'off' };
     }
-    if (pathname === '/api/user-profile' && verb === 'GET') {
-      return { name: 'User', avatar: null };
-    }
     if (pathname === '/api/desk/cron' && verb === 'GET') {
       return { jobs: [] };
     }
@@ -1195,7 +1226,7 @@ return (function () {
         agentId: ASSISTANT_ID,
         agent: ASSISTANT_NAME,
         agentYuan: 'hanako',
-        user: 'User',
+        user: loadUserPrefs().name,
         model: api.DEFAULT_MODEL,
         avatars: { agent: false, user: false },
         sessionStore: null,
@@ -1214,7 +1245,7 @@ return (function () {
         serverId: 'local',
         studioId: 'local',
         label: 'Studio',
-        userLabel: 'User',
+        userLabel: loadUserPrefs().name,
         studioLabel: 'Studio',
         version: 'studio-bridge',
         authState: 'paired',
@@ -1404,7 +1435,11 @@ return (function () {
     }
 
     if (/^\/api\/agents\/[^/]+\/config$/.test(pathname) && verb === 'GET') {
-      return { chat: {}, memory: { enabled: true } };
+      return {
+        chat: {},
+        memory: { enabled: true },
+        user: { name: loadUserPrefs().name },
+      };
     }
 
     if (pathname === '/api/sessions' && verb === 'GET') {

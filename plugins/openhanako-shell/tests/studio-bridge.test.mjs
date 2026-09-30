@@ -70,8 +70,46 @@ check('archived sessions endpoint returns array', Array.isArray(archivedSessions
 const missingRename = await adapter.http('POST', '/api/sessions/rename', { sessionId: 'x', title: 'y' });
 check('rename rejects missing sessions',
   missingRename && missingRename.ok === false && missingRename.error === 'session not found');
-const stubProfile = await adapter.http('GET', '/api/user-profile');
-check('user-profile stub', stubProfile && stubProfile.name === 'User');
+const initialProfile = await adapter.http('GET', '/api/user-profile');
+check('user-profile defaults to an empty local profile',
+  initialProfile?.name === 'User' && initialProfile?.content === '' && initialProfile?.avatar === null);
+
+{
+  const renamedConfig = await adapter.http('PUT', '/api/config', {
+    user: { name: '  Studio   User  ' },
+  });
+  check('global config persists normalized user name',
+    renamedConfig?.ok === true && renamedConfig?.user?.name === 'Studio User');
+  const savedProfile = await adapter.http('PUT', '/api/user-profile', {
+    content: 'Local Studio profile',
+  });
+  check('user-profile write persists content',
+    savedProfile?.ok === true && savedProfile?.content === 'Local Studio profile');
+
+  const [config, profile, agentConfig, renamedHealth, identity] = await Promise.all([
+    adapter.http('GET', '/api/config'),
+    adapter.http('GET', '/api/user-profile'),
+    adapter.http('GET', '/api/agents/studio/config'),
+    adapter.http('GET', '/api/health'),
+    adapter.http('GET', '/api/server/identity'),
+  ]);
+  check('user name is shared across config, agent config, health, and server identity',
+    config?.user?.name === 'Studio User'
+    && agentConfig?.user?.name === 'Studio User'
+    && renamedHealth?.user === 'Studio User'
+    && identity?.userLabel === 'Studio User');
+  check('user-profile reads the persisted profile and shared name',
+    profile?.content === 'Local Studio profile' && profile?.name === 'Studio User');
+
+  const rejectedName = await adapter.http('PUT', '/api/config', { user: { name: '   ' } });
+  check('blank user name is rejected', rejectedName?.ok === false && rejectedName?.error === 'user name required');
+  const rejectedProfile = await adapter.http('PUT', '/api/user-profile', {});
+  check('profile writes require string content',
+    rejectedProfile?.ok === false && rejectedProfile?.error === 'profile content required');
+
+  await adapter.http('PUT', '/api/config', { user: { name: 'User' } });
+  await adapter.http('PUT', '/api/user-profile', { content: '' });
+}
 
 const permissionDefault = await adapter.http('GET', '/api/preferences/session-permission-default');
 check('permission default is explicitly locked to ask without backend support',
