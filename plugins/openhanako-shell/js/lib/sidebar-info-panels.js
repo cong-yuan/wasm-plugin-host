@@ -165,7 +165,11 @@ return (function () {
           open.onclick = async () => {
             open.disabled = true;
             try {
-              await onOpenSession({ ...row, id: row.sessionId });
+              const opened = await onOpenSession({ ...row, id: row.sessionId });
+              if (opened === false) {
+                item.appendChild(h('div', { class: 'sidebarActivityItemError' },
+                  'Unable to open session'));
+              }
             } catch (err) {
               item.appendChild(h('div', { class: 'sidebarActivityItemError' },
                 err?.message || 'Unable to open session'));

@@ -602,6 +602,8 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 check('activity Open stays visible when navigation fails',
   failedActivityButton?.getAttribute('aria-expanded') === 'true'
   && failedActivitySide.root.querySelector('.sidebarActivityPanel')?.style?.display !== 'none');
+check('activity Open surfaces navigation failure inline',
+  /Unable to open session/.test(failedActivitySide.root.querySelector('.sidebarActivityPanel')?.textContent || ''));
 failedActivitySide.destroy?.();
 
 const adapterForActivity = studio.require('lib/hana-adapter');
