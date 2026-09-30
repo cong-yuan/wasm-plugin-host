@@ -589,6 +589,9 @@ return (function () {
         state.opening = false;
         conversationStatus.className = 'conversation-status';
         closeModels();
+        modelStatus.textContent = '';
+        modelStatus.className = 'model-switch-status';
+        input.textContent = '';
         renderSendState();
         draw();
         input.focus?.();

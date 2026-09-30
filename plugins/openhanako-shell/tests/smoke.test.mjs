@@ -787,6 +787,26 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.sendWithProgress = originalProgress;
 }
 
+// New Chat clears unsent draft state and transient model feedback.
+{
+  const draftHost = new El('div');
+  const disposeDraftShell = shell.render(draftHost);
+  const draftRoot = draftHost.children[0];
+  const draftInput = draftRoot.querySelector('.input-box');
+  draftInput.textContent = 'unsent draft';
+  const draftModelStatus = draftRoot.querySelector('.model-switch-status');
+  draftModelStatus.textContent = 'temporary model error';
+  draftModelStatus.className = 'model-switch-status error';
+  draftRoot.querySelectorAll('.sidebar-action-btn')[0]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('new chat clears unsent composer draft',
+    !(draftRoot.querySelector('.input-box')?.textContent || '').trim());
+  check('new chat clears transient model status',
+    !(draftRoot.querySelector('.model-switch-status')?.textContent || '').trim());
+
+  if (typeof disposeDraftShell === 'function') disposeDraftShell();
+}
+
 // A create_agent result that arrives after New Chat must be discarded and
 // disposed instead of silently attaching the stale session to the fresh chat.
 {
