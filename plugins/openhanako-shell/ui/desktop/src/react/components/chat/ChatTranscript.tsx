@@ -257,7 +257,11 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
           && !isStreamingSession
         }
         agentDisplay={agentDisplay}
-        isStreaming={isStreamingSession}
+        isStreaming={
+          isStreamingSession
+          && groupLastOriginalIndex(renderItem) === latestAssistantIndex
+          && latestAssistantIndex > latestUserIndex
+        }
         selectedIds={selectedIds}
         registerMessageElement={registerMessageElement}
         onForkCreated={onForkCreated}
@@ -298,7 +302,17 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
         : null}
       agentDisplay={agentDisplay}
       viewerIdentity={viewerIdentity}
-      isStreaming={isStreamingSession}
+      isStreaming={
+        isStreamingSession
+        && renderItem.item.type === 'message'
+        && (
+          (renderItem.item.data.role === 'assistant'
+            && originalIndex === latestAssistantIndex
+            && latestAssistantIndex > latestUserIndex)
+          || (renderItem.item.data.role === 'user'
+            && originalIndex === latestUserIndex)
+        )
+      }
       selectedIds={selectedIds}
       registerMessageElement={registerMessageElement}
       onForkCreated={onForkCreated}

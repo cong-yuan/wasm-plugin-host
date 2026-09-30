@@ -154,6 +154,42 @@ describe('ChatTranscript turn timestamps', () => {
     expect(screen.queryByTestId('assistant-completion-actions')).not.toBeInTheDocument();
   });
 
+  it('does not mark historical assistant messages as streaming during a later turn', () => {
+    useStore.setState({ streamingSessions: [sessionPath] } as never);
+
+    const { container } = render(
+      <ChatTranscript
+        items={[
+          user('u1', new Date(2026, 4, 7, 8, 0).getTime(), '第一轮'),
+          assistant('a1-tool', new Date(2026, 4, 7, 8, 1).getTime(), [thinking('旧工具过程')]),
+          assistant('a1-final', new Date(2026, 4, 7, 8, 2).getTime(), [textBlock('第一轮完成')]),
+          user('u2', new Date(2026, 4, 7, 9, 0).getTime(), '第二轮'),
+        ]}
+        sessionPath={sessionPath}
+      />,
+    );
+
+    expect(screen.getByText('第一轮完成')).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-waiting-under-avatar]')).toHaveLength(0);
+  });
+
+  it('shows at most one waiting indicator on the latest streaming assistant', () => {
+    useStore.setState({ streamingSessions: [sessionPath] } as never);
+
+    const { container } = render(
+      <ChatTranscript
+        items={[
+          user('u1', new Date(2026, 4, 7, 8, 0).getTime(), '第一轮'),
+          assistant('a1-tool-1', new Date(2026, 4, 7, 8, 1).getTime(), [thinking('步骤一')]),
+          assistant('a1-tool-2', new Date(2026, 4, 7, 8, 2).getTime(), [thinking('步骤二')]),
+        ]}
+        sessionPath={sessionPath}
+      />,
+    );
+
+    expect(container.querySelectorAll('[data-waiting-under-avatar]')).toHaveLength(1);
+  });
+
   it('selects the whole assistant turn from the final assistant footer checkbox', () => {
     const items: ChatListItem[] = [
       user('u1', new Date(2026, 4, 7, 8, 0).getTime(), '第一轮'),

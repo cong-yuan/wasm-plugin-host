@@ -181,7 +181,6 @@ export const AssistantMessage = memo(function AssistantMessage({
           <span className={styles.avatarName}>{displayName}</span>
         </div>
       )}
-      {showWaitingDots && <div className={styles.typingIndicator} data-waiting-under-avatar="" />}
       <div className={`${styles.message} ${styles.messageAssistant}${hasWideBlock ? ` ${styles.messageHasWideBlock}` : ''}${isInterludeOnly ? ` ${styles.messageAssistantInterludeOnly}` : ''}`}>
         {blocks.map((block, i) => (
           <ContentBlockErrorBoundary
@@ -204,6 +203,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           </ContentBlockErrorBoundary>
         ))}
       </div>
+      {showWaitingDots && <div className={styles.typingIndicator} data-waiting-under-avatar="" />}
       {!isInterludeOnly && (timeText || footerActions.length > 0 || messageActions.length > 0) && (
         <MessageFooterActions
           align="left"
