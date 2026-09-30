@@ -480,6 +480,43 @@ root.querySelector('.sidebarSettingsRefresh')?.fire('click');
 await new Promise((resolve) => setTimeout(resolve, 0));
 check('settings refresh reloads provider summary', settingsRefreshCalls === 1);
 adapterForSettings.http = originalSettingsHttp;
+const originalStatusForSettings = api.status;
+const originalConfigForSettings = api.getLlmConfig;
+const originalSetConfigForSettings = api.setLlmConfig;
+let defaultProviderPatch = null;
+adapterForSettings.http = async (method, path, body) => {
+  if (method === 'GET' && path === '/api/providers/summary') {
+    return {
+      providers: {
+        providerA: { display_name: 'Provider A', is_configured: true, models: ['a-model'] },
+        providerB: { display_name: 'Provider B', is_configured: true, models: ['b-model'] },
+      },
+    };
+  }
+  return originalSettingsHttp(method, path, body);
+};
+api.status = async () => ({ provider: 'providerA', model: 'a-model', providers: ['providerA', 'providerB'] });
+api.getLlmConfig = async () => ({ default: 'providerA' });
+api.setLlmConfig = async (patch) => {
+  defaultProviderPatch = patch;
+  api.getLlmConfig = async () => ({ default: patch.default });
+  return { ok: true };
+};
+root.querySelector('.sidebarSettingsRefresh')?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('settings marks current default provider',
+  root.querySelectorAll('.sidebarSettingsDefaultBadge').length === 1);
+root.querySelector('.sidebarSettingsSetDefault')?.fire('click');
+await new Promise((resolve) => setTimeout(resolve, 0));
+await new Promise((resolve) => setTimeout(resolve, 0));
+check('settings can update default provider without exposing credentials',
+  defaultProviderPatch?.default === 'providerB'
+  && root.querySelectorAll('.sidebarSettingsDefaultBadge').length === 1
+  && !/api[_ -]?key/i.test(root.querySelector('.sidebarSettingsPanel')?.textContent || ''));
+api.status = originalStatusForSettings;
+api.getLlmConfig = originalConfigForSettings;
+api.setLlmConfig = originalSetConfigForSettings;
+adapterForSettings.http = originalSettingsHttp;
 settingsButton?.fire('click');
 
 const skillsButton = root.querySelector('.sidebar-skills-button');

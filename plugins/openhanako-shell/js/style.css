@@ -9258,6 +9258,46 @@ html[data-platform="linux"] .onboarding {
     padding-top: 0.4rem;
     color: #b04a3f;
 }
+.sidebarSettingsProviderActions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.35rem;
+    margin-top: 0.3rem;
+}
+.sidebarSettingsSetDefault {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.18rem 0.45rem;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--fs-hint);
+    cursor: pointer;
+}
+.sidebarSettingsSetDefault:hover {
+    color: var(--text-primary);
+    background: rgba(0,0,0,0.04);
+}
+.sidebarSettingsSetDefault:disabled {
+    opacity: 0.45;
+    cursor: progress;
+}
+.sidebarSettingsDefaultBadge {
+    font-size: var(--fs-hint);
+    color: var(--accent);
+}
+.sidebarSettingsMessage {
+    margin-top: 0.4rem;
+    font-size: var(--fs-hint);
+    color: var(--text-muted);
+}
+.sidebarSettingsMessage:empty {
+    display: none;
+}
+.sidebarSettingsMessage.error {
+    color: #b04a3f;
+}
 
 .input-surface-mobile .model-selector {
     flex: 0 1 auto;

@@ -32,13 +32,15 @@ return (function () {
       button?.setAttribute?.('aria-expanded', 'false');
     };
 
-    const renderSettings = (summaryData, status) => {
+    const renderSettings = (summaryData, status, llm) => {
       clear(settingsPanel);
       const providers = summaryData?.providers && typeof summaryData.providers === 'object'
         ? Object.entries(summaryData.providers)
         : [];
       const activeProvider = status?.provider || status?.providers?.[0] || '';
       const activeModel = status?.model || '';
+      const defaultProvider = typeof llm?.default === 'string' ? llm.default : '';
+      const settingsMessage = h('div', { class: 'sidebarSettingsMessage', 'aria-live': 'polite' }, '');
       const refresh = h('button', { class: 'sidebarSettingsRefresh', type: 'button' }, 'Refresh');
       refresh.onclick = () => loadSettings();
       settingsPanel.appendChild(h('div', { class: 'sidebarSettingsSummary' },
@@ -67,8 +69,34 @@ return (function () {
         if (provider?.base_url) {
           row.appendChild(h('div', { class: 'sidebarSettingsProviderMeta' }, String(provider.base_url)));
         }
+        const actions = h('div', { class: 'sidebarSettingsProviderActions' });
+        if (name === defaultProvider) {
+          actions.appendChild(h('span', { class: 'sidebarSettingsDefaultBadge' }, 'Default'));
+        } else if (configured) {
+          const setDefault = h('button', {
+            class: 'sidebarSettingsSetDefault',
+            type: 'button',
+          }, 'Set default');
+          setDefault.onclick = async () => {
+            setDefault.disabled = true;
+            settingsMessage.textContent = `Setting ${name} as default…`;
+            settingsMessage.className = 'sidebarSettingsMessage';
+            try {
+              const result = await api.setLlmConfig({ default: name });
+              if (result && result.ok === false) throw new Error(result.error || 'Provider update failed');
+              await loadSettings();
+            } catch (err) {
+              settingsMessage.textContent = err?.message || 'Unable to update default provider';
+              settingsMessage.className = 'sidebarSettingsMessage error';
+              setDefault.disabled = false;
+            }
+          };
+          actions.appendChild(setDefault);
+        }
+        if (actions.children?.length) row.appendChild(actions);
         settingsPanel.appendChild(row);
       });
+      settingsPanel.appendChild(settingsMessage);
     };
 
     const loadSettings = async () => {
@@ -76,12 +104,13 @@ return (function () {
       clear(settingsPanel);
       settingsPanel.appendChild(h('div', { class: 'sidebarSkillsEmpty' }, 'Loading providers…'));
       try {
-        const [summaryData, status] = await Promise.all([
+        const [summaryData, status, llm] = await Promise.all([
           adapter.http('GET', '/api/providers/summary'),
           api.status(),
+          api.getLlmConfig(),
         ]);
         if (version !== requestVersion.settings) return;
-        renderSettings(summaryData, status);
+        renderSettings(summaryData, status, llm);
       } catch (err) {
         if (version !== requestVersion.settings) return;
         clear(settingsPanel);
