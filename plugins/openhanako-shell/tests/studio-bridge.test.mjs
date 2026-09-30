@@ -151,6 +151,49 @@ await adapter.http('PUT', '/api/preferences/appearance', {
   leavesOverlay: false,
 });
 
+const initialSidebarUi = await adapter.http('GET', '/api/preferences/sidebar-ui');
+check('sidebar UI preferences expose stable defaults',
+  initialSidebarUi?.sidebarUi?.sessionList?.rowMode === 'two-line'
+  && initialSidebarUi?.sidebarUi?.projectView?.collapsedProjectIds?.length === 0
+  && initialSidebarUi?.sidebarUi?.projectView?.collapsedFolderIds?.length === 0
+  && initialSidebarUi?.sidebarUi?.projectView?.showAllProjectIds?.length === 0);
+const savedSidebarUi = await adapter.http('PUT', '/api/preferences/sidebar-ui', {
+  sessionList: { rowMode: 'single-line' },
+  projectView: {
+    collapsedProjectIds: ['project-a', ' project-a ', '', 'project-b'],
+    collapsedFolderIds: ['folder-a'],
+  },
+});
+check('sidebar UI preferences persist normalized row and project state',
+  savedSidebarUi?.ok === true
+  && savedSidebarUi?.sidebarUi?.sessionList?.rowMode === 'single-line'
+  && savedSidebarUi?.sidebarUi?.projectView?.collapsedProjectIds?.join(',') === 'project-a,project-b'
+  && savedSidebarUi?.sidebarUi?.projectView?.collapsedFolderIds?.join(',') === 'folder-a');
+const partialSidebarUi = await adapter.http('PATCH', '/api/preferences/sidebar-ui', {
+  sidebarUi: { projectView: { showAllProjectIds: ['project-a'] } },
+});
+check('sidebar UI preferences merge partial patches',
+  partialSidebarUi?.ok === true
+  && partialSidebarUi?.sidebarUi?.sessionList?.rowMode === 'single-line'
+  && partialSidebarUi?.sidebarUi?.projectView?.collapsedProjectIds?.join(',') === 'project-a,project-b'
+  && partialSidebarUi?.sidebarUi?.projectView?.showAllProjectIds?.join(',') === 'project-a');
+const ignoredSidebarMode = await adapter.http('PUT', '/api/preferences/sidebar-ui', {
+  sessionList: { rowMode: 'invalid' },
+});
+check('sidebar UI preferences ignore invalid row modes like upstream normalization',
+  ignoredSidebarMode?.ok === true && ignoredSidebarMode?.sidebarUi?.sessionList?.rowMode === 'single-line');
+const rejectedSidebarBody = await adapter.http('PUT', '/api/preferences/sidebar-ui', null);
+check('sidebar UI preferences reject non-object writes',
+  rejectedSidebarBody?.ok === false && rejectedSidebarBody?.error === 'sidebar UI object required');
+await adapter.http('PUT', '/api/preferences/sidebar-ui', {
+  sessionList: { rowMode: 'two-line' },
+  projectView: {
+    collapsedProjectIds: [],
+    collapsedFolderIds: [],
+    showAllProjectIds: [],
+  },
+});
+
 const permissionDefault = await adapter.http('GET', '/api/preferences/session-permission-default');
 check('permission default is explicitly locked to ask without backend support',
   permissionDefault?.permissionMode === 'ask'
@@ -182,6 +225,8 @@ check('iframe bridge intercepts session permission mode requests',
   iframeBridgeSource.includes("pathname === '/api/session-permission-mode'"));
 check('iframe bridge intercepts appearance preference requests',
   iframeBridgeSource.includes("pathname === '/api/preferences/appearance'"));
+check('iframe bridge intercepts sidebar UI preference requests',
+  iframeBridgeSource.includes("pathname === '/api/preferences/sidebar-ui'"));
 
 // Pin / unpin persists locally and is reflected in GET /api/sessions
 {

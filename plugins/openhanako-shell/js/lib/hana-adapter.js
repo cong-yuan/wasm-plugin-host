@@ -92,6 +92,7 @@ return (function () {
   const ARCHIVE_KEY = 'openhanako.archivedSessions.v1';
   const USER_PREFS_KEY = 'openhanako.userPreferences.v1';
   const APPEARANCE_KEY = 'openhanako.appearancePreferences.v1';
+  const SIDEBAR_UI_KEY = 'openhanako.sidebarUiPreferences.v1';
   const PIN_ORDER_STEP = 1024;
   const UNCATEGORIZED_PROJECT_ID = 'cwd:';
 
@@ -184,6 +185,70 @@ return (function () {
     }
     saveAppearance(next);
     return { ok: true, appearance: loadAppearance() };
+  };
+
+  const cleanSidebarId = (value) => {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    return trimmed && trimmed.length <= 240 ? trimmed : '';
+  };
+  const uniqueSidebarIds = (values) => {
+    const out = [];
+    const seen = new Set();
+    for (const value of Array.isArray(values) ? values : []) {
+      const id = cleanSidebarId(value);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+      if (out.length >= 256) break;
+    }
+    return out;
+  };
+  const normalizeSidebarUi = (raw) => {
+    const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    const projectView = src.projectView && typeof src.projectView === 'object' && !Array.isArray(src.projectView)
+      ? src.projectView
+      : {};
+    const sessionList = src.sessionList && typeof src.sessionList === 'object' && !Array.isArray(src.sessionList)
+      ? src.sessionList
+      : {};
+    return {
+      projectView: {
+        collapsedProjectIds: uniqueSidebarIds(projectView.collapsedProjectIds),
+        collapsedFolderIds: uniqueSidebarIds(projectView.collapsedFolderIds),
+        showAllProjectIds: uniqueSidebarIds(projectView.showAllProjectIds),
+      },
+      sessionList: {
+        rowMode: sessionList.rowMode === 'single-line' ? 'single-line' : 'two-line',
+      },
+    };
+  };
+  const loadSidebarUi = () => normalizeSidebarUi(readJson(SIDEBAR_UI_KEY, {}));
+  const saveSidebarUi = (value) => writeJson(SIDEBAR_UI_KEY, normalizeSidebarUi(value));
+  const applySidebarUiPatch = (raw) => {
+    const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+    if (!src) return { ok: false, error: 'sidebar UI object required' };
+    const current = loadSidebarUi();
+    const next = {
+      projectView: { ...current.projectView },
+      sessionList: { ...current.sessionList },
+    };
+    if (src.projectView && typeof src.projectView === 'object' && !Array.isArray(src.projectView)) {
+      for (const key of ['collapsedProjectIds', 'collapsedFolderIds', 'showAllProjectIds']) {
+        if (Object.prototype.hasOwnProperty.call(src.projectView, key)) {
+          next.projectView[key] = uniqueSidebarIds(src.projectView[key]);
+        }
+      }
+    }
+    if (src.sessionList && typeof src.sessionList === 'object' && !Array.isArray(src.sessionList)
+      && Object.prototype.hasOwnProperty.call(src.sessionList, 'rowMode')) {
+      const rowMode = src.sessionList.rowMode;
+      if (rowMode === 'single-line' || rowMode === 'two-line') {
+        next.sessionList.rowMode = rowMode;
+      }
+    }
+    saveSidebarUi(next);
+    return { ok: true, sidebarUi: loadSidebarUi() };
   };
 
   const loadTitles = () => readJson(TITLE_KEY, {}) || {};
@@ -696,6 +761,18 @@ return (function () {
         ? body.appearance
         : body;
       return applyAppearancePatch(patch);
+    }
+
+    if (pathname === '/api/preferences/sidebar-ui' && verb === 'GET') {
+      return { sidebarUi: loadSidebarUi() };
+    }
+
+    if (pathname === '/api/preferences/sidebar-ui'
+      && (verb === 'PUT' || verb === 'PATCH' || verb === 'POST')) {
+      const patch = body && body.sidebarUi && typeof body.sidebarUi === 'object'
+        ? body.sidebarUi
+        : body;
+      return applySidebarUiPatch(patch);
     }
 
     if (pathname === '/api/providers/summary' && verb === 'GET') {
