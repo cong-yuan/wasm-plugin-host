@@ -111,6 +111,46 @@ check('user-profile defaults to an empty local profile',
   await adapter.http('PUT', '/api/user-profile', { content: '' });
 }
 
+const initialAppearance = await adapter.http('GET', '/api/preferences/appearance');
+check('appearance preferences expose stable defaults',
+  initialAppearance?.appearance?.theme === 'warm-paper'
+  && initialAppearance?.appearance?.serif === true
+  && initialAppearance?.appearance?.paperTexture === false
+  && initialAppearance?.appearance?.leavesOverlay === false);
+const savedAppearance = await adapter.http('PUT', '/api/preferences/appearance', {
+  theme: 'midnight',
+  serif: false,
+  paperTexture: true,
+  leavesOverlay: true,
+});
+check('appearance preferences persist a validated patch',
+  savedAppearance?.ok === true
+  && savedAppearance?.appearance?.theme === 'midnight'
+  && savedAppearance?.appearance?.serif === false
+  && savedAppearance?.appearance?.paperTexture === true
+  && savedAppearance?.appearance?.leavesOverlay === true);
+const partialAppearance = await adapter.http('PATCH', '/api/preferences/appearance', {
+  appearance: { theme: 'claude-design', paperTexture: false },
+});
+check('appearance preferences merge partial patches and migrate legacy theme ids',
+  partialAppearance?.ok === true
+  && partialAppearance?.appearance?.theme === 'new-warm-paper'
+  && partialAppearance?.appearance?.serif === false
+  && partialAppearance?.appearance?.paperTexture === false
+  && partialAppearance?.appearance?.leavesOverlay === true);
+const rejectedAppearanceTheme = await adapter.http('PUT', '/api/preferences/appearance', { theme: 'not-a-theme' });
+check('appearance preferences reject unknown themes',
+  rejectedAppearanceTheme?.ok === false && rejectedAppearanceTheme?.error === 'invalid appearance theme');
+const rejectedAppearanceBoolean = await adapter.http('PUT', '/api/preferences/appearance', { serif: 'yes' });
+check('appearance preferences reject non-boolean flags',
+  rejectedAppearanceBoolean?.ok === false && rejectedAppearanceBoolean?.error === 'invalid appearance serif');
+await adapter.http('PUT', '/api/preferences/appearance', {
+  theme: 'warm-paper',
+  serif: true,
+  paperTexture: false,
+  leavesOverlay: false,
+});
+
 const permissionDefault = await adapter.http('GET', '/api/preferences/session-permission-default');
 check('permission default is explicitly locked to ask without backend support',
   permissionDefault?.permissionMode === 'ask'
@@ -140,6 +180,8 @@ const iframeBridgeSource = readFileSync(
 );
 check('iframe bridge intercepts session permission mode requests',
   iframeBridgeSource.includes("pathname === '/api/session-permission-mode'"));
+check('iframe bridge intercepts appearance preference requests',
+  iframeBridgeSource.includes("pathname === '/api/preferences/appearance'"));
 
 // Pin / unpin persists locally and is reflected in GET /api/sessions
 {

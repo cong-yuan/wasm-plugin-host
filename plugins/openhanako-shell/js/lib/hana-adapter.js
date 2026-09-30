@@ -91,6 +91,7 @@ return (function () {
   const TITLE_KEY = 'openhanako.sessionTitles.v1';
   const ARCHIVE_KEY = 'openhanako.archivedSessions.v1';
   const USER_PREFS_KEY = 'openhanako.userPreferences.v1';
+  const APPEARANCE_KEY = 'openhanako.appearancePreferences.v1';
   const PIN_ORDER_STEP = 1024;
   const UNCATEGORIZED_PROJECT_ID = 'cwd:';
 
@@ -139,6 +140,51 @@ return (function () {
   };
   const loadUserPrefs = () => normalizeUserPrefs(readJson(USER_PREFS_KEY, {}));
   const saveUserPrefs = (value) => writeJson(USER_PREFS_KEY, normalizeUserPrefs(value));
+
+  const APPEARANCE_THEMES = new Set([
+    'auto',
+    'warm-paper',
+    'midnight',
+    'high-contrast',
+    'grass-aroma',
+    'contemplation',
+    'absolutely',
+    'delve',
+    'deep-think',
+    'new-warm-paper',
+    'midnight-contrast',
+    'coral',
+  ]);
+  const normalizeAppearance = (raw) => {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const rawTheme = src.theme === 'claude-design' ? 'new-warm-paper' : src.theme;
+    return {
+      theme: APPEARANCE_THEMES.has(rawTheme) ? rawTheme : 'warm-paper',
+      serif: typeof src.serif === 'boolean' ? src.serif : true,
+      paperTexture: typeof src.paperTexture === 'boolean' ? src.paperTexture : false,
+      leavesOverlay: typeof src.leavesOverlay === 'boolean' ? src.leavesOverlay : false,
+    };
+  };
+  const loadAppearance = () => normalizeAppearance(readJson(APPEARANCE_KEY, {}));
+  const saveAppearance = (value) => writeJson(APPEARANCE_KEY, normalizeAppearance(value));
+  const applyAppearancePatch = (patch) => {
+    const src = patch && typeof patch === 'object' ? patch : null;
+    if (!src) return { ok: false, error: 'appearance object required' };
+    const current = loadAppearance();
+    const next = { ...current };
+    if (Object.prototype.hasOwnProperty.call(src, 'theme')) {
+      const rawTheme = src.theme === 'claude-design' ? 'new-warm-paper' : src.theme;
+      if (!APPEARANCE_THEMES.has(rawTheme)) return { ok: false, error: 'invalid appearance theme' };
+      next.theme = rawTheme;
+    }
+    for (const key of ['serif', 'paperTexture', 'leavesOverlay']) {
+      if (!Object.prototype.hasOwnProperty.call(src, key)) continue;
+      if (typeof src[key] !== 'boolean') return { ok: false, error: 'invalid appearance ' + key };
+      next[key] = src[key];
+    }
+    saveAppearance(next);
+    return { ok: true, appearance: loadAppearance() };
+  };
 
   const loadTitles = () => readJson(TITLE_KEY, {}) || {};
   const saveTitles = (value) => writeJson(TITLE_KEY, value || {});
@@ -638,6 +684,18 @@ return (function () {
       const profile = body.content.slice(0, 65536);
       saveUserPrefs({ ...loadUserPrefs(), profile });
       return { ok: true, content: profile };
+    }
+
+    if (pathname === '/api/preferences/appearance' && verb === 'GET') {
+      return { appearance: loadAppearance() };
+    }
+
+    if (pathname === '/api/preferences/appearance'
+      && (verb === 'PUT' || verb === 'PATCH' || verb === 'POST')) {
+      const patch = body && body.appearance && typeof body.appearance === 'object'
+        ? body.appearance
+        : body;
+      return applyAppearancePatch(patch);
     }
 
     if (pathname === '/api/providers/summary' && verb === 'GET') {

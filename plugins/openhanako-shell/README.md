@@ -56,6 +56,7 @@ iframe 也用 `{ "source": "openhanako-studio-bridge", "type": "hello" }` 探测
 | `POST /api/sessions/switch` | 若 `live === false` 则 `resume_session { sessionId }` | `{ sessionId, isStreaming: false, agentId: "studio" }` |
 | `GET /api/sessions/messages?path=&sessionId=` | `transcript { agentId }` | `{ messages: [{ role, content, thinking? }], hasMore: false }`。`content` 是 `ChatMessage.text` |
 | `GET/PUT /api/preferences/session-permission-default`、`/api/session-permission-mode` | — | Studio 当前没有底层权限模式命令，因此 fail-closed 固定为 `ask`，写请求返回 `locked: true`，避免 UI 假装进入 `auto`/`operate`/`read_only` |
+| `GET/PUT /api/preferences/appearance` | — | theme / serif / paperTexture / leavesOverlay 本地持久化；校验主题 id 与布尔字段，兼容旧 `claude-design` → `new-warm-paper` |
 | WS `{ type: "prompt", text, sessionId, sessionPath, clientMessageId }` | `send_message { agentId, text, msgId }` | 见下方入站事件 |
 | WS `{ type: "interject", ... }` | `steer_agent { agentId, text, msgId }` | 与 `send_message` 同参；缺 `msgId` 会在 Studio 侧失败 |
 | WS `{ type: "abort", sessionId, sessionPath }` | `cancel_agent { agentId }` | 随后 `turn_end` + `status isStreaming: false` |
@@ -74,7 +75,7 @@ iframe 也用 `{ "source": "openhanako-studio-bridge", "type": "hello" }` 探测
 
 另外几条只为了让 `initApp` 在没有 Hana API 时也能走到 `loadSessions`：`GET /api/server/identity`、`GET /api/models`、`POST /api/ws-ticket`、`GET /api/agents/:id/config`。权限模式端点虽然也由 bridge 接管，但在 Studio 暂无可执行的权限控制命令时会明确锁定为 `ask`，而不是伪造成功。它们不是 agent 协议。
 
-会话的 archive/restore/rename/delete 已由 Studio bridge 实现：archive 通过 `soft_unbind_agent` 保留历史并写入本地归档元数据，restore 重新 `resume_session`，rename 只接受真实活动会话或已归档会话，永久删除才会 dispose agent。用户名和个人简介通过 `/api/config` + `/api/user-profile` 保存到本地 `localStorage`，agent config、health 与 server identity 读取同一份用户名。其余仍会 404 的周边表面（desk/cron、preferences/models 等）由 shim 返回空/`{ ok: true }` 软桩，避免 harness 控制台噪音；不实现真实行为。`/api/sessions/pin` 与 `/api/sessions/pin-order` 以及 `/api/session-projects*` 同样在本地 `localStorage` 持久化（Studio 无上游等价 API）。
+会话的 archive/restore/rename/delete 已由 Studio bridge 实现：archive 通过 `soft_unbind_agent` 保留历史并写入本地归档元数据，restore 重新 `resume_session`，rename 只接受真实活动会话或已归档会话，永久删除才会 dispose agent。用户名、个人简介与外观偏好分别通过 `/api/config`、`/api/user-profile`、`/api/preferences/appearance` 保存到本地 `localStorage`；agent config、health 与 server identity 读取同一份用户名。其余仍会 404 的周边表面（desk/cron、preferences/models 等）由 shim 返回空/`{ ok: true }` 软桩，避免 harness 控制台噪音；不实现真实行为。`/api/sessions/pin` 与 `/api/sessions/pin-order` 以及 `/api/session-projects*` 同样在本地 `localStorage` 持久化（Studio 无上游等价 API）。
 
 ## 前端来源
 
