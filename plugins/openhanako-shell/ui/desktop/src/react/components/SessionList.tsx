@@ -16,6 +16,7 @@ import { createImeCompositionGuard } from '../utils/ime-composition';
 import { switchSession, archiveSession, archiveSessions, renameSession, pinSession, createNewSession, reorderPinnedSessions } from '../stores/session-actions';
 import { locateSearchHit } from '../stores/chat-find-actions';
 import { setBrowserStateForPath } from '../stores/browser-slice';
+import { openSessionBrowser, closeSessionBrowser } from '../services/browser-session-actions';
 import { sessionScopedListIncludes } from '../stores/session-slice';
 import type { Session, Agent } from '../types';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../utils/agent-display';
@@ -303,9 +304,8 @@ function SessionListInner() {
 
   const setVisibleBrowserSessions = useCallback((data: unknown) => {
     const states = normalizeBrowserSessionStates(data);
-    for (const sessionPath of closingBrowserSessionsRef.current) {
-      delete states[sessionPath];
-    }
+    // A close request is not a successful close. Keep the badge until the
+    // server confirms the operation, even if a list refresh races with it.
     setBrowserSessions(states);
   }, []);
 
@@ -443,29 +443,26 @@ function SessionListInner() {
   }, [projectNameDialogOpenKey]);
 
   const handleCloseBrowserSession = useCallback(async (sessionPath: string) => {
+    if (closingBrowserSessionsRef.current.has(sessionPath)) return;
     closingBrowserSessionsRef.current.add(sessionPath);
-    setBrowserSessions(prev => {
-      const next = { ...prev };
-      delete next[sessionPath];
-      return next;
-    });
     try {
-      const res = await hanaFetch('/api/browser/close-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionPath }),
+      const sessions = await closeSessionBrowser(sessionPath);
+      // Only the authoritative response may clear an active browser.
+      setBrowserStateForPath(sessionPath, {
+        running: false, url: null, thumbnail: null,
+        thumbnailCapturedAt: null, thumbnailUrl: null, thumbnailFresh: false,
       });
-      const data = await res.json();
-      setBrowserStateForPath(sessionPath, { running: false, url: null, thumbnail: null });
-      closingBrowserSessionsRef.current.delete(sessionPath);
-      if (data?.sessions) {
-        setBrowserSessions(normalizeBrowserSessionStates(data.sessions));
-      }
+      setBrowserSessions(normalizeBrowserSessionStates(sessions));
     } catch (err) {
-      closingBrowserSessionsRef.current.delete(sessionPath);
+      // Do not hide the live browser or claim it was closed.
+      useStore.getState().addToast(
+        t('browser.closeFailed'), 'error', 5000,
+      );
       console.warn('[sessions] close browser session failed:', err);
+    } finally {
+      closingBrowserSessionsRef.current.delete(sessionPath);
     }
-  }, []);
+  }, [t]);
 
   const updateSessionProjectAssignment = useCallback(async (sessionPath: string, projectId: string | null) => {
     await setSessionProjectAssignmentForSession(sessionPath, projectId);
@@ -1790,6 +1787,7 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isPending,
   const [summaryPreviewPosition, setSummaryPreviewPosition] = useState<{ x: number; y: number } | null>(null);
   const [browserMenuPosition, setBrowserMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const browserOpenInFlightRef = useRef(false);
   const isDeletedAgentSession = s.agentDeleted === true;
 
   const handleClick = useCallback((event: React.MouseEvent) => {
@@ -1881,17 +1879,18 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isPending,
   const handleBrowserOpen = useCallback(async (e: React.MouseEvent | React.KeyboardEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (browserOpenInFlightRef.current) return;
+    browserOpenInFlightRef.current = true;
     try {
-      await hanaFetch('/api/browser/open-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionPath: s.path }),
-      });
+      await openSessionBrowser(s.path);
+      window.platform?.openBrowserViewer?.({ sessionPath: s.path });
     } catch (err) {
+      useStore.getState().addToast(t('browser.openFailed'), 'error', 5000);
       console.warn('[browser] open session failed:', err);
+    } finally {
+      browserOpenInFlightRef.current = false;
     }
-    window.platform?.openBrowserViewer?.({ sessionPath: s.path });
-  }, [s.path]);
+  }, [s.path, t]);
 
   const handleBrowserKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;

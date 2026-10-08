@@ -74,6 +74,7 @@ describe('AssistantMessage media generation placeholder', () => {
     } as never);
     vi.mocked(hanaFetch).mockResolvedValueOnce(new Response(JSON.stringify({
       ok: true,
+      taskId: 'task-img',
       placeholder: {
         type: 'media_generation',
         taskId: 'task-img',
@@ -110,6 +111,7 @@ describe('AssistantMessage media generation placeholder', () => {
     await waitFor(() => {
       expect(hanaFetch).toHaveBeenCalledWith('/api/media/tasks/task-img/retry', {
         method: 'POST',
+        throwOnHttpError: false,
       });
     });
     expect(resolveBlockByTaskId).toHaveBeenCalledWith('/sessions/main.jsonl', 'task-img', expect.objectContaining({
@@ -119,6 +121,113 @@ describe('AssistantMessage media generation placeholder', () => {
       status: 'pending',
       prompt: 'same prompt',
     }));
+  });
+
+  it('keeps failed image retry visible on a false-success server response', async () => {
+    const resolveBlockByTaskId = vi.fn(() => true);
+    useStore.setState({ resolveBlockByTaskId } as never);
+    vi.mocked(hanaFetch).mockResolvedValueOnce(new Response(JSON.stringify({ ok: false }), { status: 200 }));
+    render(
+      <AssistantMessage
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
+        isStreaming={false} isSelected={false} showAvatar={false}
+        sessionPath="/sessions/main.jsonl"
+        message={{ id: 'retry-error', role: 'assistant', blocks: [{
+          type: 'media_generation', taskId: 'task-img', kind: 'image', status: 'failed', reason: 'previous error',
+        }] }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'chat.media.retryLabel' }));
+    expect(await screen.findByText('Media retry was not acknowledged')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'chat.media.retryLabel' })).not.toBeDisabled();
+    expect(resolveBlockByTaskId).not.toHaveBeenCalled();
+  });
+
+  it('refreshes a pending media placeholder from backend failure status without a new agent turn', async () => {
+    const resolveBlockByTaskId = vi.fn(() => true);
+    useStore.setState({ resolveBlockByTaskId } as never);
+    vi.mocked(hanaFetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      task: {
+        taskId: 'task-video', type: 'video', status: 'failed',
+        failReason: 'provider timed out', sessionPath: '/sessions/main.jsonl',
+      },
+    }), { status: 200 }));
+    render(
+      <AssistantMessage
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
+        isStreaming={false} isSelected={false} showAvatar={false}
+        sessionPath="/sessions/main.jsonl"
+        message={{ id: 'refresh-pending', role: 'assistant', blocks: [{
+          type: 'media_generation', taskId: 'task-video', kind: 'video', status: 'pending',
+        }] }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'chat.media.refreshStatus' }));
+    await waitFor(() => {
+      expect(resolveBlockByTaskId).toHaveBeenCalledWith('/sessions/main.jsonl', 'task-video', expect.objectContaining({
+        type: 'media_generation', taskId: 'task-video', status: 'failed', reason: 'provider timed out',
+      }));
+    });
+    expect(await screen.findByText('provider timed out')).toBeInTheDocument();
+  });
+
+  it('recovers a completed task into a registered file without rerunning generation', async () => {
+    const resolveBlockByTaskId = vi.fn(() => true);
+    useStore.setState({ resolveBlockByTaskId } as never);
+    vi.mocked(hanaFetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      task: {
+        taskId: 'task-img', type: 'image', status: 'done',
+        sessionPath: '/sessions/main.jsonl',
+        sessionFiles: [{ fileId: 'sf-image', filePath: '/tmp/media/output.png', label: 'output.png' }],
+      },
+    }), { status: 200 }));
+
+    render(
+      <AssistantMessage
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
+        isStreaming={false} isSelected={false} showAvatar={false}
+        sessionPath="/sessions/main.jsonl"
+        message={{ id: 'recover-file', role: 'assistant', blocks: [{
+          type: 'media_generation', taskId: 'task-img', kind: 'image', status: 'pending',
+        }] }}
+      />,
+    );
+
+    vi.mocked(hanaFetch).mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'chat.media.refreshStatus' }));
+    await waitFor(() => expect(resolveBlockByTaskId).toHaveBeenCalledWith(
+      '/sessions/main.jsonl', 'task-img', expect.objectContaining({
+        type: 'file', fileId: 'sf-image', filePath: '/tmp/media/output.png',
+        label: 'output.png', ext: 'png', replacesTaskId: 'task-img',
+      }),
+    ));
+    expect(hanaFetch).toHaveBeenCalledWith('/api/media/tasks/task-img', expect.objectContaining({
+      throwOnHttpError: false,
+    }));
+    expect(hanaFetch).not.toHaveBeenCalledWith('/api/media/tasks/task-img/retry', expect.anything());
+  });
+
+  it('shows a refresh error for a pending task without pretending it failed or completed', async () => {
+    const resolveBlockByTaskId = vi.fn(() => true);
+    useStore.setState({ resolveBlockByTaskId } as never);
+    vi.mocked(hanaFetch).mockResolvedValueOnce(new Response(JSON.stringify({ error: 'temporarily unavailable' }), {
+      status: 503,
+    }));
+    render(
+      <AssistantMessage
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
+        isStreaming={false} isSelected={false} showAvatar={false}
+        sessionPath="/sessions/main.jsonl"
+        message={{ id: 'status-error', role: 'assistant', blocks: [{
+          type: 'media_generation', taskId: 'task-img', kind: 'image', status: 'pending',
+          prompt: 'draw a lake',
+        }] }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'chat.media.refreshStatus' }));
+    expect(await screen.findByText('temporarily unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'chat.media.refreshStatus' })).not.toBeDisabled();
+    expect(resolveBlockByTaskId).not.toHaveBeenCalled();
   });
 
   it('renders generated video files as media cards that open the media viewer and drag out the file', async () => {

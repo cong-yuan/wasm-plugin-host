@@ -334,7 +334,9 @@
       "generationInProgress": "{kind}生成中",
       "retryFailed": "重新生成失败",
       "submitting": "提交中",
-      "retryLabel": "重新生成{kind}"
+      "retryLabel": "重新生成{kind}",
+      "refreshStatus": "刷新任务状态",
+      "refreshFailed": "刷新任务状态失败"
     },
     "subagentPreview": {
       "historyUnrecoverable": "历史 subagent 链接不可恢复",
@@ -2869,6 +2871,8 @@
     "open": "打开浏览器",
     "collapse": "收起",
     "closeForSession": "关闭此会话的浏览器",
+    "openFailed": "无法打开此会话的浏览器",
+    "closeFailed": "无法关闭此会话的浏览器",
     "closeBtn": "关闭",
     "back": "后退",
     "forward": "前进",

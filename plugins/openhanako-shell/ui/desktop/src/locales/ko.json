@@ -334,7 +334,9 @@
       "generationInProgress": "{kind} 생성 중",
       "retryFailed": "재생성 실패",
       "submitting": "제출 중",
-      "retryLabel": "{kind} 재생성"
+      "retryLabel": "{kind} 재생성",
+      "refreshStatus": "작업 상태 새로고침",
+      "refreshFailed": "작업 상태를 새로고칠 수 없습니다"
     },
     "subagentPreview": {
       "historyUnrecoverable": "과거 하위 세션 링크를 복구할 수 없어요",
@@ -2870,6 +2872,8 @@
     "open": "브라우저 열기",
     "collapse": "접기",
     "closeForSession": "이 세션의 브라우저 닫기",
+    "openFailed": "이 세션의 브라우저를 열 수 없습니다",
+    "closeFailed": "이 세션의 브라우저를 닫을 수 없습니다",
     "closeBtn": "닫기",
     "back": "뒤로",
     "forward": "앞으로",

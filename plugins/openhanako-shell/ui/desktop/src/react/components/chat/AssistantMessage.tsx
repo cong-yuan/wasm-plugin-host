@@ -28,6 +28,7 @@ import { useStore } from '../../stores';
 import { selectSessionFiles } from '../../stores/selectors/file-refs';
 import { sessionIdForPathFromLocatorState } from '../../stores/session-slice';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
+import { retryFailedImageTask, refreshMediaTask } from '../../services/media-generation-tasks';
 import { openFilePreview, openSkillPreview } from '../../utils/file-preview';
 import { writeAppFileDragPayload, clearAppFileDragPayload } from '../../utils/app-file-drag';
 import { openMediaViewerForRef } from '../../utils/open-media-viewer';
@@ -322,6 +323,7 @@ const EXT_LABELS: Record<string, string> = {
 
 const MediaGenerationBlock = memo(function MediaGenerationBlock({ block, sessionPath, readOnly }: { block: any; sessionPath: string; readOnly: boolean }) {
   const [retrying, setRetrying] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [retryError, setRetryError] = useState('');
   const [localBlock, setLocalBlock] = useState<any | null>(null);
   const t = window.t ?? ((k: string) => k);
@@ -329,16 +331,19 @@ const MediaGenerationBlock = memo(function MediaGenerationBlock({ block, session
   const failed = viewBlock.status === 'failed' || viewBlock.status === 'aborted';
   const kindLabel = viewBlock.kind === 'video' ? t('chat.media.kindVideo') : t('chat.media.kindImage');
   const canRetry = failed && viewBlock.kind !== 'video' && !readOnly && typeof viewBlock.taskId === 'string';
+  const canRefresh = viewBlock.status === 'pending' && !readOnly && typeof viewBlock.taskId === 'string';
   const titleText = failed
     ? t('chat.media.generationFailed').replace('{kind}', kindLabel)
     : t('chat.media.generationInProgress').replace('{kind}', kindLabel);
   const reason = retryError || (typeof viewBlock.reason === 'string' ? viewBlock.reason : '');
   const prompt = typeof viewBlock.prompt === 'string' ? viewBlock.prompt : '';
+  const detail = retryError || (failed ? reason : prompt);
 
   useEffect(() => {
     setLocalBlock(null);
     setRetrying(false);
     setRetryError('');
+    setRefreshing(false);
   }, [block]);
 
   const handleRetry = useCallback(async () => {
@@ -346,24 +351,29 @@ const MediaGenerationBlock = memo(function MediaGenerationBlock({ block, session
     setRetrying(true);
     setRetryError('');
     try {
-      const res = await hanaFetch(`/api/media/tasks/${encodeURIComponent(viewBlock.taskId)}/retry`, {
-        method: 'POST',
-      });
-      const data = await res.json().catch(() => null);
-      const placeholder = data?.placeholder || {
-        type: 'media_generation',
-        taskId: viewBlock.taskId,
-        kind: 'image',
-        status: 'pending',
-        ...(prompt ? { prompt } : {}),
-      };
+      const placeholder = await retryFailedImageTask(viewBlock.taskId);
       setLocalBlock(placeholder);
       useStore.getState().resolveBlockByTaskId(sessionPath, viewBlock.taskId, placeholder);
     } catch (err) {
       setRetryError(err instanceof Error ? err.message : t('chat.media.retryFailed'));
       setRetrying(false);
     }
-  }, [canRetry, prompt, retrying, sessionPath, viewBlock.taskId]);
+  }, [canRetry, retrying, sessionPath, viewBlock.taskId, t]);
+
+  const handleRefresh = useCallback(async () => {
+    if (!canRefresh || refreshing) return;
+    setRefreshing(true);
+    setRetryError('');
+    try {
+      const resolution = await refreshMediaTask(viewBlock.taskId, sessionPath);
+      useStore.getState().resolveBlockByTaskId(sessionPath, viewBlock.taskId, resolution);
+      if (resolution.type === 'media_generation') setLocalBlock(resolution);
+    } catch (err) {
+      setRetryError(err instanceof Error ? err.message : t('chat.media.refreshFailed'));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [canRefresh, refreshing, sessionPath, t, viewBlock.taskId]);
 
   return (
     <div className={`${styles.mediaGenerationCard}${failed ? ` ${styles.mediaGenerationCardFailed}` : ''}`}>
@@ -373,8 +383,19 @@ const MediaGenerationBlock = memo(function MediaGenerationBlock({ block, session
             <span>{titleText}</span>
             {!failed && <span className={styles.mediaGenerationDots} aria-hidden="true" />}
           </div>
-          {(failed ? reason : prompt) && (
-            <div className={styles.mediaGenerationPrompt}>{failed ? reason : prompt}</div>
+          {detail && (
+            <div className={styles.mediaGenerationPrompt}>{detail}</div>
+          )}
+          {canRefresh && (
+            <button
+              type="button"
+              className={styles.mediaGenerationRetryButton}
+              onClick={handleRefresh}
+              disabled={refreshing}
+              aria-label={t('chat.media.refreshStatus')}
+            >
+              {refreshing ? t('common.loading') : t('chat.media.refreshStatus')}
+            </button>
           )}
           {canRetry && (
             <button

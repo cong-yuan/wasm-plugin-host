@@ -213,13 +213,16 @@ export function createMediaRoute(engine) {
     try {
       const denied = denyWithoutScope(c, "providers.manage");
       if (denied) return denied;
-      const result = await requireMediaManager(engine).retryImageTask(c.req.param("taskId"));
-      if (!result.ok) return c.json({ error: result.error }, result.status || 500);
-      return c.json({
-        ok: true,
-        taskId: result.taskId,
-        placeholder: result.placeholder,
-      });
+      const taskId = c.req.param("taskId");
+      const result = await requireMediaManager(engine).retryImageTask(taskId);
+      if (!result?.ok) return c.json({ error: result?.error || "retry failed" }, result?.status || 500);
+      const placeholder = result.placeholder;
+      if (result.taskId !== taskId || placeholder?.type !== "media_generation"
+        || placeholder.taskId !== taskId || placeholder.kind !== "image"
+        || placeholder.status !== "pending") {
+        return c.json({ error: "media retry was not acknowledged" }, 502);
+      }
+      return c.json({ ok: true, taskId, placeholder });
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }

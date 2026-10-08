@@ -334,7 +334,9 @@
       "generationInProgress": "{kind} generating",
       "retryFailed": "Regeneration failed",
       "submitting": "Submitting",
-      "retryLabel": "Regenerate {kind}"
+      "retryLabel": "Regenerate {kind}",
+      "refreshStatus": "Refresh task status",
+      "refreshFailed": "Couldn't refresh task status"
     },
     "subagentPreview": {
       "historyUnrecoverable": "Historical sub-session link is unrecoverable",
@@ -2869,6 +2871,8 @@
     "open": "Open browser",
     "collapse": "Collapse",
     "closeForSession": "Close this session's browser",
+    "openFailed": "Could not open this session's browser",
+    "closeFailed": "Could not close this session's browser",
     "closeBtn": "Close",
     "back": "Back",
     "forward": "Forward",

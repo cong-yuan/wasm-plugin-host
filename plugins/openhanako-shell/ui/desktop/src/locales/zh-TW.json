@@ -334,7 +334,9 @@
       "generationInProgress": "{kind}生成中",
       "retryFailed": "重新生成失败",
       "submitting": "提交中",
-      "retryLabel": "重新生成{kind}"
+      "retryLabel": "重新生成{kind}",
+      "refreshStatus": "重新整理任務狀態",
+      "refreshFailed": "無法重新整理任務狀態"
     },
     "subagentPreview": {
       "historyUnrecoverable": "歷史 subagent 連結不可恢復",
@@ -2870,6 +2872,8 @@
     "open": "開啟瀏覽器",
     "collapse": "收起",
     "closeForSession": "關閉此對話的瀏覽器",
+    "openFailed": "無法開啟此對話的瀏覽器",
+    "closeFailed": "無法關閉此對話的瀏覽器",
     "closeBtn": "關閉",
     "back": "後退",
     "forward": "前進",

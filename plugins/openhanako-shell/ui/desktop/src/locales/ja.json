@@ -334,7 +334,9 @@
       "generationInProgress": "{kind}を生成中",
       "retryFailed": "再生成に失敗しました",
       "submitting": "送信中",
-      "retryLabel": "{kind}を再生成"
+      "retryLabel": "{kind}を再生成",
+      "refreshStatus": "タスクの状態を更新",
+      "refreshFailed": "タスクの状態を更新できませんでした"
     },
     "subagentPreview": {
       "historyUnrecoverable": "過去のサブセッションへのリンクは復元できません",
@@ -2870,6 +2872,8 @@
     "open": "ブラウザを開く",
     "collapse": "折りたたむ",
     "closeForSession": "このセッションのブラウザを閉じる",
+    "openFailed": "このセッションのブラウザを開けませんでした",
+    "closeFailed": "このセッションのブラウザを閉じられませんでした",
     "closeBtn": "閉じる",
     "back": "戻る",
     "forward": "進む",

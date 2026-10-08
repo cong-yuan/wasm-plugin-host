@@ -55,6 +55,7 @@ vi.mock('../../hooks/use-i18n', () => ({
 
 import { SessionList } from '../../components/SessionList';
 import { useStore } from '../../stores';
+import { browserStateForPath } from '../../stores/browser-slice';
 
 function jsonResponse(data: unknown) {
   return {
@@ -423,6 +424,73 @@ describe('SessionList context menu', () => {
     expect(hanaFetchMock).not.toHaveBeenCalledWith('/api/browser/close-session', expect.anything());
     expect(switchSessionMock).not.toHaveBeenCalled();
     expect(await screen.findByRole('button', { name: 'browser.open' })).toBeInTheDocument();
+  });
+
+  it('does not open a viewer on rejected browser resume, then allows a successful retry', async () => {
+    const browserStates = {
+      '/tmp/agents/hana/sessions/with-summary.jsonl': {
+        url: 'https://example.com', running: false, resumable: true, unavailableReason: null,
+      },
+    };
+    let openAttempts = 0;
+    hanaFetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/browser/session-states') return jsonResponse(browserStates);
+      if (url === '/api/browser/open-session') {
+        openAttempts++;
+        return jsonResponse(openAttempts === 1 ? { ok: false, error: 'resume failed' } : { ok: true });
+      }
+      return jsonResponse({});
+    });
+    render(<SessionList />);
+    const badge = await screen.findByRole('button', { name: 'browser.open' });
+    fireEvent.click(badge);
+    await waitFor(() => expect(openAttempts).toBe(1));
+    expect(openBrowserViewerMock).not.toHaveBeenCalled();
+    fireEvent.click(badge);
+    await waitFor(() => expect(openBrowserViewerMock).toHaveBeenCalledWith({
+      sessionPath: '/tmp/agents/hana/sessions/with-summary.jsonl',
+    }));
+    expect(openAttempts).toBe(2);
+  });
+
+  it('keeps the browser visible when close is refused, then closes after a successful retry', async () => {
+    const sessionPath = '/tmp/agents/hana/sessions/with-summary.jsonl';
+    const browserStates = {
+      [sessionPath]: { url: 'https://example.com', running: true, resumable: true, unavailableReason: null },
+    };
+    useStore.setState({
+      browserBySession: { [sessionPath]: { running: true, url: 'https://example.com', thumbnail: 'old' } },
+    } as never);
+    let closeAttempts = 0;
+    let closed = false;
+    hanaFetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/browser/session-states') return jsonResponse(closed ? {} : browserStates);
+      if (url === '/api/browser/close-session') {
+        closeAttempts++;
+        if (closeAttempts === 1) return jsonResponse({ ok: false, sessions: {} });
+        closed = true;
+        return jsonResponse({ ok: true, sessions: {} });
+      }
+      return jsonResponse({});
+    });
+    render(<SessionList />);
+    fireEvent.contextMenu(await screen.findByRole('button', { name: 'browser.open' }), {
+      clientX: 40, clientY: 60,
+    });
+    fireEvent.click(await screen.findByText('browser.closeForSession'));
+    await waitFor(() => expect(closeAttempts).toBe(1));
+    expect(screen.getByRole('button', { name: 'browser.open' })).toBeInTheDocument();
+    expect(useStore.getState().browserBySession[sessionPath].running).toBe(true);
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'browser.open' }), {
+      clientX: 40, clientY: 60,
+    });
+    fireEvent.click(await screen.findByText('browser.closeForSession'));
+    await waitFor(() => expect(closeAttempts).toBe(2));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'browser.open' })).not.toBeInTheDocument());
+    expect(browserStateForPath(useStore.getState(), sessionPath)).toMatchObject({
+      running: false, thumbnail: null, url: null,
+    });
   });
 
   it('closes the session browser from the badge context menu', async () => {

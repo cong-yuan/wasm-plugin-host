@@ -137,6 +137,42 @@ describe("native media route", () => {
     });
   });
 
+  it("only acknowledges image task retries with a valid server task placeholder", async () => {
+    const app = new Hono();
+    const retryImageTask = vi.fn(async (taskId) => ({
+      ok: true, taskId,
+      placeholder: {
+        type: "media_generation", taskId, kind: "image",
+        status: "pending", prompt: "same prompt",
+      },
+    }));
+    app.route("/api", createMediaRoute({ media: { retryImageTask } }));
+
+    const res = await app.request("/api/media/tasks/task-image/retry", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(retryImageTask).toHaveBeenCalledWith("task-image");
+    expect(await res.json()).toEqual({
+      ok: true, taskId: "task-image",
+      placeholder: {
+        type: "media_generation", taskId: "task-image", kind: "image",
+        status: "pending", prompt: "same prompt",
+      },
+    });
+  });
+
+  it("does not claim retry success if the manager returns a mismatched or incomplete task", async () => {
+    const app = new Hono();
+    const retryImageTask = vi.fn(async () => ({
+      ok: true, taskId: "wrong-task",
+      placeholder: { type: "media_generation", taskId: "wrong-task", kind: "image", status: "pending" },
+    }));
+    app.route("/api", createMediaRoute({ media: { retryImageTask } }));
+
+    const res = await app.request("/api/media/tasks/task-image/retry", { method: "POST" });
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: "media retry was not acknowledged" });
+  });
+
   it("submits image generation through the native media manager", async () => {
     const app = new Hono();
     const generateImageFromBus = vi.fn(async (payload) => ({
