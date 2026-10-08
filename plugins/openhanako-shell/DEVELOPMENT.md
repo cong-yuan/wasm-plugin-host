@@ -128,3 +128,10 @@
 - A single roving Tab stop follows keyboard focus, with native DOM focus restoration after redraw; current session uses `aria-current=page`, and rows advertise keyboard shortcuts. Session IDs are matched as data instead of interpolated into CSS selectors.
 - Visible bulk selection retains the existing toolbar controls. Every keyboard, checkbox, or mouse selection change invalidates the pending permanent-delete confirmation; no background batch can rewrite a newer user selection.
 - Unit and real DOM smoke regressions cover range endpoints, additive selection, stale anchors, Ctrl/Cmd+A, Escape, keyboard focus, Tab stops, active/archived Enter, nested button/input isolation, and checkbox redraw.
+
+### Archived session retention cleanup (2026-10-09)
+
+- The standalone sidebar now exposes retention-based permanent cleanup only in Archived view. The retention input accepts whole days (1–3650) and previews the **backend-selected** candidate IDs/count before an explicit second confirmation; Cancel, retention edits, view switches, expired previews (60 seconds), and unmount revoke confirmation.
+- Cleanup preview is a side-effect-free `POST /api/sessions/cleanup` with `dryRun: true`. Confirmed cleanup includes the full `expectedSessionIds` snapshot. The Hana adapter rejects malformed/duplicate IDs or mismatched candidate sets **before** invoking any disposal; legacy callers without `expectedSessionIds` still work.
+- Cleanup, bulk restore/archive/delete share a single mutation lock. Real deletion acknowledges the exact session ID and surfaces partial failures. Successful cleanup refreshes archived rows and invalidates cached search results; missing/malformed backend acknowledgment never pretends that deletion succeeded.
+- `studio-bridge.test.mjs` checks dry-run non-deletion, malformed snapshots, changed candidate rejection, retention validation and real disposal. DOM smoke covers view gating, preview/cancel, age-change re-preview, backend conflict, confirmation and list rehydration.

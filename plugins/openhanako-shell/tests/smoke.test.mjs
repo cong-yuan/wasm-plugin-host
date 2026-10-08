@@ -929,6 +929,97 @@ skillsButton?.fire('click');
   adapter.http = oldHttp;
 }
 
+// Archived cleanup requires an exact backend preview, explicit confirmation,
+// and does not retain stale previews across changes to retention or view.
+{
+  const sidebar = studio.require('panels/sidebar');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  let archiveRows = [{ sessionId: 'old-archive', title: 'Old archive', archivedAt: '2025-01-01' }];
+  let deleteCalls = 0;
+  let planCalls = 0;
+  let makeStale = false;
+  adapter.http = async (method, path, body) => {
+    if (method === 'GET' && path === '/api/sessions') return [];
+    if (method === 'GET' && path === '/api/sessions/archived') return archiveRows;
+    if (method === 'GET' && path === '/api/runtime-state') return { sessions: [], mode: 'studio' };
+    if (method === 'POST' && path === '/api/sessions/cleanup') {
+      if (body.dryRun === true) {
+        planCalls += 1;
+        return { ok: true, dryRun: true, count: archiveRows.length,
+          sessionIds: archiveRows.map((row) => row.sessionId) };
+      }
+      deleteCalls += 1;
+      if (makeStale) return { ok: false, code: 'preview_changed', error: 'Preview stale' };
+      if (body.maxAgeDays !== 30 || body.expectedSessionIds?.join(',') !== 'old-archive') {
+        return { ok: false, error: 'wrong cleanup snapshot' };
+      }
+      archiveRows = [];
+      return { ok: true, deleted: 1, failed: 0 };
+    }
+    return oldHttp(method, path, body);
+  };
+  const side = sidebar.render({ selected: null, onNew() {}, onCollapse() {}, onSelect() {} });
+  await side.refresh(null);
+  const cleanup = side.root.querySelector('.sessionCleanupButton');
+  const age = side.root.querySelector('.sessionCleanupAge');
+  const cancel = side.root.querySelector('.sessionCleanupCancel');
+  const status = side.root.querySelector('.sessionCleanupStatus');
+  check('cleanup is unavailable in the active view',
+    side.root.querySelector('.sessionCleanupBar')?.style?.display === 'none');
+  side.root.querySelectorAll('.sessionViewBtn')[1]?.fire('click');
+  await side.refresh(null);
+  check('cleanup controls are shown only for archived sessions',
+    side.root.querySelector('.sessionCleanupBar')?.style?.display === '');
+  age.value = '0';
+  cleanup.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('zero day retention fails before contacting backend', planCalls === 0 && deleteCalls === 0);
+  age.value = '30';
+  age.fire('input');
+  cleanup.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('preview requests candidate list without deleting',
+    planCalls === 1 && deleteCalls === 0 && /Confirm delete 1/.test(cleanup.textContent));
+  cancel.fire('click');
+  check('Cancel revokes archive deletion confirmation',
+    /Preview cleanup/.test(cleanup.textContent) && deleteCalls === 0);
+  cleanup.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  age.value = '31';
+  age.fire('input');
+  cleanup.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('changing age forces a new preview instead of submitting prior plan',
+    planCalls === 3 && deleteCalls === 0);
+  side.root.querySelectorAll('.sessionViewBtn')[0]?.fire('click');
+  await side.refresh(null);
+  check('view change invalidates destructive confirmation',
+    /Preview cleanup/.test(cleanup.textContent));
+  side.root.querySelectorAll('.sessionViewBtn')[1]?.fire('click');
+  await side.refresh(null);
+  age.value = '30';
+  age.fire('input');
+  cleanup.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  makeStale = true;
+  cleanup.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('backend conflict does not report deletion as successful',
+    deleteCalls === 1 && /Preview stale/.test(side.root.querySelector('.sessionActionStatus')?.textContent || '')
+    && /Preview cleanup/.test(cleanup.textContent) && status.textContent === '');
+  makeStale = false;
+  cleanup.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  cleanup.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('confirmed exact preview deletes and rehydrates archived list',
+    deleteCalls === 2 && archiveRows.length === 0
+    && /permanently deleted/.test(side.root.querySelector('.sessionActionStatus')?.textContent || ''));
+  side.destroy?.();
+  adapter.http = oldHttp;
+}
+
 // Rapid session switching must keep the newest transcript when an older
 // transcript request resolves later.
 {

@@ -2157,7 +2157,33 @@ check('host bridge correlates requestId',
   await adapter.http('POST', '/api/sessions/archive', { sessionId: 'agent-2' });
   calls.length = 0;
   await new Promise((resolve) => setTimeout(resolve, 2));
-  const cleaned = await adapter.http('POST', '/api/sessions/cleanup', { maxAgeDays: 0.000000001 });
+  const plan = await adapter.http('POST', '/api/sessions/cleanup', {
+    maxAgeDays: 0.000000001, dryRun: true,
+  });
+  check('dry run returns authoritative exact archive candidate IDs without deleting',
+    plan?.ok === true && plan.dryRun === true
+    && plan.count === plan.sessionIds.length
+    && plan.sessionIds.includes('agent-2')
+    && !calls.some((c) => c.cmd === 'dispose_agent'));
+  const changed = await adapter.http('POST', '/api/sessions/cleanup', {
+    maxAgeDays: 0.000000001, expectedSessionIds: ['unexpected-session'],
+  });
+  check('changed preview fails closed without invoking disposal',
+    changed?.ok === false && changed.code === 'preview_changed'
+    && !calls.some((c) => c.cmd === 'dispose_agent'));
+  const malformed = await adapter.http('POST', '/api/sessions/cleanup', {
+    maxAgeDays: 0.000000001, expectedSessionIds: ['agent-2', 'agent-2'],
+  });
+  check('duplicate confirmation snapshot is rejected before cleanup',
+    malformed?.ok === false && malformed.code === 'invalid_preview'
+    && !calls.some((c) => c.cmd === 'dispose_agent'));
+  const invalidAge = await adapter.http('POST', '/api/sessions/cleanup', {
+    maxAgeDays: 0, dryRun: true,
+  });
+  check('cleanup refuses zero retention even as a dry run', invalidAge?.ok === false);
+  const cleaned = await adapter.http('POST', '/api/sessions/cleanup', {
+    maxAgeDays: 0.000000001, expectedSessionIds: plan.sessionIds,
+  });
   check('archived cleanup permanently disposes expired sessions',
     cleaned?.deleted >= 1
     && cleaned?.failed === 0

@@ -117,7 +117,36 @@ return (function () {
     const bulkClear = h('button', { class: 'sessionBulkClear', type: 'button' }, 'Clear');
     const bulkBar = h('div', { class: 'sessionBulkBar' }, bulkCount, bulkSelectVisible, bulkPrimary, bulkDelete, bulkClear);
     bulkBar.style.display = '';
-    const sessionControls = h('div', { class: 'sessionListControls' }, search, viewToggle, searchStatus, actionStatus, bulkBar);
+    const cleanupAge = h('input', {
+      class: 'sessionCleanupAge', type: 'number', min: '1', max: '3650', step: '1',
+      'aria-label': 'Archive retention in days', title: 'Permanently delete archives older than this many days',
+    });
+    cleanupAge.value = '30';
+    const cleanupButton = h('button', { class: 'sessionCleanupButton', type: 'button' }, 'Preview cleanup');
+    const cleanupCancel = h('button', { class: 'sessionCleanupCancel', type: 'button' }, 'Cancel');
+    const cleanupStatus = h('span', { class: 'sessionCleanupStatus', 'aria-live': 'polite' }, '');
+    const cleanupBar = h('div', { class: 'sessionCleanupBar' },
+      h('label', {}, 'Older than (days)', cleanupAge), cleanupButton, cleanupCancel, cleanupStatus);
+    let cleanupPreview = null;
+    let cleanupRequestVersion = 0;
+    let cleanupPending = false;
+    const updateCleanupUi = () => {
+      cleanupBar.style.display = view.archived ? '' : 'none';
+      cleanupButton.textContent = cleanupPreview ? `Confirm delete ${cleanupPreview.ids.length}` : 'Preview cleanup';
+      cleanupButton.disabled = cleanupPending;
+      cleanupAge.disabled = cleanupPending;
+      cleanupCancel.style.display = cleanupPreview && !cleanupPending ? '' : 'none';
+    };
+    const resetCleanupPreview = () => {
+      cleanupPreview = null;
+      cleanupRequestVersion += 1;
+      cleanupStatus.textContent = '';
+      updateCleanupUi();
+    };
+    cleanupAge.oninput = resetCleanupPreview;
+    cleanupCancel.onclick = resetCleanupPreview;
+    updateCleanupUi();
+    const sessionControls = h('div', { class: 'sessionListControls' }, search, viewToggle, searchStatus, actionStatus, bulkBar, cleanupBar);
     let actionStatusTimer = null;
     const reportAction = (message, isError = false, retry = null) => {
       if (actionStatusTimer) clearTimeout(actionStatusTimer);
@@ -242,6 +271,69 @@ return (function () {
       draw(options.selected);
     };
 
+    cleanupButton.onclick = async () => actionLock.run('bulk:mutation', async () => {
+      if (destroyed || !view.archived || cleanupPending) return;
+      const days = Number(cleanupAge.value);
+      if (!Number.isSafeInteger(days) || days < 1 || days > 3650) {
+        resetCleanupPreview();
+        reportAction('Retention must be 1–3650 whole days', true);
+        return;
+      }
+      const version = cleanupRequestVersion;
+      const preview = cleanupPreview;
+      if (preview && (preview.days !== days || Date.now() - preview.createdAt > 60000)) {
+        resetCleanupPreview();
+        reportAction('Cleanup preview expired; preview again', true);
+        return;
+      }
+      cleanupPending = true;
+      updateCleanupUi();
+      try {
+        if (!preview) {
+          const response = await adapter.http('POST', '/api/sessions/cleanup', { maxAgeDays: days, dryRun: true });
+          if (!response || response.ok !== true || response.dryRun !== true
+            || !Array.isArray(response.sessionIds) || response.count !== response.sessionIds.length
+            || response.sessionIds.some((id) => typeof id !== 'string' || !id.trim())
+            || new Set(response.sessionIds).size !== response.sessionIds.length) {
+            throw new Error(response?.error || 'Invalid cleanup preview');
+          }
+          if (destroyed || !view.archived || version !== cleanupRequestVersion) return;
+          if (response.count > 0) {
+            cleanupPreview = { days, ids: response.sessionIds.slice(), createdAt: Date.now() };
+            cleanupStatus.textContent = `${response.count} archived sessions · confirm permanent deletion`;
+          } else {
+            cleanupStatus.textContent = 'No archives past retention limit';
+          }
+        } else {
+          // The backend verifies the exact same candidate IDs again before disposal.
+          const response = await adapter.http('POST', '/api/sessions/cleanup', {
+            maxAgeDays: days, expectedSessionIds: preview.ids,
+          });
+          if (!response || !Number.isSafeInteger(response.deleted) || response.deleted < 0
+            || !Number.isSafeInteger(response.failed) || response.failed < 0
+            || response.deleted + response.failed !== preview.ids.length) {
+            throw new Error(response?.error || 'Cleanup failed or response was not acknowledged');
+          }
+          resetCleanupPreview();
+          invalidateSearch();
+          if (response.ok !== true || response.failed) {
+            reportAction(`${response.deleted} deleted · ${response.failed} failed`, true);
+          } else {
+            reportAction(`${response.deleted} archived sessions permanently deleted`);
+          }
+          if (!destroyed) await draw(options.selected);
+        }
+      } catch (err) {
+        if (!destroyed && version === cleanupRequestVersion) {
+          resetCleanupPreview();
+          reportAction(err?.message || 'Cleanup failed; preview again', true);
+        }
+      } finally {
+        cleanupPending = false;
+        if (!destroyed) updateCleanupUi();
+      }
+    });
+
     bulkPrimary.onclick = async () => actionLock.run('bulk:mutation', async () => {
       const ids = Array.from(view.selectedIds);
       if (!ids.length) return;
@@ -319,6 +411,7 @@ return (function () {
           : adapter.http('GET', '/api/runtime-state').catch(() => ({ mode: api.mode(), sessions: [] })),
       ]);
       if (destroyed || myDrawVersion !== drawVersion) return;
+      updateCleanupUi();
       const rawQuery = view.query.trim();
       const query = rawQuery.toLocaleLowerCase();
       const allRows = sessionSearch.sortRows(view.archived ? archivedRows : activeRows, view.archived);
@@ -721,6 +814,7 @@ return (function () {
       searchTimer = setTimeout(() => draw(options.selected), 180);
     };
     activeView.onclick = () => {
+      resetCleanupPreview();
       view.selectionVersion += 1;
       view.archived = false;
       view.selectedIds.clear();
@@ -732,6 +826,7 @@ return (function () {
       draw(options.selected);
     };
     archivedView.onclick = () => {
+      resetCleanupPreview();
       view.selectionVersion += 1;
       view.archived = true;
       view.selectedIds.clear();
@@ -772,6 +867,7 @@ return (function () {
       refresh: draw,
       destroy() {
         destroyed = true;
+        cleanupRequestVersion += 1;
         invalidateSearch();
         clearInterval(runtimeRefreshTimer);
         if (searchTimer) clearTimeout(searchTimer);

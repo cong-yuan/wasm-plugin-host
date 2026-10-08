@@ -3273,11 +3273,30 @@ return (function () {
         const archivedAt = Date.parse(row.archivedAt);
         return Number.isFinite(archivedAt) && archivedAt <= cutoff;
       });
+      const ids = candidates.map((row) => row.sessionId).sort();
+      if (ids.length > 5000) return { ok: false, error: 'too many archived sessions for a single cleanup' };
+      if (body?.dryRun === true) {
+        return { ok: true, dryRun: true, count: ids.length, sessionIds: ids };
+      }
+      // Exact-snapshot execution is optional for legacy callers, but mandatory
+      // for confirmed UI cleanup. Never delete a newly eligible unreviewed ID.
+      if (body && Object.prototype.hasOwnProperty.call(body, 'expectedSessionIds')) {
+        const expected = body.expectedSessionIds;
+        if (!Array.isArray(expected) || expected.length > 5000
+          || expected.some((id) => typeof id !== 'string' || !id.trim())
+          || new Set(expected).size !== expected.length) {
+          return { ok: false, code: 'invalid_preview', error: 'invalid cleanup preview' };
+        }
+        const sorted = expected.slice().sort();
+        if (sorted.length !== ids.length || sorted.some((id, index) => id !== ids[index])) {
+          return { ok: false, code: 'preview_changed', error: 'Archived sessions changed; preview again before cleanup' };
+        }
+      }
       let deleted = 0;
       const failures = [];
       for (const row of candidates) {
         const result = await disposeSession(row.sessionId);
-        if (result && result.ok) {
+        if (result && result.ok === true && result.sessionId === row.sessionId) {
           deleted += 1;
         } else {
           failures.push({
