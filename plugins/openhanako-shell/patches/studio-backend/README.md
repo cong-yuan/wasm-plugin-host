@@ -44,7 +44,7 @@ Bootstrap-only (so `initApp` reaches the session list without a Hana API):
 
 Everything else is passed through to `fetch` / the real `WebSocket`.
 
-The checked-in patch copy is intentionally kept byte-for-byte identical to `ui/desktop/src/react/studio-backend/studio-backend-bridge.ts`; `studio-backend-patch-sync.test.mjs` fails if the two drift. File history, ResourceIO and generated-resource preview remain on Hana. Workbench `files/search/content` plus the `create/writeText` action are now capability-gated: the parent hello must advertise `workbench_list_files`, `workbench_read_file`, `workbench_write_file`, and/or `workbench_search_files`. A route is intercepted only when its exact native command is advertised, so partial host upgrades do not steal unsupported legacy operations.
+The checked-in patch copy is intentionally kept byte-for-byte identical to `ui/desktop/src/react/studio-backend/studio-backend-bridge.ts`; `studio-backend-patch-sync.test.mjs` fails if the two drift. Workbench, file-history, ResourceIO core operations, and generated-resource preview are capability-gated: a route is intercepted only when its exact native command is advertised, so partial host upgrades do not steal unsupported legacy operations. ResourceIO watch/subscription/event endpoints and resource ticket issuance remain on Hana until their long-lived ownership/security model has a native host equivalent.
 
 ### Native workbench command contract
 
@@ -58,6 +58,34 @@ The parent/Studio host owns filesystem authority. These native workbench command
 - `workbench_move_file({ rootId, subdir, name, destSubdir, expectedVersion })` → `{ ok, version, files }`
 - `workbench_safe_delete({ rootId, subdir, name, expectedVersion })` → `{ ok, version, trashId, files }`
 - `workbench_upload_file({ rootId, subdir, name, base64Data, mimeType, expectedVersion })` → `{ ok, version, name, size, files }`
+
+### Native file history / ResourceIO / resource preview command contract
+
+File history commands receive an `agentId` and must resolve the tracked workspace on the host; they must not accept an arbitrary filesystem root from the iframe:
+
+- `file_history_list_files({ agentId })` → `{ files }`
+- `file_history_list_versions({ agentId, relPath })` → `{ versions }`
+- `file_history_get_snapshot({ agentId, snapshotId })` → `{ relPath, capturedAt, origin, content }`
+- `file_history_restore({ agentId, snapshotId })` → `{ ok, relPath }`
+
+ResourceIO core commands receive logical resource references. `operationContext` is audit metadata only; host authorization must come from the authenticated plugin/session binding, not from `principal` or identity fields supplied by iframe JSON:
+
+- `resource_io_stat({ resource })` → ResourceIO stat result
+- `resource_io_read({ resource, encoding })` → `{ ...readResult, encoding }`
+- `resource_io_list({ resource })` → ResourceIO list result
+- `resource_io_search({ resource, query })` → ResourceIO search result
+- `resource_io_write({ resource, content, encoding, operationContext })` → versioned write result
+- `resource_io_write_expected_version({ resource, content, encoding, expectedVersion, operationContext })` → versioned write result or `{ ok:false, conflict:true, ... }`
+- `resource_io_rename({ from, to, operationContext })` → rename result
+- `resource_io_move({ from, to, operationContext })` → move result
+- `resource_io_trash({ resource, trash, operationContext })` → recoverable trash result
+
+Generated/session resource preview uses two commands:
+
+- `resource_get_metadata({ resourceId })` → the existing resource envelope
+- `resource_read_content({ resourceId })` → `{ exists, mime, size, etag, filename, contentBase64 }`
+
+The bridge converts `contentBase64` into the browser `Response` body, preserving MIME, length, ETag and `HEAD` semantics. Ticketed `/api/resources/:resourceId/content?ticket=...` requests intentionally bypass the native preview path so Hana's existing ticket verification remains authoritative.
 
 `workbench_read_file` is text-only in this native slice; the bridge preserves the response as a raw UTF-8 `Response` body and carries `Content-Type`, `Content-Length`, `ETag`, and file metadata headers. `HEAD` returns the same metadata without a body. `workbench_safe_delete` must use the host's recoverable-trash/checkpoint mechanism rather than a permanent unlink. Upload accepts the same base64 payload shape as the existing mobile workbench endpoint; the host must enforce the workspace scope and the existing per-file size limit before writing.
 

@@ -146,6 +146,21 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
         "workbench_move_file",
         "workbench_safe_delete",
         "workbench_upload_file",
+        "file_history_list_files",
+        "file_history_list_versions",
+        "file_history_get_snapshot",
+        "file_history_restore",
+        "resource_io_stat",
+        "resource_io_read",
+        "resource_io_list",
+        "resource_io_search",
+        "resource_io_write",
+        "resource_io_write_expected_version",
+        "resource_io_rename",
+        "resource_io_move",
+        "resource_io_trash",
+        "resource_get_metadata",
+        "resource_read_content",
     ];
 
     let decl = serde_json::json!({

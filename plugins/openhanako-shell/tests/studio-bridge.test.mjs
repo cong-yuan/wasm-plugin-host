@@ -624,6 +624,126 @@ check('blob upload reports missing Studio capability explicitly',
         files: [{ name: action.args.name, isDir: false, size: 5 }],
       };
     }
+    if (action.command === 'file_history_list_files') {
+      return {
+        files: [{
+          relPath: 'src/hello.txt',
+          deletedAt: null,
+          lastCapturedAt: 1234,
+          snapshotCount: 3,
+        }],
+      };
+    }
+    if (action.command === 'file_history_list_versions') {
+      return {
+        versions: [{
+          id: 7,
+          capturedAt: 1234,
+          origin: 'event',
+          opContext: 'editor.save',
+          rawSize: 5,
+        }],
+      };
+    }
+    if (action.command === 'file_history_get_snapshot') {
+      return {
+        relPath: 'src/hello.txt',
+        capturedAt: 1234,
+        origin: 'event',
+        content: 'hello',
+      };
+    }
+    if (action.command === 'file_history_restore') {
+      return {
+        ok: true,
+        relPath: 'src/hello.txt',
+      };
+    }
+    if (action.command === 'resource_io_stat') {
+      return {
+        exists: true,
+        kind: 'local-file',
+        size: 5,
+        mtimeMs: 1234,
+        version: { mtimeMs: 1234, size: 5 },
+      };
+    }
+    if (action.command === 'resource_io_read') {
+      return {
+        exists: true,
+        content: action.args.encoding === 'base64' ? 'aGVsbG8=' : 'hello',
+        encoding: action.args.encoding || 'utf-8',
+        size: 5,
+        version: { mtimeMs: 1234, size: 5 },
+      };
+    }
+    if (action.command === 'resource_io_list') {
+      return {
+        items: [{ name: 'hello.txt', kind: 'file', size: 5 }],
+      };
+    }
+    if (action.command === 'resource_io_search') {
+      return {
+        query: action.args.query,
+        results: [{ name: 'hello.txt', path: 'hello.txt' }],
+      };
+    }
+    if (action.command === 'resource_io_write') {
+      return {
+        ok: true,
+        version: { mtimeMs: 1235, size: 11 },
+      };
+    }
+    if (action.command === 'resource_io_write_expected_version') {
+      if (action.args.expectedVersion === 'stale') {
+        return {
+          ok: false,
+          conflict: true,
+          currentVersion: { mtimeMs: 1235, size: 11 },
+          safeMessage: 'Resource changed on disk',
+        };
+      }
+      return {
+        ok: true,
+        version: { mtimeMs: 1236, size: 12 },
+      };
+    }
+    if (action.command === 'resource_io_rename') {
+      return { ok: true, from: action.args.from, to: action.args.to };
+    }
+    if (action.command === 'resource_io_move') {
+      return { ok: true, from: action.args.from, to: action.args.to };
+    }
+    if (action.command === 'resource_io_trash') {
+      return { ok: true, trashId: 'resource-trash-1' };
+    }
+    if (action.command === 'resource_get_metadata') {
+      return {
+        schemaVersion: 1,
+        resourceId: action.args.resourceId,
+        studioId: 'studio_local',
+        type: 'file',
+        source: 'session_file',
+        fileId: 'sf_generated',
+        displayName: 'generated.png',
+        lifecycle: { status: 'available', missingAt: null },
+        storage: { provider: 'session_file', localOnly: true },
+        links: {
+          self: '/api/resources/' + encodeURIComponent(action.args.resourceId),
+          content: '/api/resources/' + encodeURIComponent(action.args.resourceId) + '/content',
+        },
+      };
+    }
+    if (action.command === 'resource_read_content') {
+      return {
+        exists: true,
+        mime: 'image/png',
+        size: 5,
+        etag: '"resource-v1"',
+        filename: 'generated.png',
+        contentBase64: 'aGVsbG8=',
+      };
+    }
     if (action.command === 'transcript') return [];
     if (action.command === 'chat_partial') return null;
     throw new Error('unknown backend command: ' + action.command);
@@ -638,7 +758,26 @@ check('blob upload reports missing Studio capability explicitly',
     && workbenchCapabilities?.capabilities?.fileWorkbenchRename === true
     && workbenchCapabilities?.capabilities?.fileWorkbenchMove === true
     && workbenchCapabilities?.capabilities?.fileWorkbenchDelete === true
-    && workbenchCapabilities?.capabilities?.fileWorkbenchUpload === true);
+    && workbenchCapabilities?.capabilities?.fileWorkbenchUpload === true);  check('file history capability registry opens after native host advertises all history commands',
+    workbenchCapabilities?.capabilities?.fileHistory === true
+    && workbenchCapabilities?.capabilities?.fileHistoryList === true
+    && workbenchCapabilities?.capabilities?.fileHistoryVersions === true
+    && workbenchCapabilities?.capabilities?.fileHistorySnapshot === true
+    && workbenchCapabilities?.capabilities?.fileHistoryRestore === true);
+  check('ResourceIO capability registry opens after native host advertises all core commands',
+    workbenchCapabilities?.capabilities?.resourceIO === true
+    && workbenchCapabilities?.capabilities?.resourceIOStat === true
+    && workbenchCapabilities?.capabilities?.resourceIORead === true
+    && workbenchCapabilities?.capabilities?.resourceIOWrite === true
+    && workbenchCapabilities?.capabilities?.resourceIORename === true
+    && workbenchCapabilities?.capabilities?.resourceIOMove === true
+    && workbenchCapabilities?.capabilities?.resourceIOTrash === true);
+  check('generated resource preview capability opens after metadata/content commands are advertised',
+    workbenchCapabilities?.capabilities?.generatedResourcePreview === true
+    && workbenchCapabilities?.capabilities?.resourceMetadata === true
+    && workbenchCapabilities?.capabilities?.resourceContent === true);
+
+
 
   const workbenchFiles = await adapter.http('GET', '/api/workbench/files?mountId=default&subdir=src');
   check('workbench list delegates to Studio native command',
@@ -730,7 +869,96 @@ check('blob upload reports missing Studio capability explicitly',
   check('mobile workbench mutations share the native rename bridge',
     workbenchMobileRename?.ok === true && workbenchMobileRename?.action === 'rename');
 
+  const historyFiles = await adapter.http('GET', '/api/file-history/files?agentId=workbench-session');
+  check('file history file list delegates to native command',
+    historyFiles?.files?.[0]?.relPath === 'src/hello.txt');
 
+  const historyVersions = await adapter.http('GET', '/api/file-history/versions?agentId=workbench-session&relPath=src%2Fhello.txt');
+  check('file history versions delegate to native command',
+    historyVersions?.versions?.[0]?.id === 7);
+
+  const historySnapshot = await adapter.http('GET', '/api/file-history/snapshot?agentId=workbench-session&id=7');
+  check('file history snapshot delegates to native command',
+    historySnapshot?.content === 'hello' && historySnapshot?.relPath === 'src/hello.txt');
+
+  const historyRestore = await adapter.http('POST', '/api/file-history/restore', {
+    agentId: 'workbench-session',
+    snapshotId: 7,
+  });
+  check('file history restore delegates to native command',
+    historyRestore?.ok === true && historyRestore?.relPath === 'src/hello.txt');
+
+  const resourceStat = await adapter.http('POST', '/api/resource-io/stat', {
+    resource: { kind: 'local-file', path: '/workspace/hello.txt' },
+  });
+  check('ResourceIO stat delegates to native command',
+    resourceStat?.exists === true && resourceStat?.size === 5);
+
+  const resourceRead = await adapter.http('POST', '/api/resource-io/read', {
+    resource: { kind: 'local-file', path: '/workspace/hello.txt' },
+    encoding: 'base64',
+  });
+  check('ResourceIO read preserves requested binary encoding',
+    resourceRead?.content === 'aGVsbG8=' && resourceRead?.encoding === 'base64');
+
+  const resourceWrite = await adapter.http('POST', '/api/resource-io/write', {
+    resource: { kind: 'local-file', path: '/workspace/hello.txt' },
+    content: 'hello world',
+    reason: 'editor.save',
+  });
+  check('ResourceIO write delegates operation context without trusting principal input',
+    resourceWrite?.ok === true && resourceWrite?.version?.size === 11);
+
+  const resourceConflict = await adapter.http('POST', '/api/resource-io/write-expected-version', {
+    resource: { kind: 'local-file', path: '/workspace/hello.txt' },
+    content: 'stale',
+    encoding: 'utf-8',
+    expectedVersion: 'stale',
+  });
+  check('ResourceIO expected-version conflict becomes HTTP 409 envelope',
+    resourceConflict?.ok === false
+    && resourceConflict?.conflict === true
+    && resourceConflict?.__httpStatus === 409
+    && resourceConflict?.safeMessage === 'Resource changed on disk');
+
+  const resourceRename = await adapter.http('POST', '/api/resource-io/rename', {
+    from: { kind: 'local-file', path: '/workspace/hello.txt' },
+    to: { kind: 'local-file', path: '/workspace/renamed.txt' },
+  });
+  check('ResourceIO rename delegates to native command',
+    resourceRename?.ok === true && resourceRename?.to?.path === '/workspace/renamed.txt');
+
+  const resourceMove = await adapter.http('POST', '/api/resource-io/move', {
+    from: { kind: 'local-file', path: '/workspace/renamed.txt' },
+    to: { kind: 'local-file', path: '/workspace/archive/renamed.txt' },
+  });
+  check('ResourceIO move delegates to native command',
+    resourceMove?.ok === true && resourceMove?.to?.path === '/workspace/archive/renamed.txt');
+
+  const resourceTrash = await adapter.http('POST', '/api/resource-io/trash', {
+    resource: { kind: 'local-file', path: '/workspace/archive/renamed.txt' },
+  });
+  check('ResourceIO trash delegates to native recoverable delete',
+    resourceTrash?.ok === true && resourceTrash?.trashId === 'resource-trash-1');
+
+  const generatedMetadata = await adapter.http('GET', '/api/resources/res_sf_generated');
+  check('generated resource metadata delegates to native command',
+    generatedMetadata?.resourceId === 'res_sf_generated'
+    && generatedMetadata?.displayName === 'generated.png');
+
+  const generatedContent = await adapter.http('GET', '/api/resources/res_sf_generated/content');
+  check('generated resource content becomes a binary bridge envelope',
+    generatedContent?.__httpStatus === 200
+    && generatedContent?.__httpBodyEncoding === 'base64'
+    && generatedContent?.__httpBody === 'aGVsbG8='
+    && generatedContent?.__httpHeaders?.['Content-Type'] === 'image/png'
+    && generatedContent?.__httpHeaders?.ETag === '"resource-v1"');
+
+  const generatedHead = await adapter.http('HEAD', '/api/resources/res_sf_generated/content');
+  check('generated resource HEAD keeps metadata and removes body',
+    generatedHead?.__httpHeadOnly === true
+    && generatedHead?.__httpBody === ''
+    && generatedHead?.__httpHeaders?.['Content-Length'] === '5');
 
   studio.hostAction = null;
 }
@@ -775,7 +1003,13 @@ check('iframe bridge intercepts session search requests',
 check('iframe bridge intercepts session summary requests',
   iframeBridgeSource.includes("pathname === '/api/sessions/summary'"));
 check('iframe bridge intercepts authorized-folder requests',
-  iframeBridgeSource.includes("pathname === '/api/sessions/authorized-folders'"));
+  iframeBridgeSource.includes("pathname === '/api/sessions/authorized-folders'"));check('iframe bridge decodes native binary resource responses',
+  iframeBridgeSource.includes("envelope?.__httpBodyEncoding === 'base64'")
+  && iframeBridgeSource.includes('decodeBase64Body'));
+check('iframe bridge bypasses ticketed resource content requests',
+  iframeBridgeSource.includes('ticketedResourceContent')
+  && iframeBridgeSource.includes("new URLSearchParams(target.search).has('ticket')"));
+
 
 // Pin / unpin persists locally and is reflected in GET /api/sessions
 {

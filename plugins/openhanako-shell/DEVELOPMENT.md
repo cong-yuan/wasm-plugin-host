@@ -78,8 +78,8 @@
   - 从 project 创建新 session 时优先使用 project workspace；显式 `cwd` 始终覆盖 project mapping；unknown project fail-closed，不创建幽灵 assignment。
   - Project 右键菜单现在可以选择/清除 workspace；cwd 自动生成的临时 project 不允许伪装成可编辑 catalog workspace。
   - 该映射仍属于 OpenHanako catalog 本地持久层，不冒充 Studio 的原生 project manager。
-- embedded Studio file/workbench bridge：首个最小 native slice 已接回 `/api/workbench/files`、`/api/workbench/search`、`/api/workbench/content`（GET/HEAD）以及 `/api/workbench/actions` 的 `create/writeText`；`/api/mobile/workbench/*` 同步支持。Desk 文件读写、file-history、resource-io、generated-resource preview 仍不拦截，未实现的 native 能力继续 fail-closed。
-- file / workbench / 当前阶段：parent hello 通过 `backendCommands` 做逐 command 能力协商；没有 capability 时保持 Hana fallback，有 capability 才拦截对应 route。`workbench_read_file` 第一阶段只传文本，但 bridge 已保留 MIME/长度/ETag/mtime 与 HEAD 元数据。live bridge 与可复制 patch source 继续 byte-for-byte 同步，并由 `studio-backend-patch-sync.test.mjs` 回归保护。
+- embedded Studio file/workbench bridge：Workbench native 已覆盖 list/search/read/write、rename/move/recoverable safeDelete/upload；下一层 native bridge 再接回 file-history 四条核心读写、ResourceIO 九条 request/response 核心操作，以及 generated-resource preview 的 metadata/content。每条 route 都由 parent hello 的精确 `backendCommands` capability gate；ResourceIO watch/subscription/events 与资源 ticket 继续留在 Hana，避免把长生命周期事件所有权或 ticket 密钥带入 iframe host command。
+- file / workbench / resource 当前阶段：parent hello 通过 `backendCommands` 做逐 command 能力协商；没有 capability 时保持 Hana fallback，有 capability 才拦截对应 route。Workbench read 与 generated-resource content 都保留 MIME/长度/ETag/HEAD 元数据；generated-resource binary content 通过 base64 bridge 转成浏览器 `Response`。file-history restore、ResourceIO expected-version write 都保留 conflict/error 语义，不 fake success。live bridge 与可复制 patch source 继续 byte-for-byte 同步，并由 `studio-backend-patch-sync.test.mjs` 回归保护。
 - Sidebar UI persistence / 已完成第一阶段
   - Jian 右侧栏开关已从 `hana-jian` / `hana-jian-chat` localStorage 迁到 `/api/preferences/sidebar-ui.shell.jianOpen`。
   - sidebar / Jian / channel inspector / preview 四组宽度迁到 `/api/preferences/sidebar-ui.layout.*`；首次 server payload 缺少 `layout` 时从旧 `hana-*-width` keys 一次性迁移，之后以 Studio/adapter 持久值为准。

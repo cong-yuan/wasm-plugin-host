@@ -82,7 +82,7 @@ describe('Studio backend bridge file/workbench coverage', () => {
     expect(intercepts('/api/desk/activities')).toBe(false);
   });
 
-  it('keeps file history and resource preview APIs on Hana until Studio exposes host commands', () => {
+  it('keeps file history and resource preview on Hana until native capabilities are advertised', () => {
     expect(intercepts('/api/file-history/files')).toBe(false);
     expect(intercepts('/api/file-history/versions')).toBe(false);
     expect(intercepts('/api/file-history/restore')).toBe(false);
@@ -91,6 +91,44 @@ describe('Studio backend bridge file/workbench coverage', () => {
     expect(intercepts('/api/resource-io/events')).toBe(false);
     expect(intercepts('/api/resources/res_sf_report')).toBe(false);
     expect(intercepts('/api/resources/res_sf_report/content')).toBe(false);
+
+    const fileHistory = new Set([
+      'file_history_list_files',
+      'file_history_list_versions',
+      'file_history_get_snapshot',
+      'file_history_restore',
+    ]);
+    expect(interceptsWithCapabilities('/api/file-history/files', fileHistory, 'GET')).toBe(true);
+    expect(interceptsWithCapabilities('/api/file-history/versions', fileHistory, 'GET')).toBe(true);
+    expect(interceptsWithCapabilities('/api/file-history/snapshot', fileHistory, 'GET')).toBe(true);
+    expect(interceptsWithCapabilities('/api/file-history/restore', fileHistory, 'POST')).toBe(true);
+    expect(interceptsWithCapabilities('/api/file-history/restore', fileHistory, 'GET')).toBe(false);
+    expect(interceptsWithCapabilities('/api/file-history/files', new Set(['file_history_list_files']), 'GET')).toBe(true);
+    expect(interceptsWithCapabilities('/api/file-history/versions', new Set(['file_history_list_files']), 'GET')).toBe(false);
+
+    const resourceIO = new Set([
+      'resource_io_stat',
+      'resource_io_read',
+      'resource_io_list',
+      'resource_io_search',
+      'resource_io_write',
+      'resource_io_write_expected_version',
+      'resource_io_rename',
+      'resource_io_move',
+      'resource_io_trash',
+    ]);
+    expect(interceptsWithCapabilities('/api/resource-io/read', resourceIO, 'POST')).toBe(true);
+    expect(interceptsWithCapabilities('/api/resource-io/write', resourceIO, 'POST')).toBe(true);
+    expect(interceptsWithCapabilities('/api/resource-io/rename', resourceIO, 'POST')).toBe(true);
+    expect(interceptsWithCapabilities('/api/resource-io/events', resourceIO, 'GET')).toBe(false);
+    expect(interceptsWithCapabilities('/api/resource-io/write', new Set(['resource_io_read']), 'POST')).toBe(false);
+
+    const preview = new Set(['resource_get_metadata', 'resource_read_content']);
+    expect(interceptsWithCapabilities('/api/resources/res_sf_report', preview, 'GET')).toBe(true);
+    expect(interceptsWithCapabilities('/api/resources/res_sf_report/content', preview, 'GET')).toBe(true);
+    expect(interceptsWithCapabilities('/api/resources/res_sf_report/content', preview, 'HEAD')).toBe(true);
+    expect(interceptsWithCapabilities('/api/resources/res_sf_report/ticket', preview, 'POST')).toBe(false);
+    expect(interceptsWithCapabilities('/api/resources/res_sf_report/content', new Set(['resource_get_metadata']), 'GET')).toBe(false);
   });
 
   it('does not widen the bridge to unrelated legacy Desk APIs', () => {

@@ -946,6 +946,125 @@ return (function () {
       });
     },
 
+    fileHistoryListFilesAvailable: () => nativeCommandAvailable('file_history_list_files'),
+    fileHistoryListFiles: async (agentId) => {
+      if (!tauri.available()) return null;
+      return invokeNative('file_history_list_files', { agentId });
+    },
+    fileHistoryListVersionsAvailable: () => nativeCommandAvailable('file_history_list_versions'),
+    fileHistoryListVersions: async ({ agentId, relPath } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('file_history_list_versions', {
+        agentId: agentId || '',
+        relPath: relPath || '',
+      });
+    },
+    fileHistoryGetSnapshotAvailable: () => nativeCommandAvailable('file_history_get_snapshot'),
+    fileHistoryGetSnapshot: async ({ agentId, snapshotId } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('file_history_get_snapshot', {
+        agentId: agentId || '',
+        snapshotId: Number(snapshotId),
+      });
+    },
+    fileHistoryRestoreAvailable: () => nativeCommandAvailable('file_history_restore'),
+    fileHistoryRestore: async ({ agentId, snapshotId } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('file_history_restore', {
+        agentId: agentId || '',
+        snapshotId: Number(snapshotId),
+      });
+    },
+
+    resourceIOStatAvailable: () => nativeCommandAvailable('resource_io_stat'),
+    resourceIOStat: async (resource) => {
+      if (!tauri.available()) return null;
+      return invokeNative('resource_io_stat', { resource });
+    },
+    resourceIOReadAvailable: () => nativeCommandAvailable('resource_io_read'),
+    resourceIORead: async ({ resource, encoding } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('resource_io_read', {
+        resource,
+        encoding: encoding || 'utf-8',
+      });
+    },
+    resourceIOListAvailable: () => nativeCommandAvailable('resource_io_list'),
+    resourceIOList: async (resource) => {
+      if (!tauri.available()) return null;
+      return invokeNative('resource_io_list', { resource });
+    },
+    resourceIOSearchAvailable: () => nativeCommandAvailable('resource_io_search'),
+    resourceIOSearch: async ({ resource, query } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('resource_io_search', {
+        resource,
+        query: query == null ? '' : String(query),
+      });
+    },
+    resourceIOWriteAvailable: () => nativeCommandAvailable('resource_io_write'),
+    resourceIOWrite: async ({ resource, content, encoding, operationContext } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('resource_io_write', {
+        resource,
+        content: content == null ? '' : content,
+        encoding: encoding || 'utf-8',
+        operationContext: operationContext || null,
+      });
+    },
+    resourceIOWriteExpectedVersionAvailable: () => nativeCommandAvailable('resource_io_write_expected_version'),
+    resourceIOWriteExpectedVersion: async ({ resource, content, encoding, expectedVersion, operationContext } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('resource_io_write_expected_version', {
+        resource,
+        content: content == null ? '' : content,
+        encoding: encoding || 'utf-8',
+        expectedVersion: expectedVersion == null ? null : expectedVersion,
+        operationContext: operationContext || null,
+      });
+    },
+    resourceIORenameAvailable: () => nativeCommandAvailable('resource_io_rename'),
+    resourceIORename: async ({ from, to, operationContext } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('resource_io_rename', {
+        from,
+        to,
+        operationContext: operationContext || null,
+      });
+    },
+    resourceIOMoveAvailable: () => nativeCommandAvailable('resource_io_move'),
+    resourceIOMove: async ({ from, to, operationContext } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('resource_io_move', {
+        from,
+        to,
+        operationContext: operationContext || null,
+      });
+    },
+    resourceIOTrashAvailable: () => nativeCommandAvailable('resource_io_trash'),
+    resourceIOTrash: async ({ resource, trash, operationContext } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('resource_io_trash', {
+        resource,
+        trash: trash || {},
+        operationContext: operationContext || null,
+      });
+    },
+
+    resourceGetMetadataAvailable: () => nativeCommandAvailable('resource_get_metadata'),
+    resourceGetMetadata: async (resourceId) => {
+      if (!tauri.available()) return null;
+      return invokeNative('resource_get_metadata', { resourceId: String(resourceId || '') });
+    },
+    resourceReadContentAvailable: () => nativeCommandAvailable('resource_read_content'),
+    resourceReadContent: async ({ resourceId, range } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('resource_read_content', {
+        resourceId: String(resourceId || ''),
+        range: range || null,
+      });
+    },
+
     sendWithProgress,
 
     cancel: async (agentId) => {

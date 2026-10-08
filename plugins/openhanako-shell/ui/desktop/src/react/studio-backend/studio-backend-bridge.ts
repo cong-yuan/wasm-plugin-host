@@ -339,6 +339,39 @@ function workbenchCommandFor(pathname: string, method = 'GET', body: unknown = n
   if (pathname === '/api/workbench/upload' || pathname === '/api/mobile/workbench/upload') {
     return verb === 'POST' ? 'workbench_upload_file' : null;
   }
+
+  const fileHistoryCommands: Record<string, string> = {
+    '/api/file-history/files': 'file_history_list_files',
+    '/api/file-history/versions': 'file_history_list_versions',
+    '/api/file-history/snapshot': 'file_history_get_snapshot',
+    '/api/file-history/restore': 'file_history_restore',
+  };
+  if (Object.prototype.hasOwnProperty.call(fileHistoryCommands, pathname)) {
+    if (pathname === '/api/file-history/restore') return verb === 'POST' ? fileHistoryCommands[pathname] : null;
+    return verb === 'GET' ? fileHistoryCommands[pathname] : null;
+  }
+
+  const resourceIOCommands: Record<string, string> = {
+    '/api/resource-io/stat': 'resource_io_stat',
+    '/api/resource-io/read': 'resource_io_read',
+    '/api/resource-io/list': 'resource_io_list',
+    '/api/resource-io/search': 'resource_io_search',
+    '/api/resource-io/write': 'resource_io_write',
+    '/api/resource-io/write-expected-version': 'resource_io_write_expected_version',
+    '/api/resource-io/rename': 'resource_io_rename',
+    '/api/resource-io/move': 'resource_io_move',
+    '/api/resource-io/trash': 'resource_io_trash',
+  };
+  if (Object.prototype.hasOwnProperty.call(resourceIOCommands, pathname)) {
+    return verb === 'POST' ? resourceIOCommands[pathname] : null;
+  }
+
+  if (/^\/api\/resources\/[^/]+$/.test(pathname)) {
+    return verb === 'GET' ? 'resource_get_metadata' : null;
+  }
+  if (/^\/api\/resources\/[^/]+\/content$/.test(pathname)) {
+    return verb === 'GET' || verb === 'HEAD' ? 'resource_read_content' : null;
+  }
   return null;
 }
 
@@ -504,9 +537,11 @@ function installFetchShim(): void {
     const method = (init && init.method) || 'GET';
     const requestBody = readJsonBody(init);
     const workbenchCommand = workbenchCommandFor(target.pathname, method, requestBody);
+    const ticketedResourceContent = /^\/api\/resources\/[^/]+\/content$/.test(target.pathname)
+      && new URLSearchParams(target.search).has('ticket');
     const shouldProbe = intercepts(target.pathname) || !!workbenchCommand;
     const on = shouldProbe ? await whenReady() : false;
-    if (!on || !interceptsWithCapabilities(target.pathname, backendCommands, method, requestBody)) return native(input, init);
+    if (ticketedResourceContent || !on || !interceptsWithCapabilities(target.pathname, backendCommands, method, requestBody)) return native(input, init);
     const result = await rpc({
       op: 'http',
       method,
@@ -523,15 +558,34 @@ function installFetchShim(): void {
       : 200;
     const hasBody = !!(envelope && Object.prototype.hasOwnProperty.call(envelope, '__httpBody'));
     const payload = hasBody ? envelope.__httpBody : result;
-    const rawBody = envelope?.__httpBodyEncoding === 'utf8';
+    const bodyEncoding = envelope?.__httpBodyEncoding === 'base64'
+      ? 'base64'
+      : envelope?.__httpBodyEncoding === 'utf8'
+        ? 'utf8'
+        : 'json';
     const responseBody = envelope?.__httpHeadOnly
       ? null
-      : hasBody && rawBody
+      : hasBody && bodyEncoding === 'utf8'
         ? String(payload ?? '')
-        : JSON.stringify(payload == null ? null : payload);
+        : hasBody && bodyEncoding === 'base64'
+          ? decodeBase64Body(String(payload ?? ''))
+          : JSON.stringify(payload == null ? null : payload);
     const headers = envelope && envelope.__httpHeaders && typeof envelope.__httpHeaders === 'object'
-      ? { 'Content-Type': rawBody ? 'text/plain; charset=utf-8' : 'application/json', ...(envelope.__httpHeaders as Record<string, string>) }
-      : { 'Content-Type': 'application/json' };
+      ? {
+          'Content-Type': bodyEncoding === 'utf8'
+            ? 'text/plain; charset=utf-8'
+            : bodyEncoding === 'base64'
+              ? 'application/octet-stream'
+              : 'application/json',
+          ...(envelope.__httpHeaders as Record<string, string>),
+        }
+      : {
+          'Content-Type': bodyEncoding === 'utf8'
+            ? 'text/plain; charset=utf-8'
+            : bodyEncoding === 'base64'
+              ? 'application/octet-stream'
+              : 'application/json',
+        };
     return new Response(responseBody, {
       status,
       headers,
@@ -539,6 +593,19 @@ function installFetchShim(): void {
   };
   (patched as unknown as { __studioBridge?: boolean }).__studioBridge = true;
   window.fetch = patched as typeof window.fetch;
+}
+
+function decodeBase64Body(value: string): Uint8Array {
+  const normalized = String(value || '').replace(/\s+/g, '');
+  if (!normalized) return new Uint8Array();
+  try {
+    const binary = atob(normalized);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch {
+    throw new Error('invalid base64 bridge response');
+  }
 }
 
 function ensurePlatform(): void {

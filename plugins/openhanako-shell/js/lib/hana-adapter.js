@@ -1792,9 +1792,51 @@ return (function () {
           fileWorkbenchMove: typeof api.workbenchMoveFileAvailable === 'function' && api.workbenchMoveFileAvailable(),
           fileWorkbenchDelete: typeof api.workbenchDeleteFileAvailable === 'function' && api.workbenchDeleteFileAvailable(),
           fileWorkbenchUpload: typeof api.workbenchUploadFileAvailable === 'function' && api.workbenchUploadFileAvailable(),
-          fileHistory: false,
-          resourceIO: false,
-          generatedResourcePreview: false,
+          fileHistory: typeof api.fileHistoryListFilesAvailable === 'function'
+            && typeof api.fileHistoryListVersionsAvailable === 'function'
+            && typeof api.fileHistoryGetSnapshotAvailable === 'function'
+            && typeof api.fileHistoryRestoreAvailable === 'function'
+            && api.fileHistoryListFilesAvailable()
+            && api.fileHistoryListVersionsAvailable()
+            && api.fileHistoryGetSnapshotAvailable()
+            && api.fileHistoryRestoreAvailable(),
+          fileHistoryList: typeof api.fileHistoryListFilesAvailable === 'function' && api.fileHistoryListFilesAvailable(),
+          fileHistoryVersions: typeof api.fileHistoryListVersionsAvailable === 'function' && api.fileHistoryListVersionsAvailable(),
+          fileHistorySnapshot: typeof api.fileHistoryGetSnapshotAvailable === 'function' && api.fileHistoryGetSnapshotAvailable(),
+          fileHistoryRestore: typeof api.fileHistoryRestoreAvailable === 'function' && api.fileHistoryRestoreAvailable(),
+          resourceIO: typeof api.resourceIOStatAvailable === 'function'
+            && typeof api.resourceIOReadAvailable === 'function'
+            && typeof api.resourceIOListAvailable === 'function'
+            && typeof api.resourceIOSearchAvailable === 'function'
+            && typeof api.resourceIOWriteAvailable === 'function'
+            && typeof api.resourceIOWriteExpectedVersionAvailable === 'function'
+            && typeof api.resourceIORenameAvailable === 'function'
+            && typeof api.resourceIOMoveAvailable === 'function'
+            && typeof api.resourceIOTrashAvailable === 'function'
+            && api.resourceIOStatAvailable()
+            && api.resourceIOReadAvailable()
+            && api.resourceIOListAvailable()
+            && api.resourceIOSearchAvailable()
+            && api.resourceIOWriteAvailable()
+            && api.resourceIOWriteExpectedVersionAvailable()
+            && api.resourceIORenameAvailable()
+            && api.resourceIOMoveAvailable()
+            && api.resourceIOTrashAvailable(),
+          resourceIOStat: typeof api.resourceIOStatAvailable === 'function' && api.resourceIOStatAvailable(),
+          resourceIORead: typeof api.resourceIOReadAvailable === 'function' && api.resourceIOReadAvailable(),
+          resourceIOList: typeof api.resourceIOListAvailable === 'function' && api.resourceIOListAvailable(),
+          resourceIOSearch: typeof api.resourceIOSearchAvailable === 'function' && api.resourceIOSearchAvailable(),
+          resourceIOWrite: typeof api.resourceIOWriteAvailable === 'function' && api.resourceIOWriteAvailable(),
+          resourceIOWriteExpectedVersion: typeof api.resourceIOWriteExpectedVersionAvailable === 'function' && api.resourceIOWriteExpectedVersionAvailable(),
+          resourceIORename: typeof api.resourceIORenameAvailable === 'function' && api.resourceIORenameAvailable(),
+          resourceIOMove: typeof api.resourceIOMoveAvailable === 'function' && api.resourceIOMoveAvailable(),
+          resourceIOTrash: typeof api.resourceIOTrashAvailable === 'function' && api.resourceIOTrashAvailable(),
+          generatedResourcePreview: typeof api.resourceGetMetadataAvailable === 'function'
+            && typeof api.resourceReadContentAvailable === 'function'
+            && api.resourceGetMetadataAvailable()
+            && api.resourceReadContentAvailable(),
+          resourceMetadata: typeof api.resourceGetMetadataAvailable === 'function' && api.resourceGetMetadataAvailable(),
+          resourceContent: typeof api.resourceReadContentAvailable === 'function' && api.resourceReadContentAvailable(),
         },
       };
     }
@@ -2063,7 +2105,38 @@ return (function () {
         __httpStatus: error?.code === 'capability_unavailable' ? 501 : 500,
       };
     };
+    const nativeCommandError = (error, fallbackCode) => {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        code: error?.code === 'capability_unavailable' ? 'capability_unavailable' : fallbackCode,
+        ...(error?.command ? { command: error.command } : {}),
+        error: message,
+        __httpStatus: error?.code === 'capability_unavailable'
+          ? 501
+          : (Number.isInteger(error?.status) ? error.status : 500),
+      };
+    };
 
+    const nativeResourceResult = (result) => {
+      if (result?.ok === false && result?.conflict === true) {
+        return {
+          ...result,
+          safeMessage: result.safeMessage || 'Resource write conflict',
+          __httpStatus: 409,
+        };
+      }
+      return result;
+    };
+
+
+
+    const resourceOperationContextForBridge = (payload) => ({
+      reason: typeof payload?.reason === 'string' && payload.reason.trim() ? payload.reason.trim() : 'resource_io_route',
+      sessionId: typeof payload?.sessionId === 'string' ? payload.sessionId : null,
+      sessionPath: typeof payload?.sessionPath === 'string' ? payload.sessionPath : null,
+      requestId: typeof payload?.requestId === 'string' ? payload.requestId : null,
+    });
 
     if (pathname === '/api/health' && verb === 'GET') {
       const configured = await configuredModelFallback();
@@ -2299,6 +2372,207 @@ return (function () {
         };
       } catch (error) {
         return nativeWorkbenchError(error, 'workbench_upload_failed');
+      }
+    }
+
+    // Studio-native file history. Each route maps to one exact host command so
+    // an upgraded bridge cannot accidentally widen an older host's permissions.
+    if (pathname === '/api/file-history/files' && verb === 'GET') {
+      const command = 'file_history_list_files';
+      if (!api.fileHistoryListFilesAvailable()) return workbenchCapabilityUnavailable(command);
+      try {
+        const agentId = typeof query.agentId === 'string' ? query.agentId.trim() : '';
+        return await api.fileHistoryListFiles(agentId);
+      } catch (error) {
+        return nativeCommandError(error, 'file_history_list_failed');
+      }
+    }
+    if (pathname === '/api/file-history/versions' && verb === 'GET') {
+      const command = 'file_history_list_versions';
+      if (!api.fileHistoryListVersionsAvailable()) return workbenchCapabilityUnavailable(command);
+      try {
+        return await api.fileHistoryListVersions({
+          agentId: typeof query.agentId === 'string' ? query.agentId.trim() : '',
+          relPath: typeof query.relPath === 'string' ? query.relPath : '',
+        });
+      } catch (error) {
+        return nativeCommandError(error, 'file_history_versions_failed');
+      }
+    }
+    if (pathname === '/api/file-history/snapshot' && verb === 'GET') {
+      const command = 'file_history_get_snapshot';
+      if (!api.fileHistoryGetSnapshotAvailable()) return workbenchCapabilityUnavailable(command);
+      try {
+        return await api.fileHistoryGetSnapshot({
+          agentId: typeof query.agentId === 'string' ? query.agentId.trim() : '',
+          snapshotId: query.id,
+        });
+      } catch (error) {
+        return nativeCommandError(error, 'file_history_snapshot_failed');
+      }
+    }
+    if (pathname === '/api/file-history/restore' && verb === 'POST') {
+      const command = 'file_history_restore';
+      if (!api.fileHistoryRestoreAvailable()) return workbenchCapabilityUnavailable(command);
+      try {
+        return await api.fileHistoryRestore({
+          agentId: typeof body?.agentId === 'string' ? body.agentId.trim() : '',
+          snapshotId: body?.snapshotId,
+        });
+      } catch (error) {
+        return nativeCommandError(error, 'file_history_restore_failed');
+      }
+    }
+
+    // Studio-native ResourceIO core operations. Watch/subscription/event routes
+    // stay on Hana for now because their long-lived event ownership is separate
+    // from the request/response command surface.
+    const resourceIOCommands = {
+      '/api/resource-io/stat': ['POST', 'resource_io_stat'],
+      '/api/resource-io/read': ['POST', 'resource_io_read'],
+      '/api/resource-io/list': ['POST', 'resource_io_list'],
+      '/api/resource-io/search': ['POST', 'resource_io_search'],
+      '/api/resource-io/write': ['POST', 'resource_io_write'],
+      '/api/resource-io/write-expected-version': ['POST', 'resource_io_write_expected_version'],
+      '/api/resource-io/rename': ['POST', 'resource_io_rename'],
+      '/api/resource-io/move': ['POST', 'resource_io_move'],
+      '/api/resource-io/trash': ['POST', 'resource_io_trash'],
+    };
+    const resourceIOEntry = resourceIOCommands[pathname];
+    if (resourceIOEntry && verb === resourceIOEntry[0]) {
+      const command = resourceIOEntry[1];
+      const available = {
+        resource_io_stat: api.resourceIOStatAvailable,
+        resource_io_read: api.resourceIOReadAvailable,
+        resource_io_list: api.resourceIOListAvailable,
+        resource_io_search: api.resourceIOSearchAvailable,
+        resource_io_write: api.resourceIOWriteAvailable,
+        resource_io_write_expected_version: api.resourceIOWriteExpectedVersionAvailable,
+        resource_io_rename: api.resourceIORenameAvailable,
+        resource_io_move: api.resourceIOMoveAvailable,
+        resource_io_trash: api.resourceIOTrashAvailable,
+      }[command];
+      if (typeof available !== 'function' || !available()) return workbenchCapabilityUnavailable(command);
+      try {
+        const resource = body?.resource || body?.ref || body?.target || body;
+        let result;
+        if (command === 'resource_io_stat') {
+          result = await api.resourceIOStat(resource);
+        } else if (command === 'resource_io_read') {
+          result = await api.resourceIORead({
+            resource,
+            encoding: body?.encoding || body?.responseEncoding || 'utf-8',
+          });
+        } else if (command === 'resource_io_list') {
+          result = await api.resourceIOList(resource);
+        } else if (command === 'resource_io_search') {
+          result = await api.resourceIOSearch({ resource, query: body?.query });
+        } else if (command === 'resource_io_write') {
+          result = await api.resourceIOWrite({
+            resource,
+            content: body?.content,
+            encoding: body?.encoding || body?.contentEncoding || 'utf-8',
+            operationContext: resourceOperationContextForBridge(body),
+          });
+        } else if (command === 'resource_io_write_expected_version') {
+          result = await api.resourceIOWriteExpectedVersion({
+            resource,
+            content: body?.content,
+            encoding: body?.encoding || body?.contentEncoding || 'utf-8',
+            expectedVersion: body?.expectedVersion,
+            operationContext: resourceOperationContextForBridge(body),
+          });
+        } else if (command === 'resource_io_rename') {
+          result = await api.resourceIORename({
+            from: body?.from || body?.oldResource,
+            to: body?.to || body?.newResource,
+            operationContext: resourceOperationContextForBridge(body),
+          });
+        } else if (command === 'resource_io_move') {
+          result = await api.resourceIOMove({
+            from: body?.from || body?.oldResource,
+            to: body?.to || body?.newResource,
+            operationContext: resourceOperationContextForBridge(body),
+          });
+        } else {
+          result = await api.resourceIOTrash({
+            resource,
+            trash: body?.trash || {},
+            operationContext: resourceOperationContextForBridge(body),
+          });
+        }
+        return nativeResourceResult(result);
+      } catch (error) {
+        return nativeCommandError(error, command + '_failed');
+      }
+    }
+
+    const resourceMetadataMatch = /^\/api\/resources\/([^/]+)$/.exec(pathname);
+    if (resourceMetadataMatch && verb === 'GET') {
+      const command = 'resource_get_metadata';
+      if (!api.resourceGetMetadataAvailable()) return workbenchCapabilityUnavailable(command);
+      try {
+        const resourceId = decodeURIComponent(resourceMetadataMatch[1]);
+        const result = await api.resourceGetMetadata(resourceId);
+        if (!result) {
+          return {
+            ok: false,
+            code: 'resource_not_found',
+            error: 'resource not found',
+            __httpStatus: 404,
+          };
+        }
+        return result;
+      } catch (error) {
+        return nativeCommandError(error, 'resource_metadata_failed');
+      }
+    }
+
+    const resourceContentMatch = /^\/api\/resources\/([^/]+)\/content$/.exec(pathname);
+    if (resourceContentMatch && (verb === 'GET' || verb === 'HEAD')) {
+      const command = 'resource_read_content';
+      if (!api.resourceReadContentAvailable()) return workbenchCapabilityUnavailable(command);
+      try {
+        const resourceId = decodeURIComponent(resourceContentMatch[1]);
+        const result = await api.resourceReadContent({ resourceId });
+        if (!result || result.exists === false) {
+          return {
+            ok: false,
+            code: 'resource_not_found',
+            error: 'resource content not found',
+            __httpStatus: 404,
+            __httpHeaders: { 'Cache-Control': 'no-store' },
+          };
+        }
+        const contentBase64 = typeof result.contentBase64 === 'string' ? result.contentBase64 : '';
+        if (!contentBase64 && Number(result.size) > 0) {
+          return {
+            ok: false,
+            code: 'invalid_resource_content',
+            error: 'native resource content is missing base64 payload',
+            __httpStatus: 502,
+          };
+        }
+        const headers = {
+          'Content-Type': result.mime || result.mimeType || 'application/octet-stream',
+          'Content-Length': String(Number.isFinite(Number(result.size))
+            ? Number(result.size)
+            : Math.floor(contentBase64.length * 3 / 4)),
+          'Cache-Control': 'private, max-age=0, must-revalidate',
+          ...(result.etag ? { ETag: String(result.etag) } : {}),
+          ...(result.filename ? {
+            'Content-Disposition': 'inline; filename="' + String(result.filename).replace(/["\\\\\\r\\n]/g, '_') + '"',
+          } : {}),
+        };
+        return {
+          __httpStatus: 200,
+          __httpHeaders: headers,
+          __httpBody: verb === 'HEAD' ? '' : contentBase64,
+          __httpBodyEncoding: 'base64',
+          __httpHeadOnly: verb === 'HEAD',
+        };
+      } catch (error) {
+        return nativeCommandError(error, 'resource_content_failed');
       }
     }
 
