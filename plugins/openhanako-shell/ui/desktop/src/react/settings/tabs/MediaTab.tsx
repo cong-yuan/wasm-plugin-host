@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
@@ -191,6 +191,13 @@ export function MediaTab() {
   const [speechConfigLoading, setSpeechConfigLoading] = useState(() => !snapshotSpeechConfig);
   const [selected, setSelected] = useState<MediaSelection | null>(null);
   const showToast = useSettingsStore(s => s.showToast);
+  // Config writes are durable global state. Serialize each capability's writes so
+  // rapid selector changes cannot commit an older choice after a newer one.
+  const imageSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  const videoSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  const speechSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  const imageLoadGeneration = useRef(0);
+  const videoLoadGeneration = useRef(0);
 
   useEffect(() => {
     if (!snapshotSpeechConfig) return;
@@ -198,10 +205,12 @@ export function MediaTab() {
   }, [snapshotSpeechConfig]);
 
   const loadImageProviders = useCallback(async () => {
+    const generation = ++imageLoadGeneration.current;
     setImageConfigLoading(true);
     try {
       const res = await hanaFetch('/api/media/image/providers');
       const data = await res.json();
+      if (generation !== imageLoadGeneration.current) return;
       const nextProviders = data.providers || {};
       setProviders(nextProviders);
       setConfig(data.config || {});
@@ -213,18 +222,21 @@ export function MediaTab() {
         return providerId ? { kind: 'imageGeneration', providerId } : null;
       });
     } catch {
+      if (generation !== imageLoadGeneration.current) return;
       setProviders({});
       setConfig({});
     } finally {
-      setImageConfigLoading(false);
+      if (generation === imageLoadGeneration.current) setImageConfigLoading(false);
     }
   }, []);
 
   const loadVideoProviders = useCallback(async () => {
+    const generation = ++videoLoadGeneration.current;
     setVideoConfigLoading(true);
     try {
       const res = await hanaFetch('/api/media/video/providers');
       const data = await res.json();
+      if (generation !== videoLoadGeneration.current) return;
       const nextProviders = data.providers || {};
       setVideoProviders(nextProviders);
       setVideoConfig(data.config || {});
@@ -236,10 +248,11 @@ export function MediaTab() {
         return providerId ? { kind: 'videoGeneration', providerId } : null;
       });
     } catch {
+      if (generation !== videoLoadGeneration.current) return;
       setVideoProviders({});
       setVideoConfig({});
     } finally {
-      setVideoConfigLoading(false);
+      if (generation === videoLoadGeneration.current) setVideoConfigLoading(false);
     }
   }, []);
 
@@ -307,62 +320,74 @@ export function MediaTab() {
     : speechConfigReady ? '' : LOADING_SELECT_VALUE;
 
   const saveConfig = async (updates: Partial<MediaConfig>) => {
-    try {
-      const res = await hanaFetch('/api/media/image/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values: encodeConfigPatch(updates) }),
+    imageSaveQueue.current = imageSaveQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        const res = await hanaFetch('/api/media/image/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values: encodeConfigPatch(updates) }),
+        });
+        const data = await res.json().catch(() => null);
+        if (data?.values) setConfig(data.values);
+        else setConfig(prev => applyConfigPatch(prev || {}, updates));
+        showToast(t('settings.saved'), 'success');
+      })
+      .catch((err: any) => {
+        showToast(err.message || 'Save failed', 'error');
       });
-      const data = await res.json().catch(() => null);
-      if (data?.values) setConfig(data.values);
-      else setConfig(prev => applyConfigPatch(prev || {}, updates));
-      showToast(t('settings.saved'), 'success');
-    } catch (err: any) {
-      showToast(err.message || 'Save failed', 'error');
-    }
+    return imageSaveQueue.current;
   };
 
   const saveVideoConfig = async (updates: Partial<MediaConfig>) => {
-    try {
-      const res = await hanaFetch('/api/media/video/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values: encodeConfigPatch(updates) }),
+    videoSaveQueue.current = videoSaveQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        const res = await hanaFetch('/api/media/video/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values: encodeConfigPatch(updates) }),
+        });
+        const data = await res.json().catch(() => null);
+        if (data?.values) setVideoConfig(data.values);
+        else setVideoConfig(prev => applyConfigPatch(prev || {}, updates));
+        showToast(t('settings.saved'), 'success');
+      })
+      .catch((err: any) => {
+        showToast(err.message || 'Save failed', 'error');
       });
-      const data = await res.json().catch(() => null);
-      if (data?.values) setVideoConfig(data.values);
-      else setVideoConfig(prev => applyConfigPatch(prev || {}, updates));
-      showToast(t('settings.saved'), 'success');
-    } catch (err: any) {
-      showToast(err.message || 'Save failed', 'error');
-    }
+    return videoSaveQueue.current;
   };
 
   const saveSpeechConfig = async (updates: SpeechConfigPatch) => {
-    try {
-      const res = await hanaFetch('/api/speech-recognition/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values: encodeSpeechConfigPatch(updates) }),
+    speechSaveQueue.current = speechSaveQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        const res = await hanaFetch('/api/speech-recognition/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values: encodeSpeechConfigPatch(updates) }),
+        });
+        const data = await res.json().catch(() => null);
+        setSpeechConfig(prev => {
+          const base = prev || { enabled: false };
+          const next = data?.config
+            ? mergeSpeechConfig(base, data.config)
+            : data?.values
+              ? mergeSpeechConfig(base, data.values)
+              : applySpeechConfigPatch(base, updates);
+          updateSettingsSnapshot(snapshot => ({
+            ...snapshot,
+            preferences: { ...snapshot.preferences, speechRecognition: next },
+          }));
+          return next;
+        });
+        showToast(t('settings.saved'), 'success');
+      })
+      .catch((err: any) => {
+        showToast(err.message || 'Save failed', 'error');
       });
-      const data = await res.json().catch(() => null);
-      setSpeechConfig(prev => {
-        const base = prev || { enabled: false };
-        const next = data?.config
-          ? mergeSpeechConfig(base, data.config)
-          : data?.values
-            ? mergeSpeechConfig(base, data.values)
-            : applySpeechConfigPatch(base, updates);
-        updateSettingsSnapshot(snapshot => ({
-          ...snapshot,
-          preferences: { ...snapshot.preferences, speechRecognition: next },
-        }));
-        return next;
-      });
-      showToast(t('settings.saved'), 'success');
-    } catch (err: any) {
-      showToast(err.message || 'Save failed', 'error');
-    }
+    return speechSaveQueue.current;
   };
 
   return (

@@ -90,6 +90,7 @@ export function FileHistoryModal() {
 
   const handleRestore = useCallback(async () => {
     if (!agentId || selectedVersion == null || !selectedPath) return;
+    if (!window.confirm(t('fileHistory.restoreConfirm'))) return;
     setStatus('restoring');
     try {
       await restoreHistorySnapshot(agentId, selectedVersion);
@@ -99,7 +100,7 @@ export function FileHistoryModal() {
     } catch {
       setStatus('error');
     }
-  }, [agentId, selectedVersion, selectedPath]);
+  }, [agentId, selectedVersion, selectedPath, t]);
 
   const visibleFiles = files.filter(f => !filter || f.relPath.includes(filter));
   const activeFiles = visibleFiles.filter(f => f.deletedAt == null);

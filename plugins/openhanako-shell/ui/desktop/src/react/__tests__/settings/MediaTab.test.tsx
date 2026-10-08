@@ -235,6 +235,120 @@ describe('MediaTab media config', () => {
     });
   });
 
+  it('keeps the newest runtime provider refresh when focus refreshes return out of order', async () => {
+    const imageResolvers: Array<(response: Response) => void> = [];
+    let imageLoads = 0;
+    mocks.hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/media/image/providers') {
+        imageLoads += 1;
+        return new Promise(resolve => { imageResolvers.push(resolve); });
+      }
+      if (path === '/api/media/video/providers') {
+        return Promise.resolve(jsonResponse({ providers: {}, config: {} }));
+      }
+      return Promise.resolve(jsonResponse({ values: {} }));
+    });
+
+    render(<MediaTab />);
+    window.dispatchEvent(new Event('focus'));
+    await waitFor(() => expect(imageLoads).toBe(2));
+
+    const newer = jsonResponse({
+      providers: {
+        fresh: {
+          providerId: 'fresh',
+          displayName: 'Fresh',
+          hasCredentials: true,
+          models: [{ id: 'model-new', name: 'Model New' }],
+          availableModels: [],
+        },
+      },
+      config: {},
+    });
+    const older = jsonResponse({
+      providers: {
+        stale: {
+          providerId: 'stale',
+          displayName: 'Stale',
+          hasCredentials: true,
+          models: [{ id: 'model-old', name: 'Model Old' }],
+          availableModels: [],
+        },
+      },
+      config: {},
+    });
+
+    imageResolvers[1](newer);
+    expect(await screen.findByRole('button', { name: /Fresh/ })).toBeInTheDocument();
+    imageResolvers[0](older);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Fresh/ })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Stale/ })).not.toBeInTheDocument();
+    });
+  });
+
+  it('serializes rapid image default changes so durable writes stay in user order', async () => {
+    let releaseFirst!: (response: Response) => void;
+    let saveCalls = 0;
+    mocks.hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/media/image/providers') {
+        return Promise.resolve(jsonResponse({
+          providers: {
+            demo: {
+              providerId: 'demo',
+              displayName: 'Demo',
+              hasCredentials: true,
+              models: [
+                { id: 'model-a', name: 'Model A' },
+                { id: 'model-b', name: 'Model B' },
+              ],
+              availableModels: [],
+            },
+          },
+          config: {},
+        }));
+      }
+      if (path === '/api/media/video/providers') {
+        return Promise.resolve(jsonResponse({ providers: {}, config: {} }));
+      }
+      if (path === '/api/speech-recognition/providers') {
+        return Promise.resolve(jsonResponse({ providers: {}, config: {} }));
+      }
+      if (path === '/api/media/image/config') {
+        saveCalls += 1;
+        if (saveCalls === 1) {
+          return new Promise(resolve => { releaseFirst = resolve; });
+        }
+        return Promise.resolve(jsonResponse({
+          values: { defaultImageModel: { provider: 'demo', id: 'model-b' } },
+        }));
+      }
+      return Promise.resolve(jsonResponse({ values: {} }));
+    });
+
+    render(<MediaTab />);
+    const select = await screen.findByLabelText('settings.media.defaultModel');
+
+    fireEvent.change(select, { target: { value: 'demo/model-a' } });
+    fireEvent.change(select, { target: { value: 'demo/model-b' } });
+
+    await waitFor(() => expect(saveCalls).toBe(1));
+    expect(JSON.parse(String((mocks.hanaFetch.mock.calls.find(([path]) => path === '/api/media/image/config')?.[1] as RequestInit).body))).toEqual({
+      values: { defaultImageModel: { provider: 'demo', id: 'model-a' } },
+    });
+
+    releaseFirst(jsonResponse({
+      values: { defaultImageModel: { provider: 'demo', id: 'model-a' } },
+    }));
+
+    await waitFor(() => expect(saveCalls).toBe(2));
+    const saveCallsArgs = mocks.hanaFetch.mock.calls.filter(([path]) => path === '/api/media/image/config');
+    expect(JSON.parse(String((saveCallsArgs[1][1] as RequestInit).body))).toEqual({
+      values: { defaultImageModel: { provider: 'demo', id: 'model-b' } },
+    });
+  });
+
   it('auto-selects the first credentialed image provider instead of the first provider in transport order', async () => {
     mocks.hanaFetch.mockImplementation((path: string) => {
       if (path === '/api/media/image/providers') {

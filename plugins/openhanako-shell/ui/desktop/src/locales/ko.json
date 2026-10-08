@@ -3520,6 +3520,7 @@
     "noVersions": "이 파일의 버전이 없습니다",
     "selectVersion": "버전을 선택하여 변경 사항 보기",
     "restore": "이 버전으로 복원",
+    "restoreConfirm": "이 버전을 작업공간에 복원할까요? 복원 작업은 새 기록 스냅샷으로 저장됩니다.",
     "restoreDone": "복원됨",
     "error": "작업 실패",
     "origin": {

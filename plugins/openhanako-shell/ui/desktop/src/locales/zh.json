@@ -3481,6 +3481,7 @@
     "noVersions": "该文件暂无版本",
     "selectVersion": "选择一个版本查看变化",
     "restore": "还原此版本",
+    "restoreConfirm": "确定将此版本还原到工作区吗？还原操作会记录一个新的历史快照。",
     "restoreDone": "已还原",
     "error": "操作失败",
     "origin": {

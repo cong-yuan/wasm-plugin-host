@@ -25,6 +25,7 @@ import { useStore } from '../../stores';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubGlobal('confirm', vi.fn(() => true));
   window.t = ((key: string) => key) as typeof window.t;
   useStore.setState({
     fileHistoryModal: { open: true, preselectRelPath: null },
@@ -44,6 +45,19 @@ describe('FileHistoryModal', () => {
     expect(screen.getByText('gone.md')).toBeTruthy();
   });
 
+  it('does not restore when the confirmation is declined', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => false));
+    render(<FileHistoryModal />);
+    await waitFor(() => expect(screen.getByText('notes/a.md')).toBeTruthy());
+    fireEvent.click(screen.getByText('notes/a.md'));
+    await waitFor(() => expect(mocks.fetchHistoryVersions).toHaveBeenCalled());
+    fireEvent.click(await screen.findByTestId('fh-version-7'));
+    await waitFor(() => expect(mocks.fetchHistorySnapshot).toHaveBeenCalledWith('hana', 7));
+    fireEvent.click(screen.getByTestId('fh-restore'));
+    expect(confirm).toHaveBeenCalledWith('fileHistory.restoreConfirm');
+    expect(mocks.restoreHistorySnapshot).not.toHaveBeenCalled();
+  });
+
   it('loads versions when a file is selected and restores on confirm', async () => {
     render(<FileHistoryModal />);
     await waitFor(() => expect(screen.getByText('notes/a.md')).toBeTruthy());
@@ -54,5 +68,6 @@ describe('FileHistoryModal', () => {
     await waitFor(() => expect(mocks.fetchHistorySnapshot).toHaveBeenCalledWith('hana', 7));
     fireEvent.click(screen.getByTestId('fh-restore'));
     await waitFor(() => expect(mocks.restoreHistorySnapshot).toHaveBeenCalledWith('hana', 7));
+    expect(confirm).toHaveBeenCalledWith('fileHistory.restoreConfirm');
   });
 });

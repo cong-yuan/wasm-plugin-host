@@ -78,6 +78,18 @@ describe('BrowserCard collapse semantics', () => {
     expect(useStore.getState().browserBySession[SESSION_PATH].running).toBe(true);
   });
 
+  it('opens the browser viewer from keyboard activation', () => {
+    act(() => {
+      setBrowserStateForPath(SESSION_PATH, { running: true, url: 'https://example.com', thumbnail: null });
+    });
+    render(<BrowserCard />);
+    const browserButton = screen.getByRole('button', { name: 'browser.openViewer' });
+    fireEvent.keyDown(browserButton, { key: 'Enter' });
+    fireEvent.keyDown(browserButton, { key: ' ' });
+    expect(openBrowserViewerMock).toHaveBeenCalledTimes(2);
+    expect(openBrowserViewerMock).toHaveBeenLastCalledWith({ sessionPath: SESSION_PATH });
+  });
+
   it('keeps the card collapsed while the browser keeps reporting status', () => {
     act(() => {
       setBrowserStateForPath(SESSION_PATH, { running: true, url: 'https://example.com', thumbnail: null });

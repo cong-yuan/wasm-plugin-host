@@ -94,10 +94,10 @@
 - plugins / widgets / pages — Plugin pages/widgets are now protected against stale concurrent catalog refreshes, and persisted hide/show/reorder preference writes are serialized so rapid UI changes cannot reorder the durable preference stream. Existing iframe/page/widget routing remains capability-gated.
 - channels / DM — DM inspector now exposes a non-destructive reset action backed by `/api/dm/:peerId/reset`; it clears only the current Agent's phone projection/cache and activity UI while preserving the shared DM truth file. The action is owner-scoped, confirmed, and fail-closed on backend errors.
 - memories — Agent Memory settings now expose JSON backup/restore for the selected Agent. Export downloads the existing server-generated memory payload; import accepts the versioned `facts`/`memories` array, routes it through the existing agent-scoped import endpoint, and broadcasts `hana-memories-changed` so an open Memory Viewer refreshes immediately after import or clear.
-- browser
+- browser — BrowserCard now has keyboard-accessible viewer activation while collapse remains a local UI-only action; opening the viewer fails closed when the current session has no path.
 - skills — Skills settings now has an explicit `Reload skills` action. It calls the backend reload endpoint, then refreshes the selected Agent skills and compatible external-path view; the action is guarded against concurrent clicks and covered by the existing SkillsTab safety net.
-- media / image / video
-- resource-io / checkpoints / file history
+- media / image / video — Global image/video/speech configuration writes are serialized per capability, so rapid selector/toggle changes preserve user order; image/video provider refreshes also reject stale focus-triggered responses.
+- resource-io / checkpoints / file history — File History restore now requires explicit confirmation and keeps the existing ResourceIO/history-backed restore semantics; cancellation is side-effect free.
 
 ## 接线原则
 

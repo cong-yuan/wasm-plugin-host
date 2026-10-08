@@ -3520,6 +3520,7 @@
     "noVersions": "該檔案暫無版本",
     "selectVersion": "選擇一個版本查看變化",
     "restore": "還原此版本",
+    "restoreConfirm": "確定要將此版本還原到工作區嗎？還原操作會記錄新的歷史快照。",
     "restoreDone": "已還原",
     "error": "操作失敗",
     "origin": {

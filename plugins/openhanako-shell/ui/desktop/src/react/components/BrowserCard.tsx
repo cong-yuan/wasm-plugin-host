@@ -17,10 +17,17 @@ export function BrowserCard() {
     collapsed,
   } = useBrowserState();
 
-  const handleClick = useCallback(() => {
+  const handleOpenViewer = useCallback(() => {
     const sessionPath = useStore.getState().currentSessionPath;
+    if (!sessionPath) return;
     window.platform?.openBrowserViewer?.({ sessionPath });
   }, []);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    handleOpenViewer();
+  }, [handleOpenViewer]);
 
   // 叉只收起卡片，不碰浏览器本身：agent 的操作不能被一次视觉整理打断。
   // 真正的急停留在 viewer 工具栏。
@@ -40,7 +47,15 @@ export function BrowserCard() {
   }
 
   return (
-    <div className="browser-floating-card" id="browserFloatingCard" onClick={handleClick}>
+    <div
+      className="browser-floating-card"
+      id="browserFloatingCard"
+      role="button"
+      tabIndex={0}
+      aria-label={(window.t ?? ((p: string) => p))('browser.openViewer')}
+      onClick={handleOpenViewer}
+      onKeyDown={handleKeyDown}
+    >
       <div className="browser-floating-info">
         <div className="browser-floating-icon">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -65,7 +80,13 @@ export function BrowserCard() {
             draggable={false}
           />
         )}
-        <button className="browser-floating-close" title={(window.t ?? ((p: string) => p))('browser.collapse')} onClick={handleCollapse}>
+        <button
+          type="button"
+          className="browser-floating-close"
+          title={(window.t ?? ((p: string) => p))('browser.collapse')}
+          aria-label={(window.t ?? ((p: string) => p))('browser.collapse')}
+          onClick={handleCollapse}
+        >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M18 6L6 18M6 6l12 12"></path>
           </svg>

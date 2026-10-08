@@ -3604,6 +3604,7 @@
     "noVersions": "No versions for this file",
     "selectVersion": "Select a version to see changes",
     "restore": "Restore this version",
+    "restoreConfirm": "Restore this version to the workspace? A new restore snapshot will be recorded.",
     "restoreDone": "Restored",
     "error": "Operation failed",
     "origin": {
