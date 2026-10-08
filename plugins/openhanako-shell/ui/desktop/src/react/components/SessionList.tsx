@@ -314,6 +314,27 @@ function SessionListInner() {
     }
   }, []);
 
+  const handleSessionListKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const target = event.target as HTMLElement | null;
+    if (!target || target.closest('input, textarea, [contenteditable="true"]')) return;
+    const current = target.closest<HTMLButtonElement>('button[data-session-path]');
+    if (!current) return;
+    const buttons = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('button[data-session-path]'),
+    ).filter(button => !button.disabled);
+    const index = buttons.indexOf(current);
+    if (index < 0 || buttons.length < 2) return;
+    let nextIndex = -1;
+    if (event.key === 'ArrowDown') nextIndex = Math.min(index + 1, buttons.length - 1);
+    else if (event.key === 'ArrowUp') nextIndex = Math.max(index - 1, 0);
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = buttons.length - 1;
+    if (nextIndex < 0 || nextIndex === index) return;
+    event.preventDefault();
+    buttons[nextIndex]?.focus();
+  }, []);
+
   useEffect(() => {
     if (viewMode !== 'project') return;
     loadSessionProjectCatalog()
@@ -789,7 +810,11 @@ function SessionListInner() {
         onChange={setSearchQuery}
         onClear={() => setSearchQuery('')}
       />
-      <div className={styles.sessionListScroller}>
+      <div
+        className={styles.sessionListScroller}
+        onKeyDown={handleSessionListKeyDown}
+        aria-label={t('sidebar.sessions')}
+      >
         {content}
       </div>
       {projectMenuPosition && (
@@ -1523,6 +1548,7 @@ export const SessionSearchItem = memo(function SessionSearchItem({
     <button
       className={`${styles.sessionSearchItem}${isActive ? ` ${styles.sessionSearchItemActive}` : ''}`}
       data-session-path={result.path}
+      aria-current={isActive ? 'page' : undefined}
       onClick={handleClick}
     >
       <div className={styles.sessionItemHeader}>
@@ -1689,6 +1715,7 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isPending,
       <button
         className={`${styles.sessionItem}${isSingleLine ? ` ${styles.sessionItemSingleLine}` : ''}${isActive ? ` ${styles.sessionItemActive}` : ''}${isDeletedAgentSession ? ` ${styles.sessionItemReadOnly}` : ''}`}
         data-session-path={s.path}
+        aria-current={isActive ? 'page' : undefined}
         data-row-mode={rowMode}
         data-unread-output={hasUnreadOutput ? 'true' : 'false'}
         data-switch-pending={isPending ? 'true' : 'false'}

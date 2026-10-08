@@ -226,6 +226,26 @@ describe('SessionList context menu', () => {
     );
   });
 
+  it('supports arrow/home/end keyboard navigation and exposes the active session', () => {
+    useStore.setState({ currentSessionPath: '/tmp/agents/hana/sessions/with-summary.jsonl' });
+    render(<SessionList />);
+
+    const first = sessionButton('Has summary');
+    const second = sessionButton('No summary');
+    expect(first).toHaveAttribute('aria-current', 'page');
+    expect(second).not.toHaveAttribute('aria-current');
+
+    first.focus();
+    fireEvent.keyDown(first, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(second);
+    fireEvent.keyDown(second, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(first, { key: 'End' });
+    expect(document.activeElement).toBe(second);
+    fireEvent.keyDown(second, { key: 'Home' });
+    expect(document.activeElement).toBe(first);
+  });
+
   it('keeps the right-click menu as a shared narrow menu and opens summary as a click-through preview card', async () => {
     render(<SessionList />);
 
