@@ -1483,13 +1483,26 @@ return (function () {
       return { id: ASSISTANT_ID, name: ASSISTANT_NAME };
     }
     if (pathname === '/api/agents/switch' && verb === 'POST') {
-      return { ok: true, agentId: ASSISTANT_ID };
+      return {
+        ok: false,
+        agentId: ASSISTANT_ID,
+        code: 'capability_unavailable',
+        error: 'studio backend does not expose primary-agent switching yet',
+      };
     }
     if (pathname === '/api/models/auxiliary-vision' && verb === 'GET') {
-      return { available: false };
+      return {
+        available: false,
+        code: 'capability_unavailable',
+        error: 'studio backend does not expose model input-modality metadata yet',
+      };
     }
     if (pathname === '/api/upload-blob' && verb === 'POST') {
-      return { ok: false, error: 'studio bridge: upload not supported' };
+      return {
+        ok: false,
+        code: 'capability_unavailable',
+        error: 'studio backend does not expose a file/blob ingest command yet',
+      };
     }
     if (pathname.startsWith('/api/bridge')) {
       return { ok: true, studioBridge: api.mode() };

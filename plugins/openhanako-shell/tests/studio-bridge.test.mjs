@@ -352,6 +352,15 @@ check('thinking level writes fail closed without Studio control',
   && thinkingLevelWriteLocked?.code === 'capability_unavailable');
 
 const permissionDefault = await adapter.http('GET', '/api/preferences/session-permission-default');
+const agentSwitchLocked = await adapter.http('POST', '/api/agents/switch', { agentId: 'other-agent' });
+check('agent switching fails closed without a Studio primary-agent command',
+  agentSwitchLocked?.ok === false && agentSwitchLocked?.code === 'capability_unavailable');
+const visionCapability = await adapter.http('GET', '/api/models/auxiliary-vision');
+check('auxiliary vision reports missing Studio capability explicitly',
+  visionCapability?.available === false && visionCapability?.code === 'capability_unavailable');
+const uploadCapability = await adapter.http('POST', '/api/upload-blob', { name: 'x.png', base64Data: 'AA==', mimeType: 'image/png' });
+check('blob upload reports missing Studio capability explicitly',
+  uploadCapability?.ok === false && uploadCapability?.code === 'capability_unavailable');
 check('permission default is explicitly locked to ask without backend support',
   permissionDefault?.permissionMode === 'ask'
   && permissionDefault?.locked === true
