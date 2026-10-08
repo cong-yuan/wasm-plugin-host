@@ -490,9 +490,37 @@ function SessionListInner() {
     }
   }, [bulkAssigningProject, clearSessionSelection, selectedCount, selectedSessionPaths, t, updateSessionProjectAssignment]);
 
-  const patchProject = useCallback(async (projectId: string, patch: { folderId?: string | null; name?: string }) => {
+  const patchProject = useCallback(async (projectId: string, patch: { folderId?: string | null; name?: string; workspacePath?: string | null }) => {
     return patchSessionProjectInCatalog(projectId, patch);
   }, []);
+
+  const setProjectWorkspace = useCallback(async (project: SessionProjectGroup) => {
+    if (project.source !== 'catalog') return;
+    const folder = await window.platform?.selectFolder?.();
+    if (!folder) return;
+    try {
+      await patchProject(project.id, { workspacePath: folder });
+    } catch (err) {
+      useStore.getState().addToast(
+        err instanceof Error ? err.message : t('sidebar.projects.workspaceUpdateFailed'),
+        'error',
+        5000,
+      );
+    }
+  }, [patchProject, t]);
+
+  const clearProjectWorkspace = useCallback(async (project: SessionProjectGroup) => {
+    if (project.source !== 'catalog' || !project.workspacePath) return;
+    try {
+      await patchProject(project.id, { workspacePath: null });
+    } catch (err) {
+      useStore.getState().addToast(
+        err instanceof Error ? err.message : t('sidebar.projects.workspaceUpdateFailed'),
+        'error',
+        5000,
+      );
+    }
+  }, [patchProject, t]);
 
   const patchFolder = useCallback(async (folderId: string, patch: { name?: string }) => {
     return patchSessionProjectFolderInCatalog(folderId, patch);
@@ -1005,6 +1033,17 @@ function SessionListInner() {
                 projectId: projectActionMenu.project.id,
                 value: projectActionMenu.project.name,
               }),
+            },
+            {
+              label: t('sidebar.projects.setWorkspace'),
+              disabled: projectActionMenu.project.source !== 'catalog'
+                || typeof window.platform?.selectFolder !== 'function',
+              action: () => { void setProjectWorkspace(projectActionMenu.project); },
+            },
+            {
+              label: t('sidebar.projects.clearWorkspace'),
+              disabled: projectActionMenu.project.source !== 'catalog' || !projectActionMenu.project.workspacePath,
+              action: () => { void clearProjectWorkspace(projectActionMenu.project); },
             },
             {
               label: t('sidebar.projects.deleteProject'),

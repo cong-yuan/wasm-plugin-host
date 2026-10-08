@@ -73,8 +73,9 @@
 - project / workspace mapping / 已完成第一阶段
   - catalog project 增加可选 `workspacePath`；创建项目时从当前 session 的 cwd 自动建立映射，旧 catalog 自动补 `null`。
   - 从 project 创建新 session 时优先使用 project workspace；显式 `cwd` 始终覆盖 project mapping；unknown project fail-closed，不创建幽灵 assignment。
+  - Project 右键菜单现在可以选择/清除 workspace；cwd 自动生成的临时 project 不允许伪装成可编辑 catalog workspace。
   - 该映射仍属于 OpenHanako catalog 本地持久层，不冒充 Studio 的原生 project manager。
-- embedded Studio file/workbench bridge：`/api/workbench/*`、Desk 兼容文件读写、file-history、resource-io、generated-resource preview 已加入 Studio iframe bridge allowlist；未加入无关 Desk 管理 API，避免把不具备 Studio 原生能力的路径伪装成已接入。
+- embedded Studio file/workbench bridge：`/api/workbench/*`、`/api/mobile/workbench/*`、Desk 兼容文件读写、file-history、resource-io、generated-resource preview 已加入 Studio iframe bridge allowlist；未加入无关 Desk 管理 API，避免把不具备 Studio 原生能力的路径伪装成已接入。
 - file / workbench / preview
 - Sidebar UI persistence / 已完成第一阶段
   - Jian 右侧栏开关已从 `hana-jian` / `hana-jian-chat` localStorage 迁到 `/api/preferences/sidebar-ui.shell.jianOpen`。

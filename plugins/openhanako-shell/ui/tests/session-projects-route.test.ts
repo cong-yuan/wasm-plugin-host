@@ -78,6 +78,46 @@ describe("session projects route", () => {
     expect(engine.reorderSessionProjectFolders).toHaveBeenCalledWith({ folderIds: ["folder-b", "folder-a"] });
   });
 
+  it("creates and updates project workspace mappings without dropping null clears", async () => {
+    const engine = {
+      createSessionProject: vi.fn(({ name, folderId, workspacePath }) => ({
+        id: "project-workspace",
+        name,
+        folderId,
+        workspacePath,
+        order: 0,
+      })),
+      updateSessionProject: vi.fn((id, patch) => ({
+        id,
+        name: "Workspace Project",
+        folderId: null,
+        workspacePath: patch.workspacePath,
+        order: 0,
+      })),
+    };
+    const app = makeApp(engine);
+
+    const createRes = await app.request("/api/session-projects/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Workspace Project", workspacePath: "/tmp/project-workspace" }),
+    });
+    const patchRes = await app.request("/api/session-projects/projects/project-workspace", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspacePath: null }),
+    });
+
+    expect(createRes.status).toBe(200);
+    expect(engine.createSessionProject).toHaveBeenCalledWith({
+      name: "Workspace Project",
+      folderId: null,
+      workspacePath: "/tmp/project-workspace",
+    });
+    expect((await patchRes.json()).project.workspacePath).toBe(null);
+    expect(engine.updateSessionProject).toHaveBeenCalledWith("project-workspace", { workspacePath: null });
+  });
+
   it("creates projects inside folders and moves projects across levels", async () => {
     const engine = {
       createSessionProject: vi.fn(({ name, folderId }) => ({ id: "project-new", name, folderId, order: 0 })),

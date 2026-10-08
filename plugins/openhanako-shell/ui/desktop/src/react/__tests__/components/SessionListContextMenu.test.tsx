@@ -868,6 +868,82 @@ describe('SessionList context menu', () => {
     expect(await screen.findByText('Renamed Project')).toBeInTheDocument();
   });
 
+  it('sets a catalog project workspace from the project context menu', async () => {
+    makeSessionsToday();
+    const selectFolderMock = vi.fn(async () => '/tmp/project-workspace');
+    Object.defineProperty(window, 'platform', {
+      configurable: true,
+      value: { openBrowserViewer: openBrowserViewerMock, selectFolder: selectFolderMock },
+    });
+    hanaFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/browser/session-states') return jsonResponse({});
+      if (url === '/api/session-projects') {
+        return jsonResponse({
+          catalog: {
+            folders: [],
+            projects: [{ id: 'project-root', name: 'Root Project', folderId: null, workspacePath: '/tmp/old', order: 0 }],
+          },
+        });
+      }
+      if (url === '/api/session-projects/projects/project-root' && init?.method === 'PATCH') {
+        return jsonResponse({
+          ok: true,
+          project: { id: 'project-root', name: 'Root Project', folderId: null, workspacePath: '/tmp/project-workspace', order: 0 },
+        });
+      }
+      return jsonResponse({});
+    });
+
+    render(<SessionList />);
+    await switchToProjectView();
+
+    fireEvent.contextMenu(await screen.findByText('Root Project'), { clientX: 20, clientY: 20 });
+    fireEvent.click(await screen.findByText('sidebar.projects.setWorkspace'));
+
+    await waitFor(() => {
+      expect(window.platform?.selectFolder).toHaveBeenCalledTimes(1);
+      expect(hanaFetchMock).toHaveBeenCalledWith('/api/session-projects/projects/project-root', expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ workspacePath: '/tmp/project-workspace' }),
+      }));
+    });
+  });
+
+  it('clears a catalog project workspace from the project context menu', async () => {
+    makeSessionsToday();
+    hanaFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/browser/session-states') return jsonResponse({});
+      if (url === '/api/session-projects') {
+        return jsonResponse({
+          catalog: {
+            folders: [],
+            projects: [{ id: 'project-root', name: 'Root Project', folderId: null, workspacePath: '/tmp/project-workspace', order: 0 }],
+          },
+        });
+      }
+      if (url === '/api/session-projects/projects/project-root' && init?.method === 'PATCH') {
+        return jsonResponse({
+          ok: true,
+          project: { id: 'project-root', name: 'Root Project', folderId: null, workspacePath: null, order: 0 },
+        });
+      }
+      return jsonResponse({});
+    });
+
+    render(<SessionList />);
+    await switchToProjectView();
+
+    fireEvent.contextMenu(await screen.findByText('Root Project'), { clientX: 20, clientY: 20 });
+    fireEvent.click(await screen.findByText('sidebar.projects.clearWorkspace'));
+
+    await waitFor(() => {
+      expect(hanaFetchMock).toHaveBeenCalledWith('/api/session-projects/projects/project-root', expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ workspacePath: null }),
+      }));
+    });
+  });
+
   it('deletes a project and moves its visible sessions to uncategorized', async () => {
     vi.spyOn(window, 'confirm').mockReturnValueOnce(true);
     useStore.setState({
@@ -918,6 +994,47 @@ describe('SessionList context menu', () => {
       expect(useStore.getState().sessions[0].projectId).toBe('cwd:');
     });
     expect(await screen.findByText('未归类')).toBeInTheDocument();
+  });
+
+  it('uses a catalog project workspace when starting a new session', async () => {
+    useStore.setState({
+      sessions: [{
+        path: '/tmp/agents/hana/sessions/project-1.jsonl',
+        title: 'Project item 1',
+        firstMessage: 'hello',
+        modified: new Date().toISOString(),
+        messageCount: 1,
+        agentId: 'hana',
+        agentName: 'Hana',
+        cwd: '/tmp/old-workspace',
+        projectId: 'project-root',
+        pinnedAt: null,
+        hasSummary: false,
+      }],
+    });
+    hanaFetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/browser/session-states') return jsonResponse({});
+      if (url === '/api/session-projects') {
+        return jsonResponse({
+          catalog: {
+            folders: [],
+            projects: [{ id: 'project-root', name: 'Root Project', folderId: null, workspacePath: '/tmp/project-workspace', order: 0 }],
+          },
+        });
+      }
+      return jsonResponse({});
+    });
+
+    render(<SessionList />);
+    await switchToProjectView();
+
+    const projectRow = (await screen.findByText('Root Project')).closest('[role="button"]');
+    if (!projectRow) throw new Error('missing project row');
+    fireEvent.click(within(projectRow as HTMLElement).getByTitle('sidebar.projects.newChatInProject'));
+
+    await waitFor(() => {
+      expect(createNewSessionMock).toHaveBeenCalledWith({ projectId: 'project-root', cwd: '/tmp/project-workspace' });
+    });
   });
 
   it('starts a new session draft inside the selected project from the hover action', async () => {

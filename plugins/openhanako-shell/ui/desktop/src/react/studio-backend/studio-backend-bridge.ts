@@ -270,6 +270,7 @@ export function intercepts(pathname: string): boolean {
   // instead of silently falling back to the legacy Hana server. These are the APIs used
   // by Desk/RightWorkspacePanel, file history, and generated-resource previews.
   if (pathname === '/api/workbench' || pathname.startsWith('/api/workbench/')) return true;
+  if (pathname === '/api/mobile/workbench' || pathname.startsWith('/api/mobile/workbench/')) return true;
   if (pathname === '/api/desk/files' || pathname === '/api/desk/search-files' || pathname === '/api/desk/jian') return true;
   if (pathname === '/api/file-history' || pathname.startsWith('/api/file-history/')) return true;
   if (pathname === '/api/resource-io' || pathname.startsWith('/api/resource-io/')) return true;

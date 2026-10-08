@@ -7,6 +7,10 @@ describe('Studio backend bridge file/workbench coverage', () => {
     expect(intercepts('/api/workbench/search')).toBe(true);
     expect(intercepts('/api/workbench/content')).toBe(true);
     expect(intercepts('/api/workbench/actions')).toBe(true);
+    expect(intercepts('/api/mobile/workbench/files')).toBe(true);
+    expect(intercepts('/api/mobile/workbench/search')).toBe(true);
+    expect(intercepts('/api/mobile/workbench/content')).toBe(true);
+    expect(intercepts('/api/mobile/workbench/actions')).toBe(true);
   });
 
   it('routes legacy Desk file operations used by the compatibility UI', () => {
