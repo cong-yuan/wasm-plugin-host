@@ -101,11 +101,17 @@ export class LocalFsProvider {
     this.assertAllowed(filePath, "read");
     const stat = fs.statSync(filePath);
     if (!stat.isFile()) throw new Error(`resource is not a file: ${filePath}`);
+    const content = fs.readFileSync(filePath);
     return {
       resourceKey: localResourceKey(filePath),
       resource: this.resourceForPath(filePath),
-      content: fs.readFileSync(filePath),
-      version: versionFromStat(stat),
+      content,
+      // Hash the bytes actually returned to the reader, rather than a second
+      // read of the path, so clients have an actionable CAS content token.
+      version: {
+        ...versionFromStat(stat),
+        sha256: crypto.createHash("sha256").update(content).digest("hex"),
+      },
       filePath,
     };
   }
@@ -122,18 +128,60 @@ export class LocalFsProvider {
   async writeExpectedVersion(ref: ResourceRef | unknown, content: string | Buffer, expectedVersion: ResourceVersion): Promise<ResourceWriteExpectedVersionResult> {
     const filePath = this.resolvePath(ref);
     this.assertAllowed(filePath, "write");
-    const currentVersion = statFileVersionOrNull(filePath, Boolean(expectedVersion?.sha256));
-    if (!currentVersion || !fileVersionsMatch(currentVersion, expectedVersion)) {
+    // Cooperating local_fs writers coordinate through a same-directory lock.
+    // An existing lock fails closed; it must not be stolen while another process
+    // may still own it. External programs which ignore this protocol can still
+    // race, so recheck immediately before replacement as well.
+    const lockDir = path.join(path.dirname(filePath), `.${path.basename(filePath)}.openhanako-cas-lock`);
+    const conflict = (): ResourceWriteExpectedVersionResult => {
+      const version = statFileVersionOrNull(filePath, Boolean(expectedVersion?.sha256));
       return {
         ok: false,
         conflict: true,
         resourceKey: localResourceKey(filePath),
         resource: this.resourceForPath(filePath),
-        ...(currentVersion ? { version: currentVersion } : {}),
+        ...(version ? { version } : {}),
         filePath,
       };
+    };
+    try {
+      fs.mkdirSync(lockDir, { mode: 0o700 });
+    } catch (err: any) {
+      if (err?.code === "EEXIST") return conflict();
+      throw err;
     }
-    return this.write(ref, content);
+
+    let tempPath: string | null = null;
+    try {
+      const currentVersion = statFileVersionOrNull(filePath, Boolean(expectedVersion?.sha256));
+      if (!currentVersion || !fileVersionsMatch(currentVersion, expectedVersion)) return conflict();
+
+      const mode = fs.statSync(filePath).mode & 0o777;
+      tempPath = path.join(path.dirname(filePath),
+        `.${path.basename(filePath)}.openhanako-cas-${crypto.randomBytes(8).toString("hex")}.tmp`);
+      const fd = fs.openSync(tempPath, "wx", mode);
+      try {
+        fs.writeFileSync(fd, content);
+        fs.fchmodSync(fd, mode);
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+
+      // Detect non-cooperating modifications during staging where possible.
+      const beforeReplace = statFileVersionOrNull(filePath, Boolean(expectedVersion?.sha256));
+      if (!beforeReplace || !fileVersionsMatch(beforeReplace, expectedVersion)) return conflict();
+      fs.renameSync(tempPath, filePath);
+      tempPath = null;
+      return this.mutationResult(filePath, "modified");
+    } finally {
+      if (tempPath) {
+        try { fs.unlinkSync(tempPath); } catch (err: any) {
+          if (err?.code !== "ENOENT") throw err;
+        }
+      }
+      fs.rmdirSync(lockDir);
+    }
   }
 
   async edit(ref: ResourceRef | unknown, edits: ResourceEdit[]): Promise<ResourceMutationResult> {

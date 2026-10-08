@@ -699,7 +699,23 @@ export function handleServerMessage(msg: any): void {
       const bgSp = msg.sessionPath;
       if (!bgSp) { console.warn('[ws] event missing sessionPath:', msg.type); break; }
       const prev = browserStateForPath(useStore.getState(), bgSp);
-      setBrowserStateForPath(bgSp, { ...prev, running: !!msg.running });
+      const nextRunning = msg.running === true;
+      if (!nextRunning) {
+        // Background stop is a lifecycle transition, not a thumbnail update.
+        // Preserve only the user's collapsed preference, never the stopped
+        // browser's URL or screenshot in a future session.
+        setBrowserStateForPath(bgSp, {
+          running: false, url: null, thumbnail: null,
+          thumbnailCapturedAt: null, thumbnailUrl: null, thumbnailFresh: false,
+          collapsed: prev.collapsed ?? false,
+        });
+      } else {
+        setBrowserStateForPath(bgSp, {
+          ...prev,
+          running: true,
+          collapsed: prev.running ? (prev.collapsed ?? false) : false,
+        });
+      }
       break;
     }
 

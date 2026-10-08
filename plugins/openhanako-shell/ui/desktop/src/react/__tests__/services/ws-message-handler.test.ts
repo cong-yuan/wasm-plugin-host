@@ -1664,6 +1664,73 @@ describe('ws-message-handler turn_end side effects', () => {
     });
   });
 
+  it('clears stale browser media on background stop and resets collapse on restart', () => {
+    vi.stubGlobal('window', { platform: {} });
+    useStore.setState({
+      browserBySession: {
+        '/session/a.jsonl': {
+          running: true,
+          url: 'https://previous.example',
+          thumbnail: 'PRIVATE_OLD_SCREENSHOT',
+          thumbnailCapturedAt: 111,
+          thumbnailUrl: 'https://previous.example',
+          thumbnailFresh: true,
+          collapsed: true,
+        },
+      },
+    } as never);
+
+    handleServerMessage({
+      type: 'browser_bg_status',
+      sessionPath: '/session/a.jsonl',
+      running: false,
+    });
+    expect(useStore.getState().browserBySession['/session/a.jsonl']).toEqual({
+      running: false,
+      url: null,
+      thumbnail: null,
+      thumbnailCapturedAt: null,
+      thumbnailUrl: null,
+      thumbnailFresh: false,
+      collapsed: true,
+    });
+
+    handleServerMessage({
+      type: 'browser_bg_status',
+      sessionPath: '/session/a.jsonl',
+      running: true,
+    });
+    expect(useStore.getState().browserBySession['/session/a.jsonl']).toMatchObject({
+      running: true,
+      url: null,
+      thumbnail: null,
+      thumbnailFresh: false,
+      collapsed: false,
+    });
+  });
+
+  it('preserves an already-running browser collapse choice during background status refresh', () => {
+    vi.stubGlobal('window', { platform: {} });
+    useStore.setState({
+      browserBySession: {
+        '/session/a.jsonl': {
+          running: true, url: 'https://current.example', thumbnail: null,
+          collapsed: true,
+        },
+      },
+    } as never);
+    handleServerMessage({
+      type: 'browser_bg_status',
+      sessionPath: '/session/a.jsonl',
+      running: true,
+    });
+    expect(useStore.getState().browserBySession['/session/a.jsonl']).toMatchObject({
+      running: true,
+      collapsed: true,
+      url: 'https://current.example',
+    });
+  });
+
   it('keys browser status by sessionId when the locator is known', () => {
     vi.stubGlobal('window', { platform: {} });
     useStore.setState({

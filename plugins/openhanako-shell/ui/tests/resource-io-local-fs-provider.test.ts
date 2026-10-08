@@ -137,6 +137,8 @@ describe("LocalFsProvider", () => {
 
     const read = await provider.read({ kind: "local-file", path: "a.md" });
     expect(read.content.toString("utf-8")).toBe("alpha");
+    const { createHash } = await import("crypto");
+    expect(read.version?.sha256).toBe(createHash("sha256").update("alpha").digest("hex"));
 
     const list = await provider.list({ kind: "local-file", path: "." });
     expect(list.items.map((item) => item.name)).toEqual(expect.arrayContaining(["a.md", "nested"]));
@@ -219,6 +221,85 @@ describe("LocalFsProvider", () => {
     );
     expect(unsupported).toMatchObject({ ok: false, conflict: true });
     expect(fs.readFileSync(filePath, "utf-8")).toBe("old");
+  });
+
+  it("uses the version from an actual read for optimistic write and rejects its reuse", async () => {
+    const { cwd, provider } = makeProvider();
+    const filePath = path.join(cwd, "versioned.txt");
+    fs.writeFileSync(filePath, "first");
+    const read = await provider.read({ kind: "local-file", path: "versioned.txt" });
+    expect(read.version).toMatchObject({
+      size: 5,
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+
+    const saved = await provider.writeExpectedVersion(
+      { kind: "local-file", path: "versioned.txt" }, "second", read.version!,
+    );
+    expect(saved).toMatchObject({ changeType: "modified" });
+    const stale = await provider.writeExpectedVersion(
+      { kind: "local-file", path: "versioned.txt" }, "third", read.version!,
+    );
+    expect(stale).toMatchObject({ ok: false, conflict: true });
+    expect(fs.readFileSync(filePath, "utf-8")).toBe("second");
+  });
+
+  it("fails closed when another writer holds the on-disk CAS lock", async () => {
+    const { cwd, provider } = makeProvider();
+    const filePath = path.join(cwd, "shared.md");
+    fs.writeFileSync(filePath, "original");
+    const version = (await provider.stat({ kind: "local-file", path: "shared.md" })).version!;
+    const lock = path.join(cwd, ".shared.md.openhanako-cas-lock");
+    fs.mkdirSync(lock);
+    try {
+      const conflict = await provider.writeExpectedVersion(
+        { kind: "local-file", path: "shared.md" }, "should not write", version,
+      );
+      expect(conflict).toMatchObject({ ok: false, conflict: true });
+      expect(fs.readFileSync(filePath, "utf-8")).toBe("original");
+      expect(fs.existsSync(lock)).toBe(true);
+    } finally {
+      fs.rmdirSync(lock);
+    }
+    const success = await provider.writeExpectedVersion(
+      { kind: "local-file", path: "shared.md" }, "updated", version,
+    );
+    expect(success).toMatchObject({ changeType: "modified" });
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+
+  it("leaves original bytes and no CAS artifacts when atomic replacement fails", async () => {
+    const { cwd, provider } = makeProvider();
+    const filePath = path.join(cwd, "draft.md");
+    fs.writeFileSync(filePath, "keep this");
+    const version = (await provider.stat({ kind: "local-file", path: "draft.md" })).version!;
+    const rename = vi.spyOn(fs, "renameSync").mockImplementation(() => {
+      throw new Error("simulated replace failure");
+    });
+    try {
+      await expect(provider.writeExpectedVersion(
+        { kind: "local-file", path: "draft.md" }, "new content", version,
+      )).rejects.toThrow("simulated replace failure");
+    } finally {
+      rename.mockRestore();
+    }
+    expect(fs.readFileSync(filePath, "utf-8")).toBe("keep this");
+    expect(fs.readdirSync(cwd)).toEqual(["draft.md"]);
+  });
+
+  it("preserves original file mode when an expected-version write commits", async () => {
+    if (process.platform === "win32") return;
+    const { cwd, provider } = makeProvider();
+    const filePath = path.join(cwd, "private.md");
+    fs.writeFileSync(filePath, "secret");
+    fs.chmodSync(filePath, 0o600);
+    const version = (await provider.stat({ kind: "local-file", path: "private.md" })).version!;
+    const result = await provider.writeExpectedVersion(
+      { kind: "local-file", path: "private.md" }, "updated", version,
+    );
+    expect(result).toMatchObject({ changeType: "modified" });
+    expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
+    expect(fs.readdirSync(cwd)).toEqual(["private.md"]);
   });
 
   it("supports expected-version writes, rename, move, and trash as ResourceIO authority operations", async () => {
