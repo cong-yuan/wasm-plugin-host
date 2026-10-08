@@ -549,6 +549,35 @@ check('status falls back to configured provider and model without studio_status'
   && configuredStatus.providers.includes('deepseek')
   && configuredStatus.model === 'deepseek-chat'
   && /get_llm_config/.test(configuredStatus.note || ''));
+const globalModelPrefs = await adapter.http('GET', '/api/preferences/models');
+check('global model preferences expose Studio current model as utility fallback',
+  globalModelPrefs?.models?.utility?.provider === 'deepseek'
+  && globalModelPrefs?.models?.utility?.id === 'deepseek-chat'
+  && globalModelPrefs?.models?.utility_large === null
+  && globalModelPrefs?.models?.vision_enabled === false);
+const savedGlobalModelPrefs = await adapter.http('PUT', '/api/preferences/models', {
+  models: {
+    utility_large: { provider: 'mock', id: 'mock-1' },
+    vision: { provider: 'mock', id: 'mock-vision' },
+    vision_enabled: true,
+  },
+  search: { provider: 'brave' },
+});
+check('global model preferences persist local-only selections',
+  savedGlobalModelPrefs?.models?.utility_large?.id === 'mock-1'
+  && savedGlobalModelPrefs?.models?.vision?.id === 'mock-vision'
+  && savedGlobalModelPrefs?.models?.vision_enabled === true
+  && savedGlobalModelPrefs?.search?.provider === 'brave');
+const refreshedGlobalModelPrefs = await adapter.http('GET', '/api/preferences/models');
+check('global model preference selections survive refresh',
+  refreshedGlobalModelPrefs?.models?.utility_large?.provider === 'mock'
+  && refreshedGlobalModelPrefs?.models?.vision?.id === 'mock-vision'
+  && refreshedGlobalModelPrefs?.search?.provider === 'brave');
+const invalidGlobalModelPrefs = await adapter.http('PUT', '/api/preferences/models', {
+  models: { vision_enabled: 'yes' },
+});
+check('global model preference validation rejects malformed writes',
+  invalidGlobalModelPrefs?.ok === false && /vision_enabled/.test(invalidGlobalModelPrefs?.error || ''));
 calls.length = 0;
 await api.create('mock');
 check('create resolves model within explicitly selected provider',
@@ -725,6 +754,23 @@ check('agent list preserves the API contract in mock mode',
   Array.isArray(agentsResponse?.agents)
   && agentsResponse.agents.length > 0
   && agentsResponse.agents.every((agent) => typeof agent.id === 'string' && agent.id.length > 0));
+const providerModelEdit = await adapter.http('PUT', '/api/providers/mock/models/mock-1', {
+  name: 'Mock Vision', context: 32768, maxOutput: 4096,
+  image: true, reasoning: true, input: ['text', 'image'],
+});
+check('provider model metadata writes to the local Studio overlay',
+  providerModelEdit?.ok === true && providerModelEdit?.model?.name === 'Mock Vision');
+const providerConfigAfterEdit = await adapter.http('GET', '/api/config');
+check('provider model metadata survives provider refresh',
+  providerConfigAfterEdit?.providers?.mock?.models?.some((model) =>
+    model && typeof model === 'object' && model.id === 'mock-1'
+    && model.name === 'Mock Vision' && model.context === 32768 && model.image === true));
+const discoveredAfterEdit = await adapter.http('GET', '/api/providers/mock/discovered-models');
+check('discovered model projection includes persisted metadata',
+  discoveredAfterEdit?.models?.some((model) => model.id === 'mock-1' && model.name === 'Mock Vision'));
+const providerModelDelete = await adapter.http('DELETE', '/api/providers/mock/models/mock-1');
+check('provider model metadata can be explicitly cleared',
+  providerModelDelete?.ok === true && !providerModelDelete?.model?.name);
 
 check('create_agent uses mock/mock-1',
   created.sessionId === 'agent-new'

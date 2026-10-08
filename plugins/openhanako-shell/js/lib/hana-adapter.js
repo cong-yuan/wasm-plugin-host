@@ -437,6 +437,65 @@ return (function () {
   // ── Per-session model assignment (local; Studio agents bind model at create) ──
   const SESSION_MODEL_KEY = 'openhanako.sessionModels.v1';
   const PENDING_MODEL_KEY = 'openhanako.pendingModel.v1';
+  const GLOBAL_MODEL_PREFS_KEY = 'openhanako.globalModelPreferences.v1';
+
+  const normalizeModelRef = (value) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const id = typeof value.id === 'string' ? value.id.trim() : '';
+      if (!id) return null;
+      const provider = typeof value.provider === 'string' ? value.provider.trim() : '';
+      return { id, provider };
+    }
+    if (typeof value === 'string' && value.trim()) return { id: value.trim(), provider: '' };
+    return null;
+  };
+
+  const normalizeGlobalModelPrefs = (raw) => {
+    const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    const models = src.models && typeof src.models === 'object' && !Array.isArray(src.models) ? src.models : src;
+    return {
+      models: {
+        utility: normalizeModelRef(models.utility),
+        utility_large: normalizeModelRef(models.utility_large),
+        vision: normalizeModelRef(models.vision),
+        vision_enabled: models.vision_enabled === true,
+      },
+      search: {
+        provider: typeof src.search?.provider === 'string' && src.search.provider.trim()
+          ? src.search.provider.trim()
+          : 'auto',
+      },
+    };
+  };
+  const loadGlobalModelPrefs = () => normalizeGlobalModelPrefs(readJson(GLOBAL_MODEL_PREFS_KEY, {}));
+  const saveGlobalModelPrefs = (value) => writeJson(GLOBAL_MODEL_PREFS_KEY, normalizeGlobalModelPrefs(value));
+  const applyGlobalModelPrefsPatch = (raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'model preferences object required' };
+    const current = loadGlobalModelPrefs();
+    const next = { models: { ...current.models }, search: { ...current.search } };
+    if (raw.models && typeof raw.models === 'object' && !Array.isArray(raw.models)) {
+      for (const key of ['utility', 'utility_large', 'vision']) {
+        if (Object.prototype.hasOwnProperty.call(raw.models, key)) {
+          const ref = normalizeModelRef(raw.models[key]);
+          if (raw.models[key] !== null && !ref) return { ok: false, error: `invalid models.${key}` };
+          next.models[key] = ref;
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(raw.models, 'vision_enabled')) {
+        if (typeof raw.models.vision_enabled !== 'boolean') return { ok: false, error: 'invalid models.vision_enabled' };
+        next.models.vision_enabled = raw.models.vision_enabled;
+      }
+    }
+    if (raw.search && typeof raw.search === 'object' && !Array.isArray(raw.search)
+      && Object.prototype.hasOwnProperty.call(raw.search, 'provider')) {
+      if (typeof raw.search.provider !== 'string' || !raw.search.provider.trim()) {
+        return { ok: false, error: 'invalid search.provider' };
+      }
+      next.search.provider = raw.search.provider.trim();
+    }
+    saveGlobalModelPrefs(next);
+    return { ok: true, ...loadGlobalModelPrefs() };
+  };
 
   const loadSessionModels = () => {
     const raw = readJson(SESSION_MODEL_KEY, {});
@@ -742,16 +801,24 @@ return (function () {
 
   const readOverlay = () => {
     try {
-      if (typeof localStorage === 'undefined') return {};
-      const raw = JSON.parse(localStorage.getItem(PROVIDER_OVERLAY_KEY) || '{}');
-      return raw && typeof raw === 'object' ? raw : {};
-    } catch (_) { return {}; }
+      if (typeof localStorage !== 'undefined') {
+        const raw = JSON.parse(localStorage.getItem(PROVIDER_OVERLAY_KEY) || '{}');
+        if (raw && typeof raw === 'object') {
+          memoryStore.set(PROVIDER_OVERLAY_KEY, raw);
+          return raw;
+        }
+      }
+    } catch (_) { /* fall through to memory */ }
+    const cached = memoryStore.get(PROVIDER_OVERLAY_KEY);
+    return cached && typeof cached === 'object' ? cached : {};
   };
 
   const writeOverlay = (overlay) => {
+    const value = overlay && typeof overlay === 'object' ? overlay : {};
+    memoryStore.set(PROVIDER_OVERLAY_KEY, value);
     try {
       if (typeof localStorage === 'undefined') return;
-      localStorage.setItem(PROVIDER_OVERLAY_KEY, JSON.stringify(overlay || {}));
+      localStorage.setItem(PROVIDER_OVERLAY_KEY, JSON.stringify(value));
     } catch (_) {}
   };
 
@@ -759,6 +826,41 @@ return (function () {
     if (typeof entry === 'string') return entry;
     if (entry && typeof entry === 'object' && typeof entry.id === 'string') return entry.id;
     return '';
+  };
+
+  const sanitizeModelMetadata = (raw) => {
+    const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    const out = {};
+    for (const key of ['name', 'type', 'defaultThinkingLevel']) {
+      if (typeof src[key] === 'string' && src[key].trim()) out[key] = src[key].trim().slice(0, 200);
+    }
+    for (const key of ['context', 'maxOutput']) {
+      if (typeof src[key] === 'number' && Number.isFinite(src[key]) && src[key] > 0) out[key] = Math.floor(src[key]);
+    }
+    for (const key of ['image', 'video', 'audio', 'reasoning', 'xhigh']) {
+      if (typeof src[key] === 'boolean') out[key] = src[key];
+    }
+    if (Array.isArray(src.input)) out.input = src.input.filter((item) => typeof item === 'string').map((item) => item.trim()).filter(Boolean).slice(0, 16);
+    if (Array.isArray(src.thinkingLevels)) out.thinkingLevels = src.thinkingLevels.filter((item) => typeof item === 'string').map((item) => item.trim()).filter(Boolean).slice(0, 16);
+    for (const key of ['compat', 'toolUse', 'visionCapabilities']) {
+      if (src[key] && typeof src[key] === 'object' && !Array.isArray(src[key])) out[key] = src[key];
+    }
+    return out;
+  };
+  const modelMetadataFor = (providerOverlay, modelId) => {
+    const models = providerOverlay && providerOverlay.models && typeof providerOverlay.models === 'object' ? providerOverlay.models : {};
+    const metadata = models[modelId];
+    return metadata && typeof metadata === 'object' ? metadata : null;
+  };
+  const mergeModelEntry = (modelId, providerOverlay) => {
+    const id = modelIdOf(modelId);
+    if (!id) return null;
+    const metadata = modelMetadataFor(providerOverlay, id);
+    return metadata ? { id, ...metadata } : id;
+  };
+  const providerModelEntries = (providerOverlay, list, entry) => {
+    const ids = list.length ? list.map(modelIdOf).filter(Boolean) : (entry.model ? [entry.model] : []);
+    return ids.map((id) => mergeModelEntry(id, providerOverlay)).filter(Boolean);
   };
 
   const summarizeBaseUrl = (value) => {
@@ -788,9 +890,7 @@ return (function () {
       const entry = providersIn[name] && typeof providersIn[name] === 'object' ? providersIn[name] : {};
       const over = overlay[name] && typeof overlay[name] === 'object' ? overlay[name] : {};
       const list = Array.isArray(lists[name]) ? lists[name] : [];
-      const models = list.length
-        ? list.map((id) => (typeof id === 'string' ? id : modelIdOf(id))).filter(Boolean)
-        : (entry.model ? [entry.model] : []);
+      const models = providerModelEntries(over, list, entry);
       out[name] = {
         base_url: typeof entry.base_url === 'string' ? entry.base_url : (over.base_url || ''),
         api: typeof over.api === 'string' && over.api ? over.api : 'openai-completions',
@@ -813,9 +913,7 @@ return (function () {
       const entry = providersIn[name] && typeof providersIn[name] === 'object' ? providersIn[name] : {};
       const over = overlay[name] && typeof overlay[name] === 'object' ? overlay[name] : {};
       const list = Array.isArray(lists[name]) ? lists[name] : [];
-      const models = list.length
-        ? list.map((id) => (typeof id === 'string' ? id : modelIdOf(id))).filter(Boolean)
-        : (entry.model ? [entry.model] : []);
+      const models = providerModelEntries(over, list, entry);
       const hasKey = !!(typeof entry.api_key === 'string' && entry.api_key.trim());
       const hasUrl = !!(typeof entry.base_url === 'string' && entry.base_url.trim());
       summary[name] = {
@@ -1039,35 +1137,66 @@ return (function () {
       const llm = await api.getLlmConfig();
       const lists = llm && llm.model_lists && llm.model_lists[name];
       const discovered = llm && llm.discovered && llm.discovered[name];
-      const models = Array.isArray(discovered) ? discovered
+      const providerOverlay = readOverlay()[name] && typeof readOverlay()[name] === 'object' ? readOverlay()[name] : {};
+      const rawModels = Array.isArray(discovered) ? discovered
         : (Array.isArray(lists) ? lists.map((id) => ({ id })) : []);
+      const models = rawModels.map((model) => {
+        const id = modelIdOf(model);
+        const metadata = modelMetadataFor(providerOverlay, id);
+        return metadata && model && typeof model === 'object' ? { ...model, ...metadata, id } : (metadata ? { id, ...metadata } : model);
+      });
       return { models };
     }
 
     const modelMatch = pathname.match(/^\/api\/providers\/([^/]+)\/models\/([^/]+)$/);
     if (modelMatch && (verb === 'PATCH' || verb === 'PUT' || verb === 'DELETE')) {
-      // Soft-ack model metadata edits; Studio stores flat id lists today.
-      return { ok: true };
+      const provider = decodeURIComponent(modelMatch[1]);
+      const modelId = decodeURIComponent(modelMatch[2]);
+      const llm = await api.getLlmConfig();
+      const list = Array.isArray(llm?.model_lists?.[provider]) ? llm.model_lists[provider] : [];
+      if (!list.some((entry) => modelIdOf(entry) === modelId)) return { ok: false, error: 'model not configured for provider' };
+      const overlay = readOverlay();
+      const over = overlay[provider] && typeof overlay[provider] === 'object' ? { ...overlay[provider] } : {};
+      const models = over.models && typeof over.models === 'object' ? { ...over.models } : {};
+      if (verb === 'DELETE') {
+        delete models[modelId];
+      } else {
+        const metadata = sanitizeModelMetadata(body);
+        if (!Object.keys(metadata).length) return { ok: false, error: 'model metadata required' };
+        models[modelId] = metadata;
+      }
+      if (Object.keys(models).length) over.models = models;
+      else delete over.models;
+      if (Object.keys(over).length) overlay[provider] = over;
+      else delete overlay[provider];
+      writeOverlay(overlay);
+      const metadata = modelMetadataFor(over, modelId);
+      return { ok: true, model: { id: modelId, ...(metadata || {}) } };
     }
 
     if (pathname === '/api/preferences/models' && verb === 'GET') {
       const llm = await api.getLlmConfig();
       const current = llm && llm.current && typeof llm.current === 'object' ? llm.current : {};
+      const saved = loadGlobalModelPrefs();
+      const utility = saved.models.utility || (current.provider && current.model
+        ? { provider: current.provider, id: current.model }
+        : null);
       return {
         models: {
-          utility: current.provider && current.model
-            ? { provider: current.provider, model: current.model }
-            : null,
-          utility_large: null,
-          vision: null,
-          vision_enabled: false,
+          utility,
+          utility_large: saved.models.utility_large,
+          vision: saved.models.vision,
+          vision_enabled: saved.models.vision_enabled,
         },
-        search: { provider: 'auto', api_key: '', api_keys: {} },
+        search: { provider: saved.search.provider, api_key: '', api_keys: {} },
+        utility_api: { provider: '', base_url: '', api_key: '' },
+        thinking_level: 'medium',
+        capabilitySource: 'studio+local-overlay',
       };
     }
 
     if (pathname === '/api/preferences/models' && (verb === 'PUT' || verb === 'POST' || verb === 'PATCH')) {
-      return { ok: true };
+      return applyGlobalModelPrefsPatch(body);
     }
 
     return null;
@@ -1627,6 +1756,7 @@ return (function () {
     const verb = String(method || 'GET').toUpperCase();
 
     if (pathname === '/api/health' && verb === 'GET') {
+      const configured = await configuredModelFallback();
       return {
         status: 'ok',
         version: 'studio-bridge',
@@ -1634,7 +1764,8 @@ return (function () {
         agent: ASSISTANT_NAME,
         agentYuan: 'hanako',
         user: loadUserPrefs().name,
-        model: api.DEFAULT_MODEL,
+        model: configured.modelId,
+        modelProvider: configured.provider,
         avatars: { agent: false, user: false },
         sessionStore: null,
         studioBridge: api.mode(),

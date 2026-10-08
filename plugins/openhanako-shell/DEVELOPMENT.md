@@ -43,7 +43,8 @@
 
 ## Phase 2 — Model & Input
 
-- `/api/preferences/models`：GET 已读取 Studio `get_llm_config` 的当前 provider/model；全局 utility/search/vision 等 OpenHanako 专属配置仍未有等价 Studio 持久化语义，后续需要单独补 capability，而不是把 current model 冒充 utility model。
+- `/api/preferences/models`：GET 读取 Studio `get_llm_config` 的当前 provider/model 作为 utility fallback；utility_large / vision / vision_enabled / search provider 已有受校验的本地 overlay 持久化，刷新后可恢复；secret API key 仍不落 localStorage。
+- provider model metadata：`/api/providers/:provider/models/:model` 的 PUT/PATCH/DELETE 已从 soft-ack 改为真实 local overlay 写入/删除，并在 provider config、discovered-models 两条读取链路回显。
 - `/api/session-thinking-level`：已从固定 `off` 改为显式 `medium + locked + capability_unavailable`，避免 UI 误以为 Studio 支持切换；宿主补真实 session thinking 原语后再接。
 - 接 `/api/upload-blob`、附件、图片和 vision 路径；当前 Studio 没有 blob/file-ingest command，继续保持 fail closed。
 - `/api/models/auxiliary-vision` 改为真实 capability projection；当前 Studio 模型列表没有输入模态元数据，暂保持 unavailable。
