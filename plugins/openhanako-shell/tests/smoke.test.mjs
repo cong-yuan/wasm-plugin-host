@@ -1953,6 +1953,80 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.transcript = originalTranscript;
 }
 
+// Streamed assistant text and tools must remain in causal order rather than
+// moving all text before all tools. A single authoritative reply retains it.
+{
+  const conversation = studio.require('panels/conversation');
+  const originalSend = api.sendWithProgress;
+  const originalTranscript = api.transcript;
+  let completed = false;
+  const earlier = [{ role: 'user', text: 'earlier prompt' }, { role: 'assistant', text: 'Earlier reply' }];
+  api.transcript = async () => completed
+    ? [...earlier, { role: 'user', text: 'timeline prompt' }, { role: 'assistant', text: 'Before tool After tool',
+      tool_calls: [
+        { id: 'tool-first', name: 'lookup' },
+        { id: 'tool-second', name: 'search' },
+      ],
+      tool_results: [
+        { tool_call_id: 'tool-first', content: 'done' },
+        { tool_call_id: 'tool-second', content: 'bad', is_error: true },
+      ] }]
+    : earlier.map((row) => ({ ...row }));
+  api.sendWithProgress = async (_id, _text, _msgId, progress) => {
+    progress({ kind: 'text_delta', delta: 'Before tool ' });
+    progress({ kind: 'tool_start', id: 'tool-first', name: 'lookup' });
+    progress({ kind: 'tool_end', id: 'tool-first', success: true, output: 'done' });
+    progress({ kind: 'text_delta', delta: 'After tool' });
+    // Some providers emit only tool_end for a tool; it must still be visible.
+    progress({ kind: 'tool_end', id: 'tool-second', name: 'search', success: false, error: 'bad' });
+    completed = true;
+    return true;
+  };
+  const panel = conversation.render({ onChanged() {}, onOpened() {}, onCreated() {} });
+  await panel.open({ id: 'tool-timeline', live: true });
+  panel.root.querySelector('.input-box').textContent = 'timeline prompt';
+  panel.root.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const rendered = panel.root.querySelectorAll('.messageGroupAssistant').at(-1);
+  const sequence = (rendered?.children || []).map((node) => {
+    if (node._classes?.().includes('message')) return node.textContent.trim();
+    if (node._classes?.().includes('toolGroup')) return node.textContent.trim();
+    return '';
+  }).filter(Boolean).join(' | ');
+  check('text and tools render in actual incremental event order after transcript hydration',
+    /Before tool.*\|.*lookup.*\|.*After tool.*\|.*search/.test(sequence));
+  check('completion-only tool is visible as a failed tool rather than disappearing',
+    rendered?.querySelectorAll('.toolGroup').some((item) =>
+      item.getAttribute('data-tool-state') === 'failed'
+      && /search/.test(item.textContent)));
+  check('chronological rendering does not duplicate streamed assistant text',
+    (sequence.match(/Before tool/g) || []).length === 1
+    && (sequence.match(/After tool/g) || []).length === 1);
+  check('stream timeline survives authoritative hydration with prior chat history',
+    panel.root.querySelectorAll('.messageGroupAssistant').length === 2
+    && panel.root.querySelectorAll('.md-content').some((node) => node.textContent === 'Earlier reply'));
+  // A failure after a tool starts must remain readable, not be hidden because
+  // the timeline already contains earlier text/tool segments.
+  api.transcript = async () => [];
+  api.sendWithProgress = async (_id, _text, _msgId, progress) => {
+    progress({ kind: 'text_delta', delta: 'Partial before failure' });
+    progress({ kind: 'tool_start', id: 'broken-tool', name: 'broken' });
+    throw new Error('Transport failed after tool');
+  };
+  panel.reset();
+  await panel.open({ id: 'error-timeline', live: true });
+  panel.root.querySelector('.input-box').textContent = 'error prompt';
+  panel.root.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  check('post-tool transport error remains visible after partial text and tool',
+    panel.root.querySelectorAll('.md-content').some((node) => /Partial before failure/.test(node.textContent))
+    && panel.root.querySelectorAll('.md-content').some((node) => /Transport failed after tool/.test(node.textContent))
+    && panel.root.querySelectorAll('.toolGroup').some((node) => /broken/.test(node.textContent)));
+  panel.reset();
+  api.sendWithProgress = originalSend;
+  api.transcript = originalTranscript;
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));

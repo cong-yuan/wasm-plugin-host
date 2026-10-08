@@ -495,9 +495,48 @@ return (function () {
             h('img', { class: 'avatar hanaAvatar', src: avatar, alt: name }),
             h('span', { class: 'avatarName' }, name)));
         }
-        group.appendChild(h('div', {
+        const appendText = (value) => group.appendChild(h('div', {
           class: 'message ' + (isUser ? 'messageUser' : 'messageAssistant'),
-        }, h('div', { class: 'md-content' }, m.text || '')));
+        }, h('div', { class: 'md-content' }, value || '')));
+        const appendTool = (call) => {
+          const id = String(call.id ?? call.call_id ?? call.tool_call_id ?? '');
+          const result = id ? toolResults.get(id) : null;
+          const failed = !!(result && (result.is_error === true || result.isError === true || result.success === false));
+          const status = result ? (failed ? 'Failed' : 'Succeeded') : 'Running';
+          group.appendChild(h('div', {
+            class: 'toolGroup toolGroupSingle',
+            'data-tool-state': result ? (failed ? 'failed' : 'succeeded') : 'running',
+          }, h('div', { class: 'toolGroupContent' },
+            h('div', { class: 'toolGroupSummary' },
+              h('span', { class: 'toolGroupTitle' }, call.name || 'tool'),
+              h('span', { class: 'openhanako-tool-status' }, status)))));
+        };
+        const tools = !isUser && Array.isArray(m.tool_calls) ? m.tool_calls : [];
+        const timeline = !isUser && Array.isArray(m.streamTimeline) && m.streamTimeline.length
+          ? m.streamTimeline : null;
+        if (timeline) {
+          const seenTools = new Set();
+          for (const segment of timeline) {
+            if (segment?.kind === 'text' && segment.text) appendText(segment.text);
+            if (segment?.kind === 'tool') {
+              const id = String(segment.id || '');
+              if (!id || seenTools.has(id)) continue;
+              const call = tools.find((item) => String(item?.id ?? item?.call_id ?? item?.tool_call_id ?? '') === id);
+              if (call) {
+                appendTool(call);
+                seenTools.add(id);
+              }
+            }
+          }
+          // A transcript snapshot may supply tools that live progress omitted.
+          for (const call of tools) {
+            const id = String(call.id ?? call.call_id ?? call.tool_call_id ?? '');
+            if (id && !seenTools.has(id)) appendTool(call);
+          }
+        } else {
+          appendText(m.text || '');
+          for (const call of tools) appendTool(call);
+        }
         if (!isUser && m.retryText) {
           const retry = h('button', {
             class: 'messageRetryBtn',
@@ -512,23 +551,6 @@ return (function () {
           group.appendChild(h('details', { class: 'thinkingBlock' },
             h('summary', { class: 'thinkingBlockSummary' }, 'Thinking'),
             h('div', { class: 'thinkingBlockBody' }, m.reasoning)));
-        }
-        if (!isUser && Array.isArray(m.tool_calls) && m.tool_calls.length) {
-          m.tool_calls.forEach((call) => {
-            const id = String(call.id ?? call.call_id ?? call.tool_call_id ?? '');
-            const result = id ? toolResults.get(id) : null;
-            const failed = !!(result && (result.is_error === true || result.isError === true || result.success === false));
-            const status = result ? (failed ? 'Failed' : 'Succeeded') : 'Running';
-            const box = h('div', {
-              class: 'toolGroup toolGroupSingle',
-              'data-tool-state': result ? (failed ? 'failed' : 'succeeded') : 'running',
-            },
-              h('div', { class: 'toolGroupContent' },
-                h('div', { class: 'toolGroupSummary' },
-                  h('span', { class: 'toolGroupTitle' }, call.name || 'tool'),
-                  h('span', { class: 'openhanako-tool-status' }, status))));
-            group.appendChild(box);
-          });
         }
         stream.appendChild(group);
       });
@@ -650,8 +672,15 @@ return (function () {
         reasoning: '',
         tool_calls: [],
         tool_results: [],
+        streamTimeline: [],
       };
       state.turns.push(assistant);
+      const appendTimelineText = (delta) => {
+        if (!delta) return;
+        const latest = assistant.streamTimeline[assistant.streamTimeline.length - 1];
+        if (latest?.kind === 'text') latest.text += String(delta);
+        else assistant.streamTimeline.push({ kind: 'text', text: String(delta) });
+      };
       draw();
       options.onChanged();
       try {
@@ -664,6 +693,7 @@ return (function () {
             if (state.epoch !== submitEpoch || state.cancelling) return;
             if (event.kind === 'text_delta' && event.delta) {
               assistant.text += event.delta;
+              appendTimelineText(event.delta);
             } else if (event.kind === 'thinking_delta' && event.delta) {
               assistant.reasoning += event.delta;
             } else if (event.kind === 'tool_start') {
@@ -674,9 +704,15 @@ return (function () {
                   name: event.name || 'tool',
                   arguments: event.args || {},
                 });
+                assistant.streamTimeline.push({ kind: 'tool', id });
               }
             } else if (event.kind === 'tool_end') {
               const id = String(event.id || '');
+              if (id && !assistant.tool_calls.some((call) => String(call.id) === id)) {
+                // Some bridges report completion without a matching start.
+                assistant.tool_calls.push({ id, name: event.name || 'tool', arguments: {} });
+                assistant.streamTimeline.push({ kind: 'tool', id });
+              }
               if (id && !assistant.tool_results.some((result) => String(result.tool_call_id) === id)) {
                 assistant.tool_results.push({
                   tool_call_id: id,
@@ -704,6 +740,27 @@ return (function () {
           const transcript = await api.transcript(state.id);
           if (state.epoch === submitEpoch
             && transcriptIncludesLatestTurn(transcript, text, minimumTranscriptLength)) {
+            // Preserve precise live ordering only when the backend condensed
+            // the current turn into a single assistant row with matching text.
+            const lastUserIndex = transcript.map((row) => row?.role).lastIndexOf('user');
+            const replies = transcript.slice(lastUserIndex + 1)
+              .filter((row) => row?.role === 'assistant');
+            const authoritativeTools = Array.isArray(replies[0]?.tool_calls)
+              ? replies[0].tool_calls : [];
+            const toolIds = new Set(authoritativeTools.map((call) =>
+              String(call.id ?? call.call_id ?? call.tool_call_id ?? '')));
+            const toolsPreserved = assistant.tool_calls.every((call) => toolIds.has(String(call.id)));
+            if (replies.length === 1 && assistant.streamTimeline.length > 0 && toolsPreserved
+              && String(replies[0].text || '').startsWith(assistant.text)) {
+              const segments = assistant.streamTimeline.map((segment) => ({ ...segment }));
+              const suffix = String(replies[0].text || '').slice(assistant.text.length);
+              if (suffix) {
+                const last = segments[segments.length - 1];
+                if (last?.kind === 'text') last.text += suffix;
+                else segments.push({ kind: 'text', text: suffix });
+              }
+              replies[0].streamTimeline = segments;
+            }
             state.turns = transcript;
           }
         } catch (err) {
@@ -717,7 +774,9 @@ return (function () {
         }
       } catch (err) {
         if (state.epoch === submitEpoch) {
-          assistant.text = (err && err.message) ? err.message : String(err);
+          const errorMessage = (err && err.message) ? err.message : String(err);
+          assistant.text = errorMessage;
+          if (assistant.streamTimeline.length) appendTimelineText(`\n${errorMessage}`);
           if (!assistant.reasoning && !assistant.tool_calls.length && !assistant.tool_results.length) {
             assistant.retryText = text;
           }
