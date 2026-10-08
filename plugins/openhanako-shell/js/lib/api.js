@@ -798,6 +798,25 @@ return (function () {
       if (!tauri.available()) return null;
       return tauri.invoke('continue_deleted_agent_session', { agentId });
     },
+    sessionSummaryAvailable: () => tauri.available(),
+    getSessionSummary: async (agentId) => {
+      if (!tauri.available()) return null;
+      return tauri.invoke('get_session_summary', { agentId });
+    },
+    sessionFolderScopeAvailable: () => tauri.available(),
+    getSessionFolderScope: async (agentId) => {
+      if (!tauri.available()) return null;
+      return tauri.invoke('get_session_folder_scope', { agentId });
+    },
+    patchSessionAuthorizedFolders: async (agentId, action, folder, folders) => {
+      if (!tauri.available()) return null;
+      return tauri.invoke('patch_session_authorized_folders', {
+        agentId,
+        action: action || 'set',
+        folder: folder || null,
+        folders: Array.isArray(folders) ? folders : null,
+      });
+    },
 
     sendWithProgress,
 

@@ -462,6 +462,7 @@ check('Studio capability registry exposes real and unavailable input controls',
   && capabilities?.capabilities?.thinkingLevel === false
   && capabilities?.capabilities?.permissionMode === false
   && capabilities?.capabilities?.sessionProjects === true);
+
 const uploadCapability = await adapter.http('POST', '/api/upload-blob', { name: 'x.png', base64Data: 'AA==', mimeType: 'image/png' });
 check('blob upload reports missing Studio capability explicitly',
   uploadCapability?.ok === false && uploadCapability?.code === 'capability_unavailable');
@@ -609,6 +610,34 @@ global.window.__TAURI_INTERNALS__ = {
     if (cmd === 'fork_session') {
       return Promise.resolve({ sessionId: 'agent-fork', sourceSessionId: args.sessionId, target: args.target });
     }
+    if (cmd === 'get_session_summary') {
+      return Promise.resolve({
+        hasSummary: true,
+        summary: 'Conversation summary (fresh-compact):\n- durable summary',
+        createdAt: 1780000000000,
+        updatedAt: 1780000000000,
+      });
+    }
+    if (cmd === 'get_session_folder_scope') {
+      return Promise.resolve({
+        ok: true,
+        sessionId: args.agentId,
+        cwd: '/tmp/studio',
+        workspaceFolders: [],
+        authorizedFolders: ['/tmp/shared'],
+        sandboxFolders: ['/tmp/studio', '/tmp/shared'],
+      });
+    }
+    if (cmd === 'patch_session_authorized_folders') {
+      return Promise.resolve({
+        ok: true,
+        sessionId: args.agentId,
+        cwd: '/tmp/studio',
+        workspaceFolders: [],
+        authorizedFolders: args.action === 'remove' ? [] : ['/tmp/shared'],
+        sandboxFolders: args.action === 'remove' ? ['/tmp/studio'] : ['/tmp/studio', '/tmp/shared'],
+      });
+    }
     if (cmd === 'send_message') {
       sendStarted = Date.now();
       // Grow transcript while the invoke is outstanding so poll can stream.
@@ -647,6 +676,44 @@ global.window.__TAURI_INTERNALS__ = {
 };
 
 check('api mode flips to tauri once invoke exists', api.mode() === 'tauri');
+const summaryResponse = await adapter.http('GET', '/api/sessions/summary?path=' + encodeURIComponent('studio://agent-1'));
+check('session summary reads the Studio durable compaction summary',
+  summaryResponse?.hasSummary === true
+  && summaryResponse?.summary.includes('durable summary')
+  && typeof summaryResponse?.createdAt === 'string'
+  && typeof summaryResponse?.updatedAt === 'string'
+  && calls.some((c) => c.cmd === 'get_session_summary' && c.args.agentId === 'agent-1'));
+
+const folderScope = await adapter.http('GET', '/api/sessions/authorized-folders?path=' + encodeURIComponent('studio://agent-1'));
+check('authorized-folder GET reads the Studio persisted scope',
+  folderScope?.ok === true
+  && folderScope?.authorizedFolders?.[0] === '/tmp/shared'
+  && folderScope?.sandboxFolders?.includes('/tmp/studio'));
+
+const folderAdded = await adapter.http('PATCH', '/api/sessions/authorized-folders', {
+  path: 'studio://agent-1',
+  action: 'add',
+  folder: '/tmp/shared',
+});
+check('authorized-folder PATCH add delegates to the native Studio command',
+  folderAdded?.ok === true
+  && folderAdded?.authorizedFolders?.[0] === '/tmp/shared'
+  && calls.some((c) => c.cmd === 'patch_session_authorized_folders'
+    && c.args.agentId === 'agent-1'
+    && c.args.action === 'add'
+    && c.args.folder === '/tmp/shared'));
+
+const folderRemoved = await adapter.http('PATCH', '/api/sessions/authorized-folders', {
+  path: 'studio://agent-1',
+  action: 'remove',
+  folder: '/tmp/shared',
+});
+check('authorized-folder PATCH remove delegates to the native Studio command',
+  folderRemoved?.ok === true
+  && folderRemoved?.authorizedFolders?.length === 0
+  && calls.some((c) => c.cmd === 'patch_session_authorized_folders'
+    && c.args.agentId === 'agent-1'
+    && c.args.action === 'remove'));
 check('pickProvider falls back to configured provider without studio_status', await api.pickProvider() === 'deepseek');
 const configuredStatus = await api.status();
 check('status falls back to configured provider and model without studio_status',
@@ -1441,11 +1508,11 @@ check('host bridge correlates requestId',
       && /done/i.test(row.snippet || '')));
 
   const summaryUnsupported = await adapter.http('GET', '/api/sessions/summary?path=' + encodeURIComponent('studio://agent-1'));
-  check('session summary fails closed without Studio summary persistence',
-    summaryUnsupported?.hasSummary === false && summaryUnsupported?.code === 'capability_unavailable');
+  check('session summary fails closed when the native command is unavailable',
+    summaryUnsupported?.hasSummary === false && summaryUnsupported?.code === 'summary_failed');
   const foldersUnsupported = await adapter.http('GET', '/api/sessions/authorized-folders?path=' + encodeURIComponent('studio://agent-1'));
-  check('authorized folders fail closed without Studio folder persistence',
-    foldersUnsupported?.ok === false && foldersUnsupported?.code === 'capability_unavailable');
+  check('authorized folders fail closed when the native command is unavailable',
+    foldersUnsupported?.ok === false && foldersUnsupported?.code === 'authorized_folders_failed');
 
   await adapter.http('POST', '/api/sessions/rename', { sessionId: 'agent-1', title: 'Disposable title' });
   await adapter.http('POST', '/api/sessions/pin', { sessionId: 'agent-1', pinned: true });

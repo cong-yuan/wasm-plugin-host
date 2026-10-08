@@ -1712,6 +1712,8 @@ return (function () {
           runtimeIncremental: true,
           sessionCompaction: typeof api.freshCompactSessionAvailable === 'function' && api.freshCompactSessionAvailable(),
           deletedAgentContinuation: typeof api.continueDeletedAgentSessionAvailable === 'function' && api.continueDeletedAgentSessionAvailable(),
+          sessionSummary: typeof api.sessionSummaryAvailable === 'function' && api.sessionSummaryAvailable(),
+          authorizedFolders: typeof api.sessionFolderScopeAvailable === 'function' && api.sessionFolderScopeAvailable(),
           sessionTodoMutation: typeof api.completeSessionTodosAvailable === 'function' && api.completeSessionTodosAvailable(),
         },
       };
@@ -2260,22 +2262,83 @@ return (function () {
     }
 
     if (pathname === '/api/sessions/summary' && verb === 'GET') {
-      return {
-        hasSummary: false,
-        summary: null,
-        createdAt: null,
-        updatedAt: null,
-        code: 'capability_unavailable',
-        error: 'studio backend does not expose persisted session summaries yet',
-      };
+      if (typeof api.getSessionSummary !== 'function' || typeof api.sessionSummaryAvailable !== 'function' || !api.sessionSummaryAvailable()) {
+        return {
+          hasSummary: false,
+          summary: null,
+          createdAt: null,
+          updatedAt: null,
+          code: 'capability_unavailable',
+          error: 'studio backend does not expose persisted session summaries yet',
+        };
+      }
+      const sessionId = sessionIdFromBody(body, query);
+      if (!sessionId) {
+        return { hasSummary: false, summary: null, createdAt: null, updatedAt: null, code: 'invalid_session', error: 'missing session id' };
+      }
+      try {
+        const result = await api.getSessionSummary(sessionId);
+        if (!result || typeof result.hasSummary !== 'boolean') {
+          return { hasSummary: false, summary: null, createdAt: null, updatedAt: null, code: 'summary_failed', error: 'studio summary read failed' };
+        }
+        const iso = (value) => Number.isFinite(value) ? new Date(value).toISOString() : (value || null);
+        return {
+          hasSummary: result.hasSummary,
+          summary: result.summary || null,
+          createdAt: iso(result.createdAt),
+          updatedAt: iso(result.updatedAt),
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { hasSummary: false, summary: null, createdAt: null, updatedAt: null, code: 'summary_failed', error: message };
+      }
     }
 
     if (pathname === '/api/sessions/authorized-folders' && (verb === 'GET' || verb === 'PATCH')) {
-      return {
-        ok: false,
-        code: 'capability_unavailable',
-        error: 'studio backend does not expose session authorized-folder persistence yet',
-      };
+      if (typeof api.getSessionFolderScope !== 'function' || typeof api.patchSessionAuthorizedFolders !== 'function' || typeof api.sessionFolderScopeAvailable !== 'function' || !api.sessionFolderScopeAvailable()) {
+        return {
+          ok: false,
+          code: 'capability_unavailable',
+          error: 'studio backend does not expose session authorized-folder persistence yet',
+        };
+      }
+      const sessionId = sessionIdFromBody(body, query);
+      if (!sessionId) {
+        return { ok: false, code: 'invalid_session', error: 'missing session id' };
+      }
+      try {
+        if (verb === 'GET') {
+          const result = await api.getSessionFolderScope(sessionId);
+          if (!result || result.ok !== true) {
+            return { ok: false, code: result?.code || 'authorized_folders_failed', error: result?.error || 'studio folder scope read failed' };
+          }
+          return result;
+        }
+
+        const payload = body && typeof body === 'object' ? body : {};
+        const action = typeof payload.action === 'string' ? payload.action.trim() : 'set';
+        if (!['set', 'add', 'remove'].includes(action)) {
+          return { ok: false, code: 'invalid_action', error: 'Invalid action' };
+        }
+        const result = await api.patchSessionAuthorizedFolders(
+          sessionId,
+          action,
+          typeof payload.folder === 'string' ? payload.folder : null,
+          Array.isArray(payload.folders) ? payload.folders : [],
+        );
+        if (!result || result.ok !== true) {
+          return { ok: false, code: result?.code || 'authorized_folders_failed', error: result?.error || 'studio folder scope update failed' };
+        }
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const code = /folder (is required|does not exist|must be a directory)/.test(message)
+          ? 'invalid_folder'
+          : message === 'session is busy'
+            ? 'session_busy'
+            : 'authorized_folders_failed';
+        return { ok: false, code, error: message };
+      }
     }
 
     if (pathname === '/api/sessions/archived' && verb === 'GET') {

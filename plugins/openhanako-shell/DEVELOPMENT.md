@@ -35,11 +35,11 @@
    - `/api/sessions/fresh-compact`：已接入 Studio 原生 `fresh_compact_session`；Studio 使用当前 session 的 LLM route 生成 durable summary，追加 dsh `session/compact` 事件并 flush；后续 `derive_messages()` 只把最新 summary + 新消息交给模型，旧 JSONL transcript 保留用于 UI/audit replay。
    - `/api/sessions/todos/complete`：已接入 Studio 原生 `complete_session_todos`；读取当前分支最新 `todo/write` 快照，追加全量 `completed` 快照并 flush，UI 仍只有真实成功才清本地 todo。
 
-3. **Search / summary / authorized folders / continue-deleted-agent** — P1 / 部分完成
+3. **Search / summary / authorized folders / continue-deleted-agent** — P1 / 已完成
    - `/api/sessions/search`：已纳入 Studio iframe bridge；adapter 复用稳定的 title/content 两阶段搜索、transcript cache、limit 上限和已删除/归档过滤；SessionList 已支持 ArrowUp/ArrowDown/Home/End 键盘导航，并用 `aria-current=page` 标出当前会话。
    - Session bulk actions：支持 Ctrl/Cmd-click 多选、Shift range、Ctrl/Cmd+A 全选、Escape 清除；React SessionList 现在始终提供可见 session 的 Select All 入口，选中后才显示归档动作；批量归档通过单独的 `archiveSessions()` 串行提交并只刷新一次 session list，避免逐项归档造成多次 hydrate/race。
-   - `/api/sessions/summary`：Studio 当前没有持久化 summary 原语，已纳入 bridge 并返回 `capability_unavailable`，不再掉回 Hana Server 产生错误或假数据。
-   - `/api/sessions/authorized-folders`：Studio 当前没有 session folder-scope 持久化原语，已纳入 bridge 并对 GET/PATCH fail closed；不能把“显示的授权目录”伪装成真正的工具访问控制。
+   - `/api/sessions/summary`：已接入 Studio 原生 `get_session_summary`；读取最近一次 durable `session/compact` summary，并返回 `createdAt/updatedAt`，重启/重新 hydrate 后仍可读；没有 summary 时返回 `hasSummary=false`，不伪造内容。
+   - `/api/sessions/authorized-folders`：已接入 Studio 原生 `get_session_folder_scope` / `patch_session_authorized_folders`；scope 作为 durable `session/authorized-folders` 快照持久化，Tauri resume 后可恢复；dsh file/read-write/edit/glob/grep 工具按 canonical roots 做路径约束并拒绝越界/符号链接递归。任意 shell `bash` 命令仍不宣称受此文件 scope 限制，因此没有伪装成完整 OS sandbox。
    - `/api/sessions/continue-deleted-agent`：已接入 Studio 原生 `continue_deleted_agent_session`；对“不再 live、但 transcript 仍在 Studio persistence 中”的 session 创建新 Agent、迁移 user/assistant/tool-result transcript，再调用原生 fresh compact；永久 `dispose_agent` 仍是 destructive delete，因此真正已删除 JSONL 的来源继续返回 `session_not_found`。
 - Archived Session UI：React ArchivedSessionsModal 在零选择时也提供 Select All；全选后可批量 restore / permanent delete，仍保留一次确认和统一 refresh。
 - Runtime incremental：`/api/runtime-state` 返回稳定 `signature`，带 `?since=<signature>` 且无变化时只返回 `unchanged=true`；legacy sidebar 的 3 秒 runtime refresh 已使用该增量握手，避免重复传输完整 session runtime payload。
@@ -69,7 +69,7 @@
 - session-project assignment：已补 GET read-back，并在 POST 时校验 project 必须真实存在；React SessionList 支持多选后批量移动到 catalog project 或 uncategorized，并串行写入避免 localStorage read-modify-write race；assignment API HTTP/JSON 失败时 UI store 不再提前更新。
 - session batch archive：已支持多选后一次性归档，并在成功后统一清理 session runtime/chat/file/todo cache；当前会话未被选中时保持焦点不跳走。
 - archived batch actions：归档管理器现在支持 checkbox 多选后批量 restore / permanent delete；restore 只做一次 session reload，不逐条切换当前会话；delete 也串行写入后统一刷新列表。
-- authorized folders
+- authorized folders：已落到 Studio session event + file-tool enforcement；shell sandbox 仍单独待宿主级能力。
 - project / workspace mapping
 - file / workbench / preview
 - 把当前重要的 localStorage 状态逐步迁到 Studio 持久层。
