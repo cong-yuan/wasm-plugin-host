@@ -1711,7 +1711,7 @@ return (function () {
           sessionProjects: true,
           runtimeIncremental: true,
           sessionCompaction: false,
-          sessionTodoMutation: false,
+          sessionTodoMutation: typeof api.completeSessionTodosAvailable === 'function' && api.completeSessionTodosAvailable(),
         },
       };
     }
@@ -1782,11 +1782,29 @@ return (function () {
       };
     }
     if (pathname === '/api/sessions/todos/complete' && verb === 'POST') {
-      return {
-        ok: false,
-        code: 'capability_unavailable',
-        error: 'studio backend does not support mutating persisted session todos yet',
-      };
+      if (typeof api.completeSessionTodos !== 'function' || typeof api.completeSessionTodosAvailable !== 'function' || !api.completeSessionTodosAvailable()) {
+        return {
+          ok: false,
+          code: 'capability_unavailable',
+          error: 'studio backend does not expose persisted session todo mutation yet',
+        };
+      }
+      const sessionId = sessionIdFromBody(body, null);
+      if (!sessionId) {
+        return { ok: false, code: 'invalid_session', error: 'missing session id' };
+      }
+      try {
+        const completed = await api.completeSessionTodos(sessionId);
+        return {
+          ok: true,
+          todos: [],
+          completed: Array.isArray(completed) ? completed : [],
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const code = message === 'session is busy' ? 'session_busy' : 'todo_mutation_failed';
+        return { ok: false, code, error: message };
+      }
     }
     return null;
   };

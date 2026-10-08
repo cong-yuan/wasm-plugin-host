@@ -83,6 +83,31 @@ check('api mode is mock without invoke', api.mode() === 'mock');
   studio.hostAction = null;
 }
 
+{
+  const calls = [];
+  studio.hostAction = async (action) => {
+    calls.push(action);
+    if (action.command === 'complete_session_todos') {
+      return [{ content: 'read', status: 'completed' }, { content: 'write', status: 'completed' }];
+    }
+    throw new Error(`unexpected host command: ${action.command}`);
+  };
+  const capabilities = await adapter.http('GET', '/api/capabilities');
+  check('Studio capability registry exposes persisted todo mutation',
+    capabilities?.capabilities?.sessionTodoMutation === true);
+  const result = await adapter.http('POST', '/api/sessions/todos/complete', {
+    path: 'studio://todo-session',
+  });
+  const call = calls.find((action) => action.command === 'complete_session_todos');
+  check('todo completion uses the Studio native command',
+    result?.ok === true && result?.todos?.length === 0 && !!call);
+  check('todo completion resolves the session id from studio path',
+    call?.args?.agentId === 'todo-session');
+  check('todo completion returns completed snapshot for the bridge',
+    result?.completed?.length === 2 && result.completed.every((todo) => todo.status === 'completed'));
+  studio.hostAction = null;
+}
+
 const health = await adapter.http('GET', '/api/health');
 check('mock health is labeled', health.studioBridge === 'mock' && health.status === 'ok');
 const listed = await adapter.http('GET', '/api/sessions');
@@ -1252,6 +1277,12 @@ check('host bridge correlates requestId',
       ]);
     }
     if (cmd === 'resume_session') return Promise.resolve(args.sessionId);
+    if (cmd === 'complete_session_todos') {
+      return Promise.resolve([
+        { content: 'read', status: 'completed' },
+        { content: 'write', status: 'completed' },
+      ]);
+    }
     return Promise.resolve(undefined);
   };
 
@@ -1429,9 +1460,12 @@ check('host bridge correlates requestId',
   check('fresh compact fails closed without a Studio compaction primitive',
     compactUnsupported?.ok === false && compactUnsupported?.code === 'capability_unavailable');
 
-  const todosUnsupported = await adapter.http('POST', '/api/sessions/todos/complete', { path: 'studio://agent-2' });
-  check('todo completion fails closed without persisted todo mutation',
-    todosUnsupported?.ok === false && todosUnsupported?.code === 'capability_unavailable');
+  const todosCompleted = await adapter.http('POST', '/api/sessions/todos/complete', { path: 'studio://agent-2' });
+  check('todo completion uses the Studio persisted mutation command',
+    todosCompleted?.ok === true
+    && todosCompleted?.todos?.length === 0
+    && todosCompleted?.completed?.length === 2
+    && calls.some((c) => c.cmd === 'complete_session_todos' && c.args.agentId === 'agent-2'));
 
   const continueUnsupported = await adapter.http('POST', '/api/sessions/continue-deleted-agent', { path: 'studio://agent-2' });
   check('deleted-agent continuation fails closed without Studio replacement semantics',

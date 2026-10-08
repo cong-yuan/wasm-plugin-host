@@ -783,6 +783,11 @@ return (function () {
         mimeType: mimeType || null,
       });
     },
+    completeSessionTodosAvailable: () => tauri.available(),
+    completeSessionTodos: async (agentId) => {
+      if (!tauri.available()) return null;
+      return tauri.invoke('complete_session_todos', { agentId });
+    },
 
     sendWithProgress,
 

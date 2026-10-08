@@ -33,7 +33,7 @@
 2. **Fresh compact / cleanup / todo complete** — P1 / 部分完成
    - `/api/sessions/cleanup`：已按本地归档元数据的 `archivedAt` + `maxAgeDays` 选择候选，并通过真实 `dispose_agent` 永久删除；返回实际 `deleted/failed`。
    - `/api/sessions/fresh-compact`：Studio 当前没有会话摘要/压缩原语，已从 soft-success 改为 `capability_unavailable`，等待宿主命令。
-   - `/api/sessions/todos/complete`：Studio 当前没有持久化 todo mutation 原语，已从 soft-success 改为 `capability_unavailable`；UI 只有后端真实成功才清本地 todo，避免刷新后复活。
+   - `/api/sessions/todos/complete`：已接入 Studio 原生 `complete_session_todos`；读取当前分支最新 `todo/write` 快照，追加全量 `completed` 快照并 flush，UI 仍只有真实成功才清本地 todo。
 
 3. **Search / summary / authorized folders / continue-deleted-agent** — P1 / 部分完成
    - `/api/sessions/search`：已纳入 Studio iframe bridge；adapter 复用稳定的 title/content 两阶段搜索、transcript cache、limit 上限和已删除/归档过滤；SessionList 已支持 ArrowUp/ArrowDown/Home/End 键盘导航，并用 `aria-current=page` 标出当前会话。
@@ -51,7 +51,7 @@
 - `/api/session-thinking-level`：已从固定 `off` 改为显式 `medium + locked + capability_unavailable`，避免 UI 误以为 Studio 支持切换；宿主补真实 session thinking 原语后再接。
 - `/api/upload-blob`：Studio 已补真实 `upload_blob` 宿主命令；base64 bytes 由 Tauri host 落到 `session-files/<sessionId>`（无 session 时进入隔离的 `pending` namespace），20 MiB 上限、session id 校验、文件名净化；普通附件继续以可信 `fileId → dest` 路径上下文交给 agent。
 - Native image path：桌面提交的 `images[]` 不再只停留在 WebSocket payload；Studio 新增 `send_message_with_images`，把图片转成持久化的 `ContentBlock::Image { url: data:, detail }`，OpenAI-compatible adapter 映射为原生 `image_url` content block。session JSONL 自包含图片数据，避免依赖本机临时路径。
-- `/api/capabilities`：UI 可读取真实 `uploadBlob` / `thinkingLevel` 等 capability；Studio host 更新后 uploadBlob 会开放，旧/缺少 Tauri bridge 的环境继续 fail closed。
+- `/api/capabilities`：UI 可读取真实 `uploadBlob` / `sessionTodoMutation` / `thinkingLevel` 等 capability；Studio host 更新后 uploadBlob 与 todo mutation 会开放，旧/缺少 Tauri bridge 的环境继续 fail closed。
 - InputControlBar：backend 明确不支持 blob ingest 时禁用附件按钮、隐藏录音入口；thinking-level control 在 Studio 不支持时直接锁定并提供可访问说明。
 - `/api/models/auxiliary-vision`：现在从 provider model metadata 的 `image` / `input` 投影 capability；没有任何模型声明 image 能力时仍 `capability_unavailable`，声明后立即回显可用模型。
 - `/api/models`：会回显已持久化的 model metadata（name/context/maxOutput/input/image/reasoning/thinkingLevels 等），避免 Settings 保存后聊天模型选择器仍显示裸 ID。
