@@ -49,8 +49,9 @@
 - `/api/preferences/models`：GET 读取 Studio `get_llm_config` 的当前 provider/model 作为 utility fallback；utility_large / vision / vision_enabled / search provider 已有受校验的本地 overlay 持久化，刷新后可恢复；secret API key 仍不落 localStorage。
 - provider model metadata：`/api/providers/:provider/models/:model` 的 PUT/PATCH/DELETE 已从 soft-ack 改为真实 local overlay 写入/删除，并在 provider config、discovered-models 两条读取链路回显。
 - `/api/session-thinking-level`：已从固定 `off` 改为显式 `medium + locked + capability_unavailable`，避免 UI 误以为 Studio 支持切换；宿主补真实 session thinking 原语后再接。
-- `/api/upload-blob`：当前 Studio 没有 blob/file-ingest command，继续 fail closed；新增 `/api/capabilities` capability registry，让 UI 能知道 `uploadBlob=false` / `thinkingLevel=false` 等真实缺口，不再只在点击后才失败。
-- InputControlBar：当 backend capability 明确不支持 blob ingest 时禁用附件按钮、隐藏录音入口；thinking-level control 在 Studio 不支持时直接锁定并提供可访问的说明，避免暴露不可用操作。
+- `/api/upload-blob`：Studio 已补真实 `upload_blob` 宿主命令；base64 bytes 由 Tauri host 落到 `session-files/<sessionId>`（无 session 时进入隔离的 `pending` namespace），20 MiB 上限、session id 校验、文件名净化；adapter 只把本次上传返回的 `fileId → dest` 作为可信附件路径注入 prompt。图片仍以文件路径方式交给 agent，原生 multimodal content block 尚未接入。
+- `/api/capabilities`：UI 可读取真实 `uploadBlob` / `thinkingLevel` 等 capability；Studio host 更新后 uploadBlob 会开放，旧/缺少 Tauri bridge 的环境继续 fail closed。
+- InputControlBar：backend 明确不支持 blob ingest 时禁用附件按钮、隐藏录音入口；thinking-level control 在 Studio 不支持时直接锁定并提供可访问说明。
 - `/api/models/auxiliary-vision`：现在从 provider model metadata 的 `image` / `input` 投影 capability；没有任何模型声明 image 能力时仍 `capability_unavailable`，声明后立即回显可用模型。
 - `/api/models`：会回显已持久化的 model metadata（name/context/maxOutput/input/image/reasoning/thinkingLevels 等），避免 Settings 保存后聊天模型选择器仍显示裸 ID。
 

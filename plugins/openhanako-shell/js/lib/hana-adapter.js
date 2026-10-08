@@ -110,6 +110,7 @@ return (function () {
   // project catalog still function in Node harnesses or private mode where
   // Storage exists but setItem/getItem no-ops or throws.
   const memoryStore = new Map();
+  const studioUploadedFiles = new Map();
   const readJson = (key, fallback) => {
     try {
       if (typeof localStorage !== 'undefined') {
@@ -1702,7 +1703,7 @@ return (function () {
           modelSwitch: true,
           modelMetadata: true,
           vision: visionAvailable,
-          uploadBlob: false,
+          uploadBlob: typeof api.uploadBlobAvailable === 'function' && api.uploadBlobAvailable(),
           thinkingLevel: false,
           permissionMode: false,
           primaryAgentSwitch: false,
@@ -1715,11 +1716,53 @@ return (function () {
       };
     }
     if (pathname === '/api/upload-blob' && verb === 'POST') {
-      return {
-        ok: false,
-        code: 'capability_unavailable',
-        error: 'studio backend does not expose a file/blob ingest command yet',
-      };
+      if (typeof api.uploadBlob !== 'function' || typeof api.uploadBlobAvailable !== 'function' || !api.uploadBlobAvailable()) {
+        return {
+          ok: false,
+          code: 'capability_unavailable',
+          error: 'studio backend does not expose a file/blob ingest command yet',
+        };
+      }
+      const payload = body && typeof body === 'object' ? body : {};
+      const name = typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : 'upload.bin';
+      const base64Data = typeof payload.base64Data === 'string' ? payload.base64Data : '';
+      const mimeType = typeof payload.mimeType === 'string' && payload.mimeType.trim()
+        ? payload.mimeType.trim()
+        : 'application/octet-stream';
+      const sessionId = typeof payload.sessionId === 'string' && payload.sessionId.trim()
+        ? payload.sessionId.trim()
+        : (typeof payload.sessionPath === 'string' && payload.sessionPath.startsWith('studio://')
+          ? payload.sessionPath.slice('studio://'.length)
+          : null);
+      try {
+        const upload = await api.uploadBlob({ sessionId, name, base64Data, mimeType });
+        if (!upload?.ok || !upload?.fileId || !upload?.dest) {
+          return {
+            ok: false,
+            code: upload?.code || 'upload_failed',
+            error: upload?.error || 'studio upload failed',
+          };
+        }
+        studioUploadedFiles.set(String(upload.fileId), String(upload.dest));
+        return {
+          ok: true,
+          uploads: [{
+            fileId: String(upload.fileId),
+            dest: String(upload.dest),
+            path: String(upload.dest),
+            name: upload.name || name,
+            mimeType: upload.mimeType || mimeType,
+            size: upload.size,
+            kind: upload.kind,
+          }],
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'upload_failed',
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
     }
     if (pathname.startsWith('/api/bridge')) {
       return { ok: true, studioBridge: api.mode() };
@@ -2590,6 +2633,15 @@ return (function () {
       const shown = msg.displayMessage && typeof msg.displayMessage.text === 'string'
         ? msg.displayMessage.text
         : text;
+      const trustedAttachmentPaths = Array.isArray(msg.sessionFileRefs)
+        ? msg.sessionFileRefs
+          .map((ref) => ref && studioUploadedFiles.get(String(ref.fileId || '')))
+          .filter((path) => typeof path === 'string' && path.length > 0)
+        : [];
+      const filePathContext = trustedAttachmentPaths.length > 0
+        ? trustedAttachmentPaths.map((path) => `[Attached file path: ${path}]`).join('\n')
+        : '';
+      const promptText = filePathContext ? (text ? `${text}\n\n${filePathContext}` : filePathContext) : text;
       const clientMessageId = typeof msg.clientMessageId === 'string' ? msg.clientMessageId : '';
       const liveId = await ensureLive(sessionId);
       const livePath = msg.sessionPath || pathFor(liveId);
@@ -2644,7 +2696,7 @@ return (function () {
           // Seed an empty assistant bubble immediately so the avatar + waiting
           // dots show before the first real token arrives from Studio.
           push({ type: 'text_delta', sessionId: liveId, sessionPath: livePath, delta: '' });
-          await api.sendWithProgress(liveId, text, msgId, (progress) => {
+          await api.sendWithProgress(liveId, promptText, msgId, (progress) => {
             const kind = progress && progress.kind;
             if (kind === 'thinking_start') {
               push({ type: 'thinking_start', sessionId: liveId, sessionPath: livePath });

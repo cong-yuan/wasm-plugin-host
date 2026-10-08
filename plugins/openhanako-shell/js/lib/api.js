@@ -767,6 +767,18 @@ return (function () {
       return true;
     },
 
+    // Browser attachments cross the Studio bridge as base64 JSON; the host owns the destination.
+    uploadBlobAvailable: () => tauri.available(),
+    uploadBlob: async ({ sessionId, name, base64Data, mimeType } = {}) => {
+      if (!tauri.available()) return null;
+      return tauri.invoke('upload_blob', {
+        sessionId: sessionId || null,
+        name: name || 'upload.bin',
+        base64Data: base64Data || '',
+        mimeType: mimeType || null,
+      });
+    },
+
     sendWithProgress,
 
     cancel: async (agentId) => {
