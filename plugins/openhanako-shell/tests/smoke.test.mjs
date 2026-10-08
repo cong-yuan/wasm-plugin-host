@@ -736,6 +736,111 @@ skillsButton?.fire('click');
   adapterForSidebarRace.http = originalSidebarRaceHttp;
 }
 
+// Search input changes must invalidate a pending failed search immediately,
+// before the next debounced query begins, and teardown must not paint late data.
+{
+  const sidebarModule = studio.require('panels/sidebar');
+  const adapterForSearchRace = studio.require('lib/hana-adapter');
+  const originalHttp = adapterForSearchRace.http;
+  let rejectOldSearch = null;
+  adapterForSearchRace.http = async (method, path, body) => {
+    if (method === 'GET' && path === '/api/sessions') {
+      return [{ sessionId: 'local', title: 'Local title' }];
+    }
+    if (method === 'GET' && path === '/api/runtime-state') return { mode: 'studio', sessions: [] };
+    if (method === 'GET' && path.startsWith('/api/sessions/search?')) {
+      if (path.includes('q=older') && path.includes('phase=content')) {
+        return new Promise((_resolve, reject) => { rejectOldSearch = reject; });
+      }
+      if (path.includes('q=older')) return { results: [] };
+      if (path.includes('q=latest')) {
+        return { results: [{ sessionId: 'latest', title: 'Latest session', matchKind: 'title' }] };
+      }
+      return { results: [] };
+    }
+    return originalHttp(method, path, body);
+  };
+  const side = sidebarModule.render({ selected: null, onNew() {}, onCollapse() {}, onSelect() {} });
+  await side.refresh(null);
+  const input = side.root.querySelector('.sessionSearchInput');
+  const status = side.root.querySelector('.sessionSearchStatus');
+  input.value = 'older';
+  input.fire('input', { target: input });
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  check('sidebar search begins remote phases', typeof rejectOldSearch === 'function');
+  input.value = 'latest';
+  input.fire('input', { target: input });
+  rejectOldSearch?.(new Error('delayed old search failed'));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('obsolete failed search cannot overwrite pending new search',
+    status?.textContent === 'Waiting for typing…');
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  check('newer query wins after obsolete request rejects',
+    /Latest session/.test(side.root.textContent || '')
+    && !/Message search unavailable/.test(status?.textContent || ''));
+  side.destroy?.();
+  adapterForSearchRace.http = originalHttp;
+}
+
+// A destructive batch confirmation must be invalidated by checkbox edits.
+// Mutations in flight must not overwrite a user's newer selection.
+{
+  const sidebarModule = studio.require('panels/sidebar');
+  const adapterForBatch = studio.require('lib/hana-adapter');
+  const originalHttp = adapterForBatch.http;
+  const deletedIds = [];
+  let finishRestore = null;
+  adapterForBatch.http = async (method, path, body) => {
+    if (method === 'GET' && path === '/api/sessions') return [];
+    if (method === 'GET' && path === '/api/sessions/archived') return [
+      { sessionId: 'archived-a', title: 'Archived A', archivedAt: '2026-01-01' },
+      { sessionId: 'archived-b', title: 'Archived B', archivedAt: '2026-01-02' },
+    ];
+    if (method === 'GET' && path === '/api/runtime-state') return { mode: 'studio', sessions: [] };
+    if (method === 'POST' && path === '/api/sessions/archived/delete') {
+      deletedIds.push(body.sessionId);
+      return { ok: true, sessionId: body.sessionId };
+    }
+    if (method === 'POST' && path === '/api/sessions/restore') {
+      return new Promise((resolve) => { finishRestore = resolve; });
+    }
+    return originalHttp(method, path, body);
+  };
+  const side = sidebarModule.render({ selected: null, onNew() {}, onCollapse() {}, onSelect() {} });
+  side.root.querySelectorAll('.sessionViewBtn')[1]?.fire('click');
+  await side.refresh(null);
+  const selections = side.root.querySelectorAll('.sessionSelectBox');
+  check('archived search test exposes two sessions', selections.length === 2);
+  for (const checkbox of selections) {
+    checkbox.checked = true;
+    checkbox.fire('click', { stopPropagation() {} });
+  }
+  const del = side.root.querySelector('.sessionBulkDelete');
+  del?.fire('click');
+  check('batch delete arms with current selection', /Confirm delete/.test(del?.textContent || ''));
+  selections[0].checked = false;
+  selections[0].fire('click', { stopPropagation() {} });
+  check('changing checkbox revokes destructive batch confirmation',
+    !/Confirm delete/.test(del?.textContent || ''));
+  del?.fire('click');
+  await Promise.resolve();
+  check('first click after selection change never deletes', deletedIds.length === 0);
+
+  const restore = side.root.querySelector('.sessionBulkPrimary');
+  restore?.fire('click');
+  await Promise.resolve();
+  check('selected batch restore is pending', typeof finishRestore === 'function');
+  // While restore runs, change selection; the old batch must not rewrite it.
+  selections[0].checked = true;
+  selections[0].fire('click', { stopPropagation() {} });
+  finishRestore?.({ ok: false, error: 'retry later' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('async batch completion preserves newer checkbox selections',
+    /2 selected/.test(side.root.querySelector('.sessionBulkCount')?.textContent || ''));
+  side.destroy?.();
+  adapterForBatch.http = originalHttp;
+}
+
 // Rapid session switching must keep the newest transcript when an older
 // transcript request resolves later.
 {

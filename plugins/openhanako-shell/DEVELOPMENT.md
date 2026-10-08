@@ -112,3 +112,11 @@
 - `clear()` invalidates both cached and pending search generations: old responses may complete for existing callers but cannot repopulate a cleared cache.
 - The bounded query cache now uses access-order LRU eviction and defensive row copies; malformed or failed HTTP search phases reject rather than caching phantom empty results.
 - `session-sidebar-utils.test.mjs` covers concurrent coalescing, clear-vs-response races, retry after failure, LRU eviction and caller mutation isolation.
+
+### Sidebar async and bulk mutation safety (2026-10-09)
+
+- Search typing invalidates older draw/search generations **before** the 180ms debounce. Both late successes and late failures now check the current generation and destroy state before updating search status or rows. Sidebar teardown invalidates outstanding work.
+- Session mutations require explicit `ok: true`; single-target mutations and bulk archive/delete additionally check the target session ID if the backend supplies one. Bulk restore is the intentional exception: resumed sessions may legitimately receive a new ID. Partial or malformed responses remain failed rather than fake success.
+- Bulk mutation operations are mutually exclusive. The original active/archived mode is pinned for the entire batch; post-request failure selection reconciliation only runs if the user has not changed selection or view.
+- Changing a checkbox, selecting/clearing rows, or pruning missing selections revokes a pending destructive delete confirmation. A new confirmation is required for the new exact selection.
+- Successful session archive, restore, delete, rename, and pin mutations invalidate cached searches and older in-flight sidebar drawings. Regression coverage is in `session-sidebar-utils.test.mjs` and the DOM smoke suite (failed search while typing, confirmation revocation, in-flight selection retention).

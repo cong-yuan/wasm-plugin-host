@@ -15,7 +15,7 @@ return (function () {
     return new Set(Array.from(selectedIds || []).filter((id) => available.has(id)));
   };
 
-  const runBatch = async (ids, request, concurrency = 4) => {
+  const runBatch = async (ids, request, concurrency = 4, options = {}) => {
     const source = Array.from(ids || []);
     const width = Math.max(1, Math.min(source.length || 1, Number(concurrency) || 1));
     const outcomes = new Array(source.length).fill(false);
@@ -28,7 +28,12 @@ return (function () {
         const sessionId = source[index];
         try {
           const result = await request(sessionId);
-          outcomes[index] = !!(result && result.ok !== false && !result.error);
+          // Mutation responses must explicitly acknowledge success and identify the
+          // same target when a session ID is present. A HTTP 200 or {} is not ACK.
+          const acknowledged = result?.ok === true && !result.error;
+          const targetMatches = options.allowRemappedSessionId === true
+            || result?.sessionId == null || result.sessionId === sessionId;
+          outcomes[index] = acknowledged && targetMatches;
         } catch {
           outcomes[index] = false;
         }

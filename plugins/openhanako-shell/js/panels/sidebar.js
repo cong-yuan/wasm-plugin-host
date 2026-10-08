@@ -28,13 +28,20 @@ return (function () {
   };
 
   function render(options) {
-    const view = { archived: false, query: '', searchVersion: 0, expanded: new Set(), selectedIds: new Set(), visibleIds: [], keyboardId: null, renamingId: null, deleteConfirmId: null, bulkDeleteArmed: false };
+    const view = { archived: false, query: '', searchVersion: 0, selectionVersion: 0, expanded: new Set(), selectedIds: new Set(), visibleIds: [], keyboardId: null, renamingId: null, deleteConfirmId: null, bulkDeleteArmed: false };
     const searchController = sessionSearchController.create({ adapter, ttlMs: 15000, maxEntries: 20 });
     const actionLock = sessionActionLock.create();
     const mutations = sessionMutations.create({ adapter, api });
     let searchTimer = null;
     let lastRuntimeSignature = '';
     let drawVersion = 0;
+    let destroyed = false;
+    const invalidateSearch = () => {
+      // Mutations can finish while an older search draw is still in progress.
+      drawVersion += 1;
+      view.searchVersion += 1;
+      searchController.clear();
+    };
     let runtimeRefreshPending = false;
     const add = h('button', { class: 'sidebar-action-btn', title: t('sidebar.newChat') }, svg(ICON.newChat));
     const settings = h('button', { class: 'sidebar-action-btn sidebar-settings-button', title: t('settings.title'), 'aria-expanded': 'false' }, svg(ICON.settings));
@@ -200,33 +207,43 @@ return (function () {
 
     bulkSelectVisible.onclick = () => {
       view.selectedIds = sessionBulk.toggleVisible(view.selectedIds, view.visibleIds);
+      view.selectionVersion += 1;
       view.bulkDeleteArmed = false;
       refreshBulkBar();
       draw(options.selected);
     };
 
     bulkClear.onclick = () => {
+      view.selectionVersion += 1;
       view.selectedIds.clear();
       view.bulkDeleteArmed = false;
       refreshBulkBar();
       draw(options.selected);
     };
 
-    bulkPrimary.onclick = async () => actionLock.run('bulk:primary', async () => {
+    bulkPrimary.onclick = async () => actionLock.run('bulk:mutation', async () => {
       const ids = Array.from(view.selectedIds);
       if (!ids.length) return;
       bulkPrimary.disabled = true;
-      const operation = view.archived ? 'Restoring' : 'Archiving';
+      const archivedAtStart = view.archived;
+      view.bulkDeleteArmed = false;
+      const selectionAtStart = view.selectionVersion;
+      const operation = archivedAtStart ? 'Restoring' : 'Archiving';
       reportAction(`${operation} ${ids.length} sessions…`);
       try {
         const { completed, failed } = await sessionBulk.runBatch(ids, (sessionId) =>
-          adapter.http('POST', view.archived ? '/api/sessions/restore' : '/api/sessions/archive', { sessionId }));
-        view.selectedIds = new Set(failed);
+          adapter.http('POST', archivedAtStart ? '/api/sessions/restore' : '/api/sessions/archive', { sessionId }),
+          4, { allowRemappedSessionId: archivedAtStart });
+        invalidateSearch();
+        if (view.archived === archivedAtStart && view.selectionVersion === selectionAtStart) {
+          view.selectedIds = new Set(failed);
+          view.selectionVersion += 1;
+        }
         refreshBulkBar();
         if (failed.length) {
           reportAction(`${completed} completed · ${failed.length} failed`, true, () => bulkPrimary.onclick());
         } else {
-          reportAction(`${completed} sessions ${view.archived ? 'restored' : 'archived'}`);
+          reportAction(`${completed} sessions ${archivedAtStart ? 'restored' : 'archived'}`);
         }
         await draw(options.selected);
       } finally {
@@ -235,7 +252,7 @@ return (function () {
     });
 
 
-    bulkDelete.onclick = async () => actionLock.run('bulk:delete', async () => {
+    bulkDelete.onclick = async () => actionLock.run('bulk:mutation', async () => {
       const ids = Array.from(view.selectedIds);
       if (!view.archived || !ids.length) return;
       if (!view.bulkDeleteArmed) {
@@ -245,11 +262,16 @@ return (function () {
         return;
       }
       bulkDelete.disabled = true;
+      const selectionAtStart = view.selectionVersion;
       reportAction(`Deleting ${ids.length} archived sessions…`);
       try {
         const { completed, failed } = await sessionBulk.runBatch(ids, (sessionId) =>
           adapter.http('POST', '/api/sessions/archived/delete', { sessionId }));
-        view.selectedIds = new Set(failed);
+        invalidateSearch();
+        if (view.archived && view.selectionVersion === selectionAtStart) {
+          view.selectedIds = new Set(failed);
+          view.selectionVersion += 1;
+        }
         view.bulkDeleteArmed = false;
         refreshBulkBar();
         if (failed.length) {
@@ -275,7 +297,7 @@ return (function () {
           ? Promise.resolve(runtimeOverride)
           : adapter.http('GET', '/api/runtime-state').catch(() => ({ mode: api.mode(), sessions: [] })),
       ]);
-      if (myDrawVersion !== drawVersion) return;
+      if (destroyed || myDrawVersion !== drawVersion) return;
       const rawQuery = view.query.trim();
       const query = rawQuery.toLocaleLowerCase();
       const allRows = sessionSearch.sortRows(view.archived ? archivedRows : activeRows, view.archived);
@@ -285,12 +307,13 @@ return (function () {
         searchStatus.textContent = 'Searching titles and messages…';
         try {
           const result = await searchController.search(rawQuery);
-          if (myDrawVersion !== drawVersion || mySearchVersion !== view.searchVersion) return;
+          if (destroyed || myDrawVersion !== drawVersion || mySearchVersion !== view.searchVersion) return;
           rows = result.rows;
           searchStatus.textContent = rows.length
             ? `${rows.length} result${rows.length === 1 ? '' : 's'} · ${result.cached ? 'cached ' : ''}title + message search`
             : 'No title or message matches';
         } catch {
+          if (destroyed || myDrawVersion !== drawVersion || mySearchVersion !== view.searchVersion) return;
           searchStatus.textContent = 'Message search unavailable · showing local title matches';
         }
       } else {
@@ -309,7 +332,12 @@ return (function () {
       activeView.setAttribute('aria-pressed', view.archived ? 'false' : 'true');
       archivedView.setAttribute('aria-pressed', view.archived ? 'true' : 'false');
       view.visibleIds = rows.map((row) => row.id);
-      view.selectedIds = sessionBulk.pruneSelection(view.selectedIds, view.visibleIds);
+      const pruned = sessionBulk.pruneSelection(view.selectedIds, view.visibleIds);
+      if (pruned.size !== view.selectedIds.size) {
+        view.selectionVersion += 1;
+        view.bulkDeleteArmed = false;
+      }
+      view.selectedIds = pruned;
       refreshBulkBar();
 
       clear(scroller);
@@ -331,6 +359,8 @@ return (function () {
           event?.stopPropagation?.();
           if (selectBox.checked) view.selectedIds.add(s.id);
           else view.selectedIds.delete(s.id);
+          view.selectionVersion += 1;
+          view.bulkDeleteArmed = false;
           refreshBulkBar();
         };
 
@@ -351,6 +381,7 @@ return (function () {
               reportAction('Restoring session…');
               try {
                 const result = await mutations.restore(s);
+                invalidateSearch();
                 reportAction('Session restored');
                 view.archived = false;
                 view.query = '';
@@ -383,6 +414,7 @@ return (function () {
               reportAction('Deleting archived session…');
               try {
                 await mutations.deleteArchived(s);
+                invalidateSearch();
                 view.deleteConfirmId = null;
                 view.expanded.delete(s.id);
                 reportAction('Archived session permanently deleted');
@@ -408,6 +440,7 @@ return (function () {
               reportAction(nextPinned ? 'Pinning session…' : 'Unpinning session…');
               try {
                 await mutations.setPinned(s, nextPinned);
+                invalidateSearch();
                 reportAction(nextPinned ? 'Session pinned' : 'Session unpinned');
                 await draw(selected);
               } catch (err) {
@@ -437,6 +470,7 @@ return (function () {
                   [next[index], next[target]] = [next[target], next[index]];
                   reportAction('Updating pinned order…');
                   await mutations.reorderPinned(next);
+                  invalidateSearch();
                   reportAction('Pinned order updated');
                   await draw(selected);
                 } finally {
@@ -459,6 +493,7 @@ return (function () {
               reportAction('Archiving session…');
               try {
                 await mutations.archive(s);
+                invalidateSearch();
                 reportAction('Session archived');
                 if (selected === s.id) options.onNew();
                 else await draw(selected);
@@ -496,7 +531,7 @@ return (function () {
               try {
                 await mutations.rename(s, nextTitle);
                 view.renamingId = null;
-                searchController.clear();
+                invalidateSearch();
                 reportAction('Session renamed');
                 await draw(selected);
               } catch (err) {
@@ -598,11 +633,15 @@ return (function () {
     }
     search.oninput = (event) => {
       view.query = event?.target?.value || '';
+      // Invalidate settled and in-flight draws immediately, not after debounce.
+      drawVersion += 1;
+      view.searchVersion += 1;
       if (searchTimer) clearTimeout(searchTimer);
       searchStatus.textContent = view.query.trim() ? 'Waiting for typing…' : '';
       searchTimer = setTimeout(() => draw(options.selected), 180);
     };
     activeView.onclick = () => {
+      view.selectionVersion += 1;
       view.archived = false;
       view.selectedIds.clear();
       view.bulkDeleteArmed = false;
@@ -612,6 +651,7 @@ return (function () {
       draw(options.selected);
     };
     archivedView.onclick = () => {
+      view.selectionVersion += 1;
       view.archived = true;
       view.selectedIds.clear();
       view.bulkDeleteArmed = false;
@@ -649,6 +689,8 @@ return (function () {
       root,
       refresh: draw,
       destroy() {
+        destroyed = true;
+        invalidateSearch();
         clearInterval(runtimeRefreshTimer);
         if (searchTimer) clearTimeout(searchTimer);
         if (actionStatusTimer) clearTimeout(actionStatusTimer);

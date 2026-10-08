@@ -77,6 +77,25 @@ const check = (label, condition) => { if (!condition) failures.push(label); };
     concurrent.completed === 4 && concurrent.failed.join(',') === '4');
 }
 
+
+{
+  const ids = ['a', 'b', 'c', 'd', 'e'];
+  const result = await bulk.runBatch(ids, async (id) => ({
+    a: {},
+    b: { ok: 'true' },
+    c: { ok: true, sessionId: 'wrong' },
+    d: { ok: true, error: 'permission denied', sessionId: 'd' },
+    e: { ok: true, sessionId: 'e' },
+  }[id]));
+  check('bulk mutations require an exact acknowledged response for the target',
+    result.completed === 1 && result.failed.join(',') === 'a,b,c,d');
+  const restored = await bulk.runBatch(['old-session'], async () => (
+    { ok: true, sessionId: 'replacement-session' }
+  ), 1, { allowRemappedSessionId: true });
+  check('bulk restore permits acknowledged session ID remapping',
+    restored.completed === 1 && restored.failed.length === 0);
+}
+
 {
   const one = { mode: 'live', sessions: [
     { sessionId: 'b', status: 'running', isStreaming: true, activeToolCount: 2 },
@@ -248,6 +267,23 @@ const check = (label, condition) => { if (!condition) failures.push(label); };
   try { await mutations.archive(session); } catch (err) { archiveError = err; }
   check('session mutations normalize failed responses into errors',
     archiveError?.message === 'archive denied');
+  const unacknowledged = new Function('studio', mutationSource)({ require() {} }).create({
+    adapter: { async http() { return {}; } }, api: { cancel() {} },
+  });
+  await unacknowledged.archive(session).then(
+    () => check('unacknowledged session mutation must fail', false),
+    (err) => check('unacknowledged session mutation cannot fake success',
+      err.message === 'Archive failed'),
+  );
+  const wrongTarget = new Function('studio', mutationSource)({ require() {} }).create({
+    adapter: { async http() { return { ok: true, sessionId: 'another-session' }; } },
+    api: { cancel() {} },
+  });
+  await wrongTarget.archive(session).then(
+    () => check('session mutation rejects mismatched target', false),
+    (err) => check('wrong-target mutation response cannot fake success',
+      /session mismatch/.test(err.message)),
+  );
 }
 
 if (failures.length) {
