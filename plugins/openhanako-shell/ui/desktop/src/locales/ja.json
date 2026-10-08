@@ -206,6 +206,7 @@
     "unpinFailed": "ピン留め解除に失敗しました",
     "reorderFailed": "ピン留めの並び替えに失敗しました",
     "archive": "アーカイブ",
+    "bulk": { "toolbar": "セッション選択", "selected": "{count} 件選択中", "selectAll": "すべて選択", "clear": "クリア" },
     "copyId": "Session ID をコピー",
     "copyIdDone": "Session ID をコピーしました",
     "copyIdFailed": "Session ID をコピーできませんでした",

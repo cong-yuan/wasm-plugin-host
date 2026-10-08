@@ -288,6 +288,7 @@ import { loadDeskFiles } from '../../stores/desk-actions';
 import { bumpMessageLiveVersion, clearMessageLiveVersion } from '../../stores/message-live-version';
 import {
   archiveSession,
+  archiveSessions,
   completeSessionTodos,
   continueDeletedAgentSession,
   createNewSession,
@@ -2234,6 +2235,34 @@ function mockPermissionDefault(mode = 'ask') {
   });
 
   describe('archiveSession 按 path 清缓存', () => {
+    it('批量归档只刷新一次 session 列表，并保留未选中的当前 session', async () => {
+      (mockState as Record<string, unknown>).currentSessionPath = '/current';
+      (mockState as Record<string, unknown>).currentSessionId = 'sess_current';
+      (mockState as Record<string, unknown>).sessions = [
+        { path: '/one', sessionId: 'sess_one' },
+        { path: '/two', sessionId: 'sess_two' },
+        { path: '/current', sessionId: 'sess_current' },
+      ];
+
+      mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+      mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+      mockFetch.mockResolvedValueOnce(jsonResponse([{ path: '/current', sessionId: 'sess_current' }]));
+      mockFetch.mockResolvedValueOnce(jsonResponse({}));
+
+      const result = await archiveSessions(['/one', '/two']);
+
+      expect(result).toEqual({ succeeded: 2, failed: 0 });
+      expect(mockFetch).toHaveBeenNthCalledWith(1, '/api/sessions/archive', expect.objectContaining({
+        body: JSON.stringify({ path: '/one', sessionId: 'sess_one' }),
+      }));
+      expect(mockFetch).toHaveBeenNthCalledWith(2, '/api/sessions/archive', expect.objectContaining({
+        body: JSON.stringify({ path: '/two', sessionId: 'sess_two' }),
+      }));
+      expect(mockFetch).toHaveBeenNthCalledWith(3, '/api/sessions');
+      expect(mockState.currentSessionPath).toBe('/current');
+      expect(mockState.currentSessionId).toBe('sess_current');
+    });
+
     it('归档非当前 session 时也按归档 path 清理 chat / stream 相关缓存', async () => {
       (mockState as Record<string, unknown>).currentSessionPath = '/current';
       (mockState as Record<string, unknown>).sessions = [

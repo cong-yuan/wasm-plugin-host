@@ -1406,40 +1406,57 @@ export async function continueDeletedAgentSession(path: string): Promise<boolean
 // 归档 Session
 // ══════════════════════════════════════════════════════
 
-export async function archiveSession(path: string): Promise<void> {
-  try {
-    const localSessionId = sessionIdForPathFromState(useStore.getState() as Record<string, any>, path);
-    const res = await hanaFetch('/api/sessions/archive', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        path,
-        ...(localSessionId ? { sessionId: localSessionId } : {}),
-      }),
-    });
-    const data = await res.json();
-    if (data.error) {
-      console.error('[session] archive failed:', data.error);
-      showSidebarToast(window.t('session.archiveFailed'));
-      return;
-    }
+async function archiveSessionRequest(path: string): Promise<boolean> {
+  const localSessionId = sessionIdForPathFromState(useStore.getState() as Record<string, any>, path);
+  const res = await hanaFetch('/api/sessions/archive', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      path,
+      ...(localSessionId ? { sessionId: localSessionId } : {}),
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.error || data?.ok === false) {
+    console.error('[session] archive failed:', data?.error || res.statusText);
+    return false;
+  }
+  return true;
+}
 
-    const s = useStore.getState();
-    const isCurrent = path === s.currentSessionPath;
-    // Pin the in-view session so deleting *another* row cannot wipe the
-    // reply-in-progress chat via loadSessions locator rewrite / switch.
-    const pinnedPath = isCurrent ? null : s.currentSessionPath;
-    const pinnedId = isCurrent ? null : s.currentSessionId;
-    clearSessionRuntimeCaches(path);
-    if (isCurrent) {
+export async function archiveSessions(paths: string[]): Promise<{ succeeded: number; failed: number }> {
+  const uniquePaths = [...new Set((paths || []).filter((path): path is string => typeof path === 'string' && !!path.trim()))];
+  if (uniquePaths.length === 0) return { succeeded: 0, failed: 0 };
+
+  try {
+    const initial = useStore.getState() as Record<string, any>;
+    const currentPath = typeof initial.currentSessionPath === 'string' ? initial.currentSessionPath : null;
+    const currentId = typeof initial.currentSessionId === 'string' ? initial.currentSessionId : null;
+    const archivedCurrent = !!currentPath && uniquePaths.includes(currentPath);
+    const pinnedPath = archivedCurrent ? null : currentPath;
+    const pinnedId = archivedCurrent ? null : currentId;
+    const succeededPaths: string[] = [];
+
+    // Keep archive writes serialized: the local Studio adapter persists archive
+    // metadata in browser storage, so concurrent read-modify-write operations
+    // would otherwise be needlessly racy.
+    for (const path of uniquePaths) {
+      if (await archiveSessionRequest(path)) succeededPaths.push(path);
+    }
+    const failed = uniquePaths.length - succeededPaths.length;
+    if (failed > 0) showSidebarToast(window.t('session.archiveFailed'));
+
+    for (const path of succeededPaths) clearSessionRuntimeCaches(path);
+    if (archivedCurrent && succeededPaths.includes(currentPath!)) {
       clearChatAction();
       useStore.setState({ currentSessionPath: null, currentSessionId: null });
     }
 
+    if (succeededPaths.length === 0) return { succeeded: 0, failed };
     await loadSessions();
 
     const updated = useStore.getState();
-    if (!isCurrent && pinnedPath) {
+    if (!archivedCurrent && pinnedPath) {
       const stillThere = (updated.sessions || []).some((row: any) => row?.path === pinnedPath);
       if (stillThere && updated.currentSessionPath !== pinnedPath) {
         useStore.setState({
@@ -1453,10 +1470,16 @@ export async function archiveSession(path: string): Promise<void> {
     } else if (!useStore.getState().currentSessionPath) {
       await switchSession(updated.sessions[0].path);
     }
+    return { succeeded: succeededPaths.length, failed };
   } catch (err) {
-    console.error('[session] archive failed:', err);
+    console.error('[session] archive batch failed:', err);
     showSidebarToast(window.t('session.archiveFailed'));
+    return { succeeded: 0, failed: uniquePaths.length };
   }
+}
+
+export async function archiveSession(path: string): Promise<void> {
+  await archiveSessions([path]);
 }
 
 // ══════════════════════════════════════════════════════

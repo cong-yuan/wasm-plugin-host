@@ -206,6 +206,7 @@
     "unpinFailed": "取消置頂失敗",
     "reorderFailed": "調整置頂順序失敗",
     "archive": "封存",
+    "bulk": { "toolbar": "Session 選擇", "selected": "已選 {count} 個", "selectAll": "全選", "clear": "清除" },
     "copyId": "複製 Session ID",
     "copyIdDone": "Session ID 已複製",
     "copyIdFailed": "複製 Session ID 失敗",

@@ -206,6 +206,7 @@
     "unpinFailed": "세션 고정 해제 실패",
     "reorderFailed": "고정 순서 변경 실패",
     "archive": "보관",
+    "bulk": { "toolbar": "세션 선택", "selected": "{count}개 선택됨", "selectAll": "모두 선택", "clear": "지우기" },
     "copyId": "Session ID 복사",
     "copyIdDone": "Session ID를 복사했습니다",
     "copyIdFailed": "Session ID를 복사하지 못했습니다",

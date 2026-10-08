@@ -206,6 +206,7 @@
     "unpinFailed": "Failed to unpin session",
     "reorderFailed": "Failed to reorder pinned sessions",
     "archive": "Archive",
+    "bulk": { "toolbar": "Session selection", "selected": "{count} selected", "selectAll": "Select all", "clear": "Clear" },
     "copyId": "Copy Session ID",
     "copyIdDone": "Session ID copied",
     "copyIdFailed": "Failed to copy Session ID",

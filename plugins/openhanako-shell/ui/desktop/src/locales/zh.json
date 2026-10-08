@@ -206,6 +206,7 @@
     "unpinFailed": "取消置顶失败",
     "reorderFailed": "调整置顶顺序失败",
     "archive": "归档",
+    "bulk": { "toolbar": "Session 选择", "selected": "已选 {count} 个", "selectAll": "全选", "clear": "清除" },
     "copyId": "复制 Session ID",
     "copyIdDone": "Session ID 已复制",
     "copyIdFailed": "复制 Session ID 失败",

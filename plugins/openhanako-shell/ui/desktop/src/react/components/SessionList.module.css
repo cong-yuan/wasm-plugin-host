@@ -165,6 +165,53 @@
     line-height: 1.5;
 }
 
+.sessionSelectionToolbar {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 30px;
+    margin: 0 var(--space-8) 5px;
+    padding: 3px 5px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent-light) 72%, var(--sidebar-bg, var(--bg)) 28%);
+    border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.sessionSelectionCount {
+    min-width: 0;
+    margin-right: auto;
+    color: var(--text-muted);
+    font-size: var(--fs-hint);
+    white-space: nowrap;
+}
+
+.sessionSelectionButton {
+    flex: 0 0 auto;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 6px;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--fs-hint);
+    cursor: default;
+}
+
+.sessionSelectionButton:hover:not(:disabled),
+.sessionSelectionButton:focus-visible {
+    color: var(--text);
+    background: var(--bg-card);
+    outline: none;
+}
+
+.sessionSelectionButton:disabled {
+    opacity: 0.55;
+}
+
+.sessionSelectionDanger {
+    color: var(--danger);
+}
+
 .sessionItem {
     display: flex;
     flex-direction: column;
@@ -209,6 +256,19 @@
 
 .sessionItemActive {
     background: var(--accent-light);
+}
+
+.sessionItemSelected {
+    background: color-mix(in srgb, var(--accent-light) 82%, var(--bg) 18%);
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.sessionItemSelected .sessionItemTitle {
+    color: var(--accent);
+}
+
+.sessionItemActive.sessionItemSelected {
+    background: color-mix(in srgb, var(--accent-light) 92%, var(--bg) 8%);
 }
 
 .sessionItemTitle {

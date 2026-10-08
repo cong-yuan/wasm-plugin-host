@@ -13,7 +13,7 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { formatSessionDate } from '../utils/format';
 import { createImeCompositionGuard } from '../utils/ime-composition';
-import { switchSession, archiveSession, renameSession, pinSession, createNewSession, reorderPinnedSessions } from '../stores/session-actions';
+import { switchSession, archiveSession, archiveSessions, renameSession, pinSession, createNewSession, reorderPinnedSessions } from '../stores/session-actions';
 import { locateSearchHit } from '../stores/chat-find-actions';
 import { setBrowserStateForPath } from '../stores/browser-slice';
 import { sessionScopedListIncludes } from '../stores/session-slice';
@@ -224,12 +224,81 @@ function SessionListInner() {
   const [titleResults, setTitleResults] = useState<SessionSearchResult[]>([]);
   const [contentResults, setContentResults] = useState<SessionSearchResult[]>([]);
   const [searchStatus, setSearchStatus] = useState<'idle' | 'title' | 'content' | 'done' | 'error'>('idle');
+  const [selectedSessionPaths, setSelectedSessionPaths] = useState<Set<string>>(() => new Set());
+  const [selectionAnchorPath, setSelectionAnchorPath] = useState<string | null>(null);
+  const [bulkArchiving, setBulkArchiving] = useState(false);
   const closingBrowserSessionsRef = useRef(new Set<string>());
   const projectNameInputRef = useRef<HTMLInputElement>(null);
   const searchQueryTrimmed = searchQuery.trim();
   const sessionsSignature = useMemo(() => (
     sessions.map(s => `${s.path}:${s.title || ''}:${s.modified || ''}:${s.messageCount}:${s.projectId || ''}`).join('\n')
   ), [sessions]);
+
+  const selectableSessionPaths = useMemo(() => sessions.map(session => session.path), [sessions]);
+  const selectedCount = selectedSessionPaths.size;
+
+  useEffect(() => {
+    setSelectedSessionPaths(current => {
+      const valid = new Set(selectableSessionPaths);
+      const next = new Set([...current].filter(path => valid.has(path)));
+      return next.size === current.size ? current : next;
+    });
+    setSelectionAnchorPath(current => current && selectableSessionPaths.includes(current) ? current : null);
+  }, [selectableSessionPaths]);
+
+  useEffect(() => {
+    if (!searchQueryTrimmed && selectedCount === 0) return;
+    if (searchQueryTrimmed) {
+      setSelectedSessionPaths(new Set());
+      setSelectionAnchorPath(null);
+    }
+  }, [searchQueryTrimmed]);
+
+  const clearSessionSelection = useCallback(() => {
+    setSelectedSessionPaths(new Set());
+    setSelectionAnchorPath(null);
+  }, []);
+
+  const selectAllSessions = useCallback(() => {
+    setSelectedSessionPaths(new Set(selectableSessionPaths));
+    setSelectionAnchorPath(selectableSessionPaths[selectableSessionPaths.length - 1] || null);
+  }, [selectableSessionPaths]);
+
+  const handleSessionSelection = useCallback((event: React.MouseEvent, session: Session) => {
+    if (!event.metaKey && !event.ctrlKey && !event.shiftKey) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedSessionPaths(current => {
+      const next = new Set(current);
+      if (event.shiftKey && selectionAnchorPath) {
+        const anchorIndex = selectableSessionPaths.indexOf(selectionAnchorPath);
+        const targetIndex = selectableSessionPaths.indexOf(session.path);
+        if (anchorIndex >= 0 && targetIndex >= 0) {
+          next.clear();
+          const start = Math.min(anchorIndex, targetIndex);
+          const end = Math.max(anchorIndex, targetIndex);
+          selectableSessionPaths.slice(start, end + 1).forEach(path => next.add(path));
+          return next;
+        }
+      }
+      if (next.has(session.path)) next.delete(session.path);
+      else next.add(session.path);
+      return next;
+    });
+    setSelectionAnchorPath(session.path);
+    return true;
+  }, [selectableSessionPaths, selectionAnchorPath]);
+
+  const handleBulkArchive = useCallback(async () => {
+    if (bulkArchiving || selectedCount === 0) return;
+    setBulkArchiving(true);
+    try {
+      await archiveSessions([...selectedSessionPaths]);
+      clearSessionSelection();
+    } finally {
+      setBulkArchiving(false);
+    }
+  }, [bulkArchiving, clearSessionSelection, selectedCount, selectedSessionPaths]);
 
   const setVisibleBrowserSessions = useCallback((data: unknown) => {
     const states = normalizeBrowserSessionStates(data);
@@ -315,9 +384,19 @@ function SessionListInner() {
   }, []);
 
   const handleSessionListKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.altKey || event.ctrlKey || event.metaKey) return;
     const target = event.target as HTMLElement | null;
     if (!target || target.closest('input, textarea, [contenteditable="true"]')) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+      event.preventDefault();
+      selectAllSessions();
+      return;
+    }
+    if (event.key === 'Escape' && selectedCount > 0) {
+      event.preventDefault();
+      clearSessionSelection();
+      return;
+    }
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
     const current = target.closest<HTMLButtonElement>('button[data-session-path]');
     if (!current) return;
     const buttons = Array.from(
@@ -333,7 +412,7 @@ function SessionListInner() {
     if (nextIndex < 0 || nextIndex === index) return;
     event.preventDefault();
     buttons[nextIndex]?.focus();
-  }, []);
+  }, [clearSessionSelection, selectAllSessions, selectedCount]);
 
   useEffect(() => {
     if (viewMode !== 'project') return;
@@ -656,6 +735,8 @@ function SessionListInner() {
       browserState={browserSessions[s.path] || null}
       rowMode={sessionListRowMode}
       onCloseBrowser={handleCloseBrowserSession}
+      selected={selectedSessionPaths.has(s.path)}
+      onSelect={handleSessionSelection}
       draggable={options.draggable === true && s.agentDeleted !== true}
       onDragStart={options.onDragStart || handleSessionDragStart}
       onDragEnd={clearDragState}
@@ -760,6 +841,21 @@ function SessionListInner() {
       </SectionTitle>
     ));
   }
+  const selectionToolbar = selectedCount > 0 && !isSearching ? (
+    <div className={styles.sessionSelectionToolbar} role="toolbar" aria-label={t('session.bulk.toolbar')}>
+      <span className={styles.sessionSelectionCount}>{t('session.bulk.selected', { count: selectedCount })}</span>
+      <button type="button" className={styles.sessionSelectionButton} onClick={selectAllSessions} disabled={bulkArchiving}>
+        {t('session.bulk.selectAll')}
+      </button>
+      <button type="button" className={styles.sessionSelectionButton} onClick={clearSessionSelection} disabled={bulkArchiving}>
+        {t('session.bulk.clear')}
+      </button>
+      <button type="button" className={`${styles.sessionSelectionButton} ${styles.sessionSelectionDanger}`} onClick={() => { void handleBulkArchive(); }} disabled={bulkArchiving}>
+        {bulkArchiving ? t('common.loading') : t('session.archive')}
+      </button>
+    </div>
+  ) : null;
+
   const content = showEmptyState ? (
     <div className={styles.sessionEmpty}>
       {metaRecovery?.degraded ? t('sidebar.metaRecoveryEmpty') : t('sidebar.empty')}
@@ -810,6 +906,7 @@ function SessionListInner() {
         onChange={setSearchQuery}
         onClear={() => setSearchQuery('')}
       />
+      {selectionToolbar}
       <div
         className={styles.sessionListScroller}
         onKeyDown={handleSessionListKeyDown}
@@ -1569,7 +1666,7 @@ export const SessionSearchItem = memo(function SessionSearchItem({
 
 // ── Session Item ──
 
-const SessionItem = memo(function SessionItem({ session: s, isActive, isPending, isStreaming, isPinned, hasUnreadOutput, agents, browserState, rowMode, onCloseBrowser, draggable = false, onDragStart, onDragEnd }: {
+const SessionItem = memo(function SessionItem({ session: s, isActive, isPending, isStreaming, isPinned, hasUnreadOutput, agents, browserState, rowMode, onCloseBrowser, selected = false, onSelect, draggable = false, onDragStart, onDragEnd }: {
   session: Session;
   isActive: boolean;
   isPending: boolean;
@@ -1580,6 +1677,8 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isPending,
   browserState: BrowserSessionState | null;
   rowMode: SidebarSessionListRowMode;
   onCloseBrowser: (sessionPath: string) => void;
+  selected?: boolean;
+  onSelect?: (event: React.MouseEvent, session: Session) => boolean;
   draggable?: boolean;
   onDragStart?: (event: React.DragEvent, session: Session) => void;
   onDragEnd?: () => void;
@@ -1593,10 +1692,11 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isPending,
   const inputRef = useRef<HTMLInputElement>(null);
   const isDeletedAgentSession = s.agentDeleted === true;
 
-  const handleClick = useCallback(() => {
+  const handleClick = useCallback((event: React.MouseEvent) => {
     if (editing) return;
+    if (onSelect?.(event, s)) return;
     switchSession(s.path);
-  }, [s.path, editing]);
+  }, [editing, onSelect, s]);
 
   const handleArchive = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1713,12 +1813,14 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isPending,
   return (
     <>
       <button
-        className={`${styles.sessionItem}${isSingleLine ? ` ${styles.sessionItemSingleLine}` : ''}${isActive ? ` ${styles.sessionItemActive}` : ''}${isDeletedAgentSession ? ` ${styles.sessionItemReadOnly}` : ''}`}
+        className={`${styles.sessionItem}${isSingleLine ? ` ${styles.sessionItemSingleLine}` : ''}${isActive ? ` ${styles.sessionItemActive}` : ''}${isDeletedAgentSession ? ` ${styles.sessionItemReadOnly}` : ''}${selected ? ` ${styles.sessionItemSelected}` : ''}`}
         data-session-path={s.path}
         aria-current={isActive ? 'page' : undefined}
         data-row-mode={rowMode}
         data-unread-output={hasUnreadOutput ? 'true' : 'false'}
         data-switch-pending={isPending ? 'true' : 'false'}
+        aria-selected={selected}
+        data-session-selected={selected ? 'true' : 'false'}
         title={itemTitle}
         draggable={draggable && !editing && !isDeletedAgentSession}
         onClick={handleClick}

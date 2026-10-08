@@ -10,6 +10,7 @@ import path from 'node:path';
 const hanaFetchMock = vi.fn();
 const switchSessionMock = vi.fn();
 const archiveSessionMock = vi.fn();
+const archiveSessionsMock = vi.fn();
 const renameSessionMock = vi.fn();
 const pinSessionMock = vi.fn();
 const createNewSessionMock = vi.fn();
@@ -39,6 +40,7 @@ vi.mock('../../hooks/use-hana-fetch', () => ({
 vi.mock('../../stores/session-actions', () => ({
   switchSession: (...args: unknown[]) => switchSessionMock(...args),
   archiveSession: (...args: unknown[]) => archiveSessionMock(...args),
+  archiveSessions: (...args: unknown[]) => archiveSessionsMock(...args),
   renameSession: (...args: unknown[]) => renameSessionMock(...args),
   pinSession: (...args: unknown[]) => pinSessionMock(...args),
   createNewSession: (...args: unknown[]) => createNewSessionMock(...args),
@@ -61,6 +63,7 @@ function jsonResponse(data: unknown) {
 }
 
 function seedSessions() {
+  archiveSessionsMock.mockResolvedValue({ succeeded: 0, failed: 0 });
   useStore.setState({
     sessions: [
       {
@@ -189,6 +192,7 @@ describe('SessionList context menu', () => {
     });
     switchSessionMock.mockReset();
     archiveSessionMock.mockReset();
+    archiveSessionsMock.mockReset();
     renameSessionMock.mockReset();
     pinSessionMock.mockReset();
     createNewSessionMock.mockReset();
@@ -244,6 +248,33 @@ describe('SessionList context menu', () => {
     expect(document.activeElement).toBe(second);
     fireEvent.keyDown(second, { key: 'Home' });
     expect(document.activeElement).toBe(first);
+  });
+
+  it('supports modifier selection, Ctrl/Cmd+A, range selection, and bulk archive', async () => {
+    render(<SessionList />);
+
+    const first = sessionButton('Has summary');
+    const second = sessionButton('No summary');
+    fireEvent.click(first, { ctrlKey: true });
+    expect(first).toHaveAttribute('data-session-selected', 'true');
+    expect(screen.getByText('session.bulk.selected')).toBeInTheDocument();
+
+    fireEvent.click(second, { shiftKey: true });
+    expect(second).toHaveAttribute('data-session-selected', 'true');
+
+    fireEvent.keyDown(second, { key: 'a', ctrlKey: true });
+    expect(first).toHaveAttribute('data-session-selected', 'true');
+    expect(second).toHaveAttribute('data-session-selected', 'true');
+
+    fireEvent.click(screen.getByText('session.bulk.clear'));
+    expect(first).toHaveAttribute('data-session-selected', 'false');
+    expect(second).toHaveAttribute('data-session-selected', 'false');
+
+    fireEvent.click(first, { metaKey: true });
+    fireEvent.click(screen.getByText('session.archive'));
+    await waitFor(() => expect(archiveSessionsMock).toHaveBeenCalledWith([
+      '/tmp/agents/hana/sessions/with-summary.jsonl',
+    ]));
   });
 
   it('keeps the right-click menu as a shared narrow menu and opens summary as a click-through preview card', async () => {

@@ -37,6 +37,7 @@
 
 3. **Search / summary / authorized folders / continue-deleted-agent** — P1 / 部分完成
    - `/api/sessions/search`：已纳入 Studio iframe bridge；adapter 复用稳定的 title/content 两阶段搜索、transcript cache、limit 上限和已删除/归档过滤；SessionList 已支持 ArrowUp/ArrowDown/Home/End 键盘导航，并用 `aria-current=page` 标出当前会话。
+   - Session bulk actions：支持 Ctrl/Cmd-click 多选、Shift range、Ctrl/Cmd+A 全选、Escape 清除；批量归档通过单独的 `archiveSessions()` 串行提交并只刷新一次 session list，避免逐项归档造成多次 hydrate/race。
    - `/api/sessions/summary`：Studio 当前没有持久化 summary 原语，已纳入 bridge 并返回 `capability_unavailable`，不再掉回 Hana Server 产生错误或假数据。
    - `/api/sessions/authorized-folders`：Studio 当前没有 session folder-scope 持久化原语，已纳入 bridge 并对 GET/PATCH fail closed；不能把“显示的授权目录”伪装成真正的工具访问控制。
    - `/api/sessions/continue-deleted-agent`：OpenHanako 需要“删除 Agent → 用 primary Agent 新建会话 → 迁移 transcript → 可选 compact”的专用生命周期语义；Studio 目前没有 deleted-agent/agent replacement 原语，继续保持 fail closed。
@@ -61,6 +62,7 @@
 ## Phase 4 — Workspace
 
 - session-project assignment：已补 GET read-back，并在 POST 时校验 project 必须真实存在；清空 assignment 统一回到 uncategorized，避免 localStorage 中留下悬挂 project id。
+- session batch archive：已支持多选后一次性归档，并在成功后统一清理 session runtime/chat/file/todo cache；当前会话未被选中时保持焦点不跳走。
 - authorized folders
 - project / workspace mapping
 - file / workbench / preview
