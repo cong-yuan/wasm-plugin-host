@@ -50,10 +50,10 @@
 
 ## Phase 3 — Studio-native Agent
 
-- 多 Agent 列表与 primary agent
-- agent switch
-- agent config
-- permission mode / read-only / operate / auto
+- 多 Agent 列表：GET `/api/agents` 已改为读取 Studio session registry 的 live rows，不再固定返回一个 Hanako；当前没有可信的 primary-agent 原语，因此单 Agent 时标 primary，多 Agent 时仅按 Studio 返回顺序给出临时 primary 标记，后续应接正式 primary 选择。
+- agent switch：Studio 当前没有 primary-agent switch 命令，继续 fail closed，不伪造切换成功。
+- agent config：目前只保留最小兼容投影，真实 per-agent config 持久化仍待宿主能力。
+- permission mode / read-only / operate / auto：继续保持 `ask` locked，待宿主控制面。
 - 对 Studio backend 缺失的控制面先补宿主命令，再接 UI。
 
 ## Phase 4 — Workspace

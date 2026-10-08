@@ -1817,14 +1817,17 @@ return (function () {
     }
 
     if (pathname === '/api/agents' && verb === 'GET') {
+      const rows = (await api.sessions()).filter((row) => row && row.live !== false);
       return {
-        agents: [{
-          id: ASSISTANT_ID,
-          name: ASSISTANT_NAME,
-          yuan: 'hanako',
-          isPrimary: true,
+        agents: rows.map((row, index) => ({
+          id: row.id,
+          name: row.title || row.id,
+          yuan: row.id === ASSISTANT_ID ? 'hanako' : undefined,
+          isPrimary: rows.length === 1 || index === 0,
           hasAvatar: false,
-        }],
+          live: true,
+          status: row.status || 'idle',
+        })),
       };
     }
 

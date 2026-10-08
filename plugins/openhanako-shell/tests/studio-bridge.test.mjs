@@ -711,6 +711,12 @@ check('session projection falls back to configured host model',
 }
 
 const created = await adapter.http('POST', '/api/sessions/new-detached', {});
+const agentsResponse = await adapter.http('GET', '/api/agents');
+check('agent list preserves the API contract in mock mode',
+  Array.isArray(agentsResponse?.agents)
+  && agentsResponse.agents.length > 0
+  && agentsResponse.agents.every((agent) => typeof agent.id === 'string' && agent.id.length > 0));
+
 check('create_agent uses mock/mock-1',
   created.sessionId === 'agent-new'
   && created.path === 'studio://agent-new'
