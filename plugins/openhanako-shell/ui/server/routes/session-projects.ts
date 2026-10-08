@@ -14,10 +14,14 @@ export function createSessionProjectsRoute(engine) {
   route.post("/session-projects/projects", async (c) => {
     try {
       const body = await c.req.json().catch(() => ({}));
-      const project = engine.createSessionProject({
+      const projectInput: Record<string, unknown> = {
         name: body?.name,
         folderId: body?.folderId ?? null,
-      });
+      };
+      if (Object.prototype.hasOwnProperty.call(body || {}, "workspacePath")) {
+        projectInput.workspacePath = body.workspacePath;
+      }
+      const project = engine.createSessionProject(projectInput);
       return c.json({ ok: true, project });
     } catch (err) {
       return c.json({ error: err.message }, 400);
@@ -66,7 +70,10 @@ export function createSessionProjectsRoute(engine) {
   route.patch("/session-projects/projects/:id", async (c) => {
     try {
       const body = await c.req.json().catch(() => ({}));
-      const project = engine.updateSessionProject(c.req.param("id"), body);
+      const project = engine.updateSessionProject(c.req.param("id"), {
+        ...body,
+        ...(Object.prototype.hasOwnProperty.call(body, "workspacePath") ? { workspacePath: body.workspacePath } : {}),
+      });
       return c.json({ ok: true, project });
     } catch (err) {
       return c.json({ error: err.message }, 400);

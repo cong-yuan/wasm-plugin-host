@@ -348,6 +348,26 @@ describe('buildSessionProjectView', () => {
     ]);
   });
 
+  it('carries catalog workspace mapping into the project group', () => {
+    const assignedView = buildSessionProjectView([
+      makeSession({ path: '/sessions/mapped.jsonl', cwd: '/tmp/other', projectId: 'project-mapped' }),
+    ], {
+      projects: [{
+        id: 'project-mapped',
+        name: 'Mapped Project',
+        folderId: null,
+        workspacePath: '/tmp/mapped',
+        order: 0,
+      }],
+    });
+
+    expect(assignedView.rootProjects[0]).toMatchObject({
+      id: 'project-mapped',
+      workspacePath: '/tmp/mapped',
+      items: [expect.objectContaining({ path: '/sessions/mapped.jsonl' })],
+    });
+  });
+
   it('falls back to cwd project when a session references a missing custom project', () => {
     const sections = buildSessionProjectView([
       makeSession({

@@ -17,6 +17,7 @@ function normalizeProject(raw: unknown, index: number): SessionProject | null {
     id: item.id,
     name: item.name,
     folderId: typeof item.folderId === 'string' && item.folderId.trim() ? item.folderId.trim() : null,
+    workspacePath: typeof item.workspacePath === 'string' && item.workspacePath.trim() ? item.workspacePath.trim() : null,
     order: Number.isFinite(item.order) ? item.order as number : index,
   };
 }
@@ -73,11 +74,11 @@ export async function initSessionProjectCatalog(attempts = 3): Promise<void> {
   }
 }
 
-export async function createSessionProjectInCatalog(input: { name: string; folderId?: string | null }): Promise<SessionProject | null> {
+export async function createSessionProjectInCatalog(input: { name: string; folderId?: string | null; workspacePath?: string | null }): Promise<SessionProject | null> {
   const res = await hanaFetch('/api/session-projects/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: input.name, folderId: input.folderId ?? null }),
+    body: JSON.stringify({ name: input.name, folderId: input.folderId ?? null, workspacePath: input.workspacePath ?? null }),
   });
   const data = await res.json().catch(() => ({}));
   const project = normalizeProject(asObject(data)?.project, 0);
@@ -94,7 +95,7 @@ export async function createSessionProjectInCatalog(input: { name: string; folde
 
 export async function patchSessionProjectInCatalog(
   projectId: string,
-  patch: { folderId?: string | null; name?: string },
+  patch: { folderId?: string | null; name?: string; workspacePath?: string | null },
 ): Promise<SessionProject | null> {
   const res = await hanaFetch(`/api/session-projects/projects/${encodeURIComponent(projectId)}`, {
     method: 'PATCH',

@@ -430,6 +430,7 @@ const missingAssignmentProject = await adapter.http('POST', '/api/session-projec
 });
 check('session assignment rejects unknown projects',
   missingAssignmentProject?.error === 'project not found');
+
 await adapter.http('POST', '/api/session-projects/session-assignment', {
   sessionPath: 'studio://agent-1', projectId: null,
 });
@@ -585,7 +586,7 @@ global.window.__TAURI_INTERNALS__ = {
     calls.push({ cmd, args });
     if (cmd === 'list_sessions') {
       return Promise.resolve([
-        { id: 'agent-1', title: 'Hello', busy: false, live: true, messages: 2, turns: 1, status: 'idle', usage: null, provider: 'deepseek', model: 'deepseek-reasoner' },
+        { id: 'agent-1', title: 'Hello', busy: false, live: true, messages: 2, turns: 1, status: 'idle', usage: null, provider: 'deepseek', model: 'deepseek-reasoner', cwd: '/tmp/project-a', workspaceMountId: 'mount-a', workspaceLabel: 'Project A' },
         { id: 'agent-2', title: 'Cold', busy: false, live: false, messages: 1, turns: 1, status: 'idle', usage: null },
       ]);
     }
@@ -944,7 +945,7 @@ check('session projection falls back to configured host model',
   api.transcript = originalTranscript;
 }
 
-const created = await adapter.http('POST', '/api/sessions/new-detached', {});
+const created = await adapter.http('POST', '/api/sessions/new-detached', { cwd: '/tmp/project-b', workspaceFolders: ['/tmp/shared'] });
 const agentsResponse = await adapter.http('GET', '/api/agents');
 check('agent list comes from the agent surface rather than duplicating sessions',
   Array.isArray(agentsResponse?.agents)
@@ -985,6 +986,41 @@ check('create_agent uses mock/mock-1',
   && created.path === 'studio://agent-new'
   && calls.some((c) => c.cmd === 'create_agent'
     && c.args.provider === 'mock' && c.args.model === 'mock-1'));
+check('new session forwards the selected workspace cwd to Studio create_agent',
+  created.cwd === '/tmp/project-b'
+  && calls.some((c) => c.cmd === 'create_agent' && c.args.cwd === '/tmp/project-b'));
+
+const mappedWorkspaceProject = await adapter.http('POST', '/api/session-projects/projects', {
+  name: 'mapped-workspace-project', workspacePath: '/tmp/mapped-workspace',
+});
+check('session projects persist workspace mappings',
+  mappedWorkspaceProject?.project?.workspacePath === '/tmp/mapped-workspace');
+calls.length = 0;
+const mappedWorkspaceSession = await adapter.http('POST', '/api/sessions/new-detached', {
+  projectId: mappedWorkspaceProject?.project?.id,
+});
+check('project workspace mapping supplies cwd when creating a session without an explicit cwd',
+  mappedWorkspaceSession?.cwd === '/tmp/mapped-workspace'
+  && calls.some((c) => c.cmd === 'create_agent' && c.args.cwd === '/tmp/mapped-workspace'));
+const mappedWorkspaceOverride = await adapter.http('POST', '/api/sessions/new-detached', {
+  projectId: mappedWorkspaceProject?.project?.id,
+  cwd: '/tmp/explicit-workspace',
+});
+check('explicit cwd overrides the project workspace mapping',
+  mappedWorkspaceOverride?.cwd === '/tmp/explicit-workspace'
+  && calls.some((c) => c.cmd === 'create_agent' && c.args.cwd === '/tmp/explicit-workspace'));
+const missingWorkspaceProjectSession = await adapter.http('POST', '/api/sessions/new-detached', {
+  projectId: 'missing-project-id',
+});
+check('new session rejects an unknown project instead of creating an unassigned mapping',
+  missingWorkspaceProjectSession?.ok === false && missingWorkspaceProjectSession?.error === 'project not found');
+await adapter.http('DELETE', '/api/session-projects/projects/' + encodeURIComponent(mappedWorkspaceProject?.project?.id || ''));
+check('session projection hydrates Studio workspace metadata',
+  projectedLive.some((session) =>
+    session.sessionId === 'agent-1'
+    && session.cwd === '/tmp/project-a'
+    && session.workspaceMountId === 'mount-a'
+    && session.workspaceLabel === 'Project A'));
 
 calls.length = 0;
 const switched = await adapter.http('POST', '/api/sessions/switch', { path: 'studio://agent-2', sessionId: 'agent-2' });

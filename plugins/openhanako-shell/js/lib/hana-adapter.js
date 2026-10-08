@@ -104,6 +104,16 @@ return (function () {
     return value.trim().replace(/\s+/g, ' ').slice(0, 80);
   };
 
+  const normalizeWorkspacePath = (value) => {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const slashed = trimmed.replace(/\\/g, '/');
+    if (slashed === '/') return '/';
+    if (/^[A-Za-z]:\/?$/.test(slashed)) return slashed.endsWith('/') ? slashed : slashed + '/';
+    return slashed.replace(/\/+$/g, '');
+  };
+
   const nextId = (prefix) => prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
 
   // Prefer localStorage when it works; keep an in-memory mirror so pin /
@@ -290,6 +300,10 @@ return (function () {
     }
     return out;
   };
+  const normalizeSidebarWidth = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric >= 120 && numeric <= 1200 ? Math.round(numeric) : null;
+  };
   const normalizeSidebarUi = (raw) => {
     const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
     const projectView = src.projectView && typeof src.projectView === 'object' && !Array.isArray(src.projectView)
@@ -297,6 +311,9 @@ return (function () {
       : {};
     const sessionList = src.sessionList && typeof src.sessionList === 'object' && !Array.isArray(src.sessionList)
       ? src.sessionList
+      : {};
+    const layout = src.layout && typeof src.layout === 'object' && !Array.isArray(src.layout)
+      ? src.layout
       : {};
     return {
       projectView: {
@@ -306,6 +323,12 @@ return (function () {
       },
       sessionList: {
         rowMode: sessionList.rowMode === 'single-line' ? 'single-line' : 'two-line',
+      },
+      layout: {
+        sidebarWidth: normalizeSidebarWidth(layout.sidebarWidth),
+        jianWidth: normalizeSidebarWidth(layout.jianWidth),
+        channelInspectorWidth: normalizeSidebarWidth(layout.channelInspectorWidth),
+        previewWidth: normalizeSidebarWidth(layout.previewWidth),
       },
     };
   };
@@ -318,6 +341,7 @@ return (function () {
     const next = {
       projectView: { ...current.projectView },
       sessionList: { ...current.sessionList },
+      layout: { ...current.layout },
     };
     if (src.projectView && typeof src.projectView === 'object' && !Array.isArray(src.projectView)) {
       for (const key of ['collapsedProjectIds', 'collapsedFolderIds', 'showAllProjectIds']) {
@@ -331,6 +355,13 @@ return (function () {
       const rowMode = src.sessionList.rowMode;
       if (rowMode === 'single-line' || rowMode === 'two-line') {
         next.sessionList.rowMode = rowMode;
+      }
+    }
+    if (src.layout && typeof src.layout === 'object' && !Array.isArray(src.layout)) {
+      for (const key of ['sidebarWidth', 'jianWidth', 'channelInspectorWidth', 'previewWidth']) {
+        if (!Object.prototype.hasOwnProperty.call(src.layout, key)) continue;
+        const width = normalizeSidebarWidth(src.layout[key]);
+        if (width !== null) next.layout[key] = width;
       }
     }
     saveSidebarUi(next);
@@ -578,6 +609,7 @@ return (function () {
         id,
         name,
         folderId,
+        workspacePath: normalizeWorkspacePath(item.workspacePath),
         order: Number.isFinite(item.order) ? item.order : index,
       });
     });
@@ -665,6 +697,7 @@ return (function () {
         id: nextId('project'),
         name,
         folderId,
+        workspacePath: normalizeWorkspacePath(body?.workspacePath),
         order: nextOrder(catalog.projects.filter((p) => p.folderId === folderId)),
       };
       catalog.projects.push(project);
@@ -708,6 +741,9 @@ return (function () {
           next.folderId = folderId;
           next.order = nextOrder(catalog.projects.filter((p) => p.id !== current.id && p.folderId === folderId));
         }
+      }
+      if (body && Object.prototype.hasOwnProperty.call(body, 'workspacePath')) {
+        next.workspacePath = normalizeWorkspacePath(body.workspacePath);
       }
       catalog.projects[index] = next;
       saveCatalog(catalog);
@@ -1279,7 +1315,9 @@ return (function () {
       firstMessage: localTitle || row.title || '',
       ...(isoTimestamp ? { modified: isoTimestamp, created: isoTimestamp } : {}),
       messageCount: row.messages || 0,
-      cwd: null,
+      cwd: typeof row.cwd === 'string' && row.cwd ? row.cwd : null,
+      ...(row.workspaceMountId ? { workspaceMountId: row.workspaceMountId } : {}),
+      ...(row.workspaceLabel ? { workspaceLabel: row.workspaceLabel } : {}),
       agentId: ASSISTANT_ID,
       agentName: ASSISTANT_NAME,
       modelId: sessionModel.modelId,
@@ -2376,7 +2414,15 @@ return (function () {
 
     if ((pathname === '/api/sessions/new' || pathname === '/api/sessions/new-detached') && verb === 'POST') {
       const pending = modelForPath(null);
-      const id = await api.create(pending.provider, pending.modelId);
+      const catalog = loadCatalog();
+      const requestedProjectId = typeof body?.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : null;
+      const mappedProject = requestedProjectId ? catalog.projects.find((project) => project.id === requestedProjectId) : null;
+      if (requestedProjectId && requestedProjectId !== UNCATEGORIZED_PROJECT_ID && !mappedProject) {
+        return { ok: false, error: 'project not found' };
+      }
+      const mappedCwd = mappedProject?.workspacePath || null;
+      const requestedCwd = typeof body?.cwd === 'string' && body.cwd.trim() ? body.cwd.trim() : mappedCwd;
+      const id = await api.create(pending.provider, pending.modelId, null, requestedCwd);
       const path = pathFor(id);
       rememberSessionModel(path, pending.modelId, pending.provider);
       const projectId = body && typeof body.projectId === 'string' && body.projectId.trim()
@@ -2396,8 +2442,8 @@ return (function () {
         currentModelId: pending.modelId,
         currentModelName: pending.modelId,
         currentModelProvider: pending.provider,
-        cwd: null,
-        workspaceFolders: [],
+        cwd: requestedCwd,
+        workspaceFolders: Array.isArray(body?.workspaceFolders) ? body.workspaceFolders.filter((item) => typeof item === 'string') : [],
         projectId: projectId || null,
       };
     }

@@ -180,6 +180,7 @@ export function buildSessionProjectView(
       id: project.id,
       name: project.name,
       folderId: project.folderId && folderIds.has(project.folderId) ? project.folderId : null,
+      workspacePath: project.workspacePath || null,
       order: project.order,
       source: 'catalog',
       items: [],
@@ -236,6 +237,7 @@ function ensureProjectGroup(
       ? '未归类'
       : autoProjectNameForCwd(session.cwd, '未指定项目'),
     folderId: null,
+    workspacePath: session.cwd || null,
     order: Number.MAX_SAFE_INTEGER,
     source: 'cwd',
     items: [],
@@ -254,6 +256,7 @@ function normalizeCatalogProjects(
       id: project.id,
       name: project.name,
       folderId: typeof project.folderId === 'string' && project.folderId.trim() ? project.folderId.trim() : null,
+      workspacePath: typeof project.workspacePath === 'string' && project.workspacePath.trim() ? project.workspacePath.trim() : null,
       order: Number.isFinite(project.order) ? project.order : index,
     }));
 }

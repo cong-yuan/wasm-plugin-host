@@ -507,8 +507,15 @@ function SessionListInner() {
   }, []);
 
   const createProject = useCallback(async (name: string) => {
-    await createSessionProjectInCatalog({ name, folderId: null });
-  }, []);
+    const current = currentSessionPath
+      ? useStore.getState().sessions.find(session => session.path === currentSessionPath)
+      : null;
+    await createSessionProjectInCatalog({
+      name,
+      folderId: null,
+      workspacePath: current?.cwd || null,
+    });
+  }, [currentSessionPath]);
 
   const deleteProject = useCallback(async (project: SessionProjectGroup) => {
     const confirmed = window.confirm?.(t('sidebar.projects.deleteProjectConfirm', { name: project.name }));
@@ -541,7 +548,7 @@ function SessionListInner() {
       void createNewSession({ cwd });
       return;
     }
-    void createNewSession({ projectId: project.id, cwd: null });
+    void createNewSession({ projectId: project.id, cwd: project.workspacePath || null });
   }, []);
 
   const handleProjectNameDialogSubmit = useCallback(async (event: React.FormEvent) => {

@@ -14,13 +14,33 @@ export interface SidebarUiShellPrefs {
   jianOpen: boolean;
 }
 
+export interface SidebarUiLayoutPrefs {
+  sidebarWidth: number | null;
+  jianWidth: number | null;
+  channelInspectorWidth: number | null;
+  previewWidth: number | null;
+}
+
 export interface SidebarUiPrefs {
   projectView: SidebarUiProjectViewPrefs;
   sessionList: SidebarUiSessionListPrefs;
   shell: SidebarUiShellPrefs;
+  layout: SidebarUiLayoutPrefs;
 }
 
 const DEFAULT_JIAN_OPEN = true;
+const DEFAULT_SIDEBAR_LAYOUT: SidebarUiLayoutPrefs = {
+  sidebarWidth: null,
+  jianWidth: null,
+  channelInspectorWidth: null,
+  previewWidth: null,
+};
+
+function normalizeWidth(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (value < 120 || value > 1200) return null;
+  return Math.round(value);
+}
 
 const MAX_IDS = 256;
 const MAX_ID_LENGTH = 240;
@@ -54,6 +74,7 @@ export type SidebarUiPrefsPatch = {
   projectView?: Partial<SidebarUiProjectViewPrefs>;
   sessionList?: Partial<SidebarUiSessionListPrefs>;
   shell?: Partial<SidebarUiShellPrefs>;
+  layout?: Partial<SidebarUiLayoutPrefs>;
 };
 
 export function normalizeSidebarUiPrefs(raw: unknown = {}): SidebarUiPrefs {
@@ -67,6 +88,9 @@ export function normalizeSidebarUiPrefs(raw: unknown = {}): SidebarUiPrefs {
   const shell = source.shell && typeof source.shell === "object" && !Array.isArray(source.shell)
     ? (source.shell as Record<string, unknown>)
     : {};
+  const layout = source.layout && typeof source.layout === "object" && !Array.isArray(source.layout)
+    ? (source.layout as Record<string, unknown>)
+    : {};
   return {
     projectView: {
       collapsedProjectIds: uniqueIds(projectView.collapsedProjectIds),
@@ -78,6 +102,12 @@ export function normalizeSidebarUiPrefs(raw: unknown = {}): SidebarUiPrefs {
     },
     shell: {
       jianOpen: typeof shell.jianOpen === "boolean" ? shell.jianOpen : DEFAULT_JIAN_OPEN,
+    },
+    layout: {
+      sidebarWidth: normalizeWidth(layout.sidebarWidth) ?? DEFAULT_SIDEBAR_LAYOUT.sidebarWidth,
+      jianWidth: normalizeWidth(layout.jianWidth) ?? DEFAULT_SIDEBAR_LAYOUT.jianWidth,
+      channelInspectorWidth: normalizeWidth(layout.channelInspectorWidth) ?? DEFAULT_SIDEBAR_LAYOUT.channelInspectorWidth,
+      previewWidth: normalizeWidth(layout.previewWidth) ?? DEFAULT_SIDEBAR_LAYOUT.previewWidth,
     },
   };
 }
@@ -119,6 +149,20 @@ export function normalizeSidebarUiPrefsPatch(raw: unknown = {}): SidebarUiPrefsP
     patch.shell = { jianOpen: shell.jianOpen };
   }
 
+  const layout = source.layout && typeof source.layout === "object" && !Array.isArray(source.layout)
+    ? (source.layout as Record<string, unknown>)
+    : null;
+  if (layout) {
+    const nextLayout: Partial<SidebarUiLayoutPrefs> = {};
+    for (const key of ["sidebarWidth", "jianWidth", "channelInspectorWidth", "previewWidth"] as const) {
+      if (Object.prototype.hasOwnProperty.call(layout, key)) {
+        const width = normalizeWidth(layout[key]);
+        if (width !== null) nextLayout[key] = width;
+      }
+    }
+    if (Object.keys(nextLayout).length > 0) patch.layout = nextLayout;
+  }
+
   return patch;
 }
 
@@ -150,9 +194,20 @@ export function mergeSidebarUiPrefs(current: unknown = {}, partial: unknown = {}
   if (Object.prototype.hasOwnProperty.call(patchShell, "jianOpen") && typeof patchShell.jianOpen === "boolean") {
     nextShell.jianOpen = patchShell.jianOpen;
   }
+  const patchLayout = patch.layout && typeof patch.layout === "object" && !Array.isArray(patch.layout)
+    ? (patch.layout as Record<string, unknown>)
+    : {};
+  const nextLayout: SidebarUiLayoutPrefs = { ...base.layout };
+  for (const key of ["sidebarWidth", "jianWidth", "channelInspectorWidth", "previewWidth"] as const) {
+    if (Object.prototype.hasOwnProperty.call(patchLayout, key)) {
+      const width = normalizeWidth(patchLayout[key]);
+      if (width !== null) nextLayout[key] = width;
+    }
+  }
   return normalizeSidebarUiPrefs({
     projectView: nextProjectView,
     sessionList: nextSessionList,
     shell: nextShell,
+    layout: nextLayout,
   });
 }

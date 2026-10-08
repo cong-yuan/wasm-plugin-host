@@ -15,6 +15,7 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import {
   normalizeSidebarUiPrefs,
   type SidebarUiPrefs,
+  type SidebarUiLayoutPrefs,
 } from '../../../../shared/sidebar-ui-state.ts';
 
 export const SIDEBAR_UI_PREFS_CACHE_KEY = 'hana-sidebar-ui-prefs';
@@ -51,13 +52,28 @@ function normalizeSidebarUiResponse(data: unknown): SidebarUiPrefs {
   // The first server response after this migration may legitimately have no shell branch.
   // Preserve the existing local/cache value in that case; once Studio persists `shell`,
   // the server becomes authoritative and wins on subsequent hydrations.
+  const cached = readCachedSidebarUiPrefs();
+  const nextPayload = { ...payload };
   if (!Object.prototype.hasOwnProperty.call(payload, 'shell')) {
-    const cached = readCachedSidebarUiPrefs();
     const legacy = window.localStorage?.getItem('hana-jian') ?? window.localStorage?.getItem('hana-jian-chat');
-    const legacyShell = legacy === null ? cached.shell : { jianOpen: legacy !== 'closed' };
-    return normalizeSidebarUiPrefs({ ...payload, shell: legacyShell });
+    nextPayload.shell = legacy === null ? cached.shell : { jianOpen: legacy !== 'closed' };
   }
-  return normalizeSidebarUiPrefs(payload);
+  if (!Object.prototype.hasOwnProperty.call(payload, 'layout')) {
+    const legacyLayout: Partial<SidebarUiLayoutPrefs> = { ...cached.layout };
+    const legacyKeys: Array<[keyof SidebarUiLayoutPrefs, string]> = [
+      ['sidebarWidth', 'hana-sidebar-width'],
+      ['jianWidth', 'hana-jian-width'],
+      ['channelInspectorWidth', 'hana-channel-inspector-width'],
+      ['previewWidth', 'hana-preview-width'],
+    ];
+    for (const [key, storageKey] of legacyKeys) {
+      const raw = window.localStorage?.getItem(storageKey);
+      const value = raw == null ? null : Number(raw);
+      if (Number.isFinite(value)) legacyLayout[key] = value;
+    }
+    nextPayload.layout = legacyLayout;
+  }
+  return normalizeSidebarUiPrefs(nextPayload);
 }
 
 export interface SidebarUiSlice {
@@ -70,6 +86,7 @@ export interface SidebarUiSlice {
     showAllProjectIds?: string[];
   }) => void;
   setSidebarJianOpen: (open: boolean) => void;
+  setSidebarLayoutWidth: (key: keyof SidebarUiLayoutPrefs, width: number) => void;
 }
 
 export const createSidebarUiSlice = (
@@ -111,6 +128,17 @@ export const createSidebarUiSlice = (
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shell: { jianOpen: open } }),
     }).catch(err => console.warn('[sessions] persist Jian sidebar preference failed:', err));
+  },
+  setSidebarLayoutWidth: (key, width) => {
+    const current = get().sidebarUiPrefs;
+    const next = normalizeSidebarUiPrefs({ ...current, layout: { ...current.layout, [key]: width } });
+    writeCachedSidebarUiPrefs(next);
+    set({ sidebarUiPrefs: next });
+    hanaFetch('/api/preferences/sidebar-ui', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ layout: { [key]: next.layout[key] } }),
+    }).catch(err => console.warn('[sessions] persist sidebar layout preference failed:', err));
   },
 });
 

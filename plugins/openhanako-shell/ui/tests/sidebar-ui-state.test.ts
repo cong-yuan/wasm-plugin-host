@@ -52,6 +52,7 @@ describe("sidebar UI preferences", () => {
       },
       sessionList: { rowMode: "single-line" },
       shell: { jianOpen: true },
+      layout: { sidebarWidth: null, jianWidth: null, channelInspectorWidth: null, previewWidth: null },
     });
 
     expect(mergeSidebarUiPrefs(current, {
@@ -64,6 +65,7 @@ describe("sidebar UI preferences", () => {
       },
       sessionList: { rowMode: "two-line" },
       shell: { jianOpen: true },
+      layout: { sidebarWidth: null, jianWidth: null, channelInspectorWidth: null, previewWidth: null },
     });
 
     expect(mergeSidebarUiPrefs(current, {
@@ -73,5 +75,14 @@ describe("sidebar UI preferences", () => {
     expect(mergeSidebarUiPrefs(current, {
       shell: { jianOpen: false },
     }).shell).toEqual({ jianOpen: false });
+
+    expect(mergeSidebarUiPrefs(current, {
+      layout: { sidebarWidth: 420, previewWidth: 640, jianWidth: 119, channelInspectorWidth: 1400 },
+    }).layout).toEqual({
+      sidebarWidth: 420,
+      previewWidth: 640,
+      jianWidth: null,
+      channelInspectorWidth: null,
+    });
   });
 });

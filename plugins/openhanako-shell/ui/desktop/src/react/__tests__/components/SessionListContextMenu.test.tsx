@@ -824,7 +824,7 @@ describe('SessionList context menu', () => {
     await waitFor(() => {
       expect(hanaFetchMock).toHaveBeenCalledWith('/api/session-projects/projects', expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ name: 'Created Project', folderId: null }),
+        body: JSON.stringify({ name: 'Created Project', folderId: null, workspacePath: null }),
       }));
     });
     expect(await screen.findByText('Created Project')).toBeInTheDocument();

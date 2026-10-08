@@ -15,6 +15,7 @@ export function useSidebarResize(): void {
   const currentTab = useStore(s => s.currentTab);
   const currentChannel = useStore(s => s.currentChannel);
   const previewOpen = useStore(s => s.previewOpen);
+  const sidebarLayout = useStore(s => s.sidebarUiPrefs.layout);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -114,11 +115,16 @@ export function useSidebarResize(): void {
       if (previewInner) { previewInner.style.width = px; previewInner.style.minWidth = px; }
     }
 
-    // 恢复保存的宽度
-    const savedLeft = localStorage.getItem('hana-sidebar-width');
-    const savedRight = localStorage.getItem('hana-jian-width');
-    const savedChannelInspector = localStorage.getItem('hana-channel-inspector-width');
-    const savedPreview = localStorage.getItem('hana-preview-width');
+    // Studio 持久化宽度优先；旧 localStorage 只作为迁移期间的兜底。
+    const legacyWidth = (key: string): number | null => {
+      const raw = localStorage.getItem(key);
+      const value = raw == null ? NaN : Number(raw);
+      return Number.isFinite(value) ? value : null;
+    };
+    const savedLeft = sidebarLayout.sidebarWidth ?? legacyWidth('hana-sidebar-width');
+    const savedRight = sidebarLayout.jianWidth ?? legacyWidth('hana-jian-width');
+    const savedChannelInspector = sidebarLayout.channelInspectorWidth ?? legacyWidth('hana-channel-inspector-width');
+    const savedPreview = sidebarLayout.previewWidth ?? legacyWidth('hana-preview-width');
     if (savedLeft) applySidebarWidth(Number(savedLeft));
     if (savedRight) applyJianWidth(Number(savedRight));
     if (savedChannelInspector) applyChannelInspectorWidth(Number(savedChannelInspector));
@@ -187,7 +193,14 @@ export function useSidebarResize(): void {
           removeResizeShield?.();
           removeResizeShield = null;
           const w = liveWidth;
-          localStorage.setItem(storageKey, String(w));
+          const layoutKey = storageKey === 'hana-sidebar-width'
+            ? 'sidebarWidth'
+            : storageKey === 'hana-jian-width'
+              ? 'jianWidth'
+              : storageKey === 'hana-channel-inspector-width'
+                ? 'channelInspectorWidth'
+                : 'previewWidth';
+          useStore.getState().setSidebarLayoutWidth(layoutKey, w);
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
           activeDragCleanup = null;
@@ -255,5 +268,5 @@ export function useSidebarResize(): void {
     return () => {
       for (const cleanup of cleanupFns) cleanup();
     };
-  }, [currentTab, currentChannel, previewOpen]);
+  }, [currentTab, currentChannel, previewOpen, sidebarLayout]);
 }

@@ -35,6 +35,15 @@ return (function () {
   const normalize = (row) => ({
     id: row && row.id != null ? String(row.id) : '',
     title: (row && row.title) || '',
+    cwd: row && typeof (row.cwd ?? row.workspace_dir ?? row.workspaceDir) === 'string'
+      ? String(row.cwd ?? row.workspace_dir ?? row.workspaceDir)
+      : null,
+    workspaceMountId: row && typeof (row.workspaceMountId ?? row.workspace_mount_id) === 'string'
+      ? String(row.workspaceMountId ?? row.workspace_mount_id)
+      : null,
+    workspaceLabel: row && typeof (row.workspaceLabel ?? row.workspace_label) === 'string'
+      ? String(row.workspaceLabel ?? row.workspace_label)
+      : null,
     busy: !!(row && row.busy),
     live: !row || row.live !== false,
     status: (row && row.status) || '',
@@ -90,11 +99,12 @@ return (function () {
       if (row) row.live = true;
       return row ? row.id : sessionId;
     },
-    create: async (_provider, _model) => {
-      const id = 'sess-' + Math.random().toString(36).slice(2, 8);
+    create: async (_provider, _model, _id, cwd = null) => {
+      const id = _id || ('sess-' + Math.random().toString(36).slice(2, 8));
       sessionsStore.unshift({
         id,
         title: 'New session',
+        cwd: typeof cwd === 'string' && cwd.trim() ? cwd.trim() : null,
         busy: false,
         live: true,
         status: 'idle',
@@ -714,7 +724,7 @@ return (function () {
     },
 
     // `create_agent` takes `id` (optional) and returns the id string.
-    create: async (provider, model, id) => {
+    create: async (provider, model, id, cwd = null) => {
       let chosenProvider = provider || '';
       let chosenModel = model || '';
       if ((!chosenProvider || !chosenModel) && tauri.available()) {
@@ -756,7 +766,7 @@ return (function () {
       return asId(await tauri.invoke('create_agent', {
         provider: chosenProvider,
         model: chosenModel,
-        cwd: null,
+        cwd: typeof cwd === 'string' && cwd.trim() ? cwd.trim() : null,
         id: id || null,
       }));
     },

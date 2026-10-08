@@ -10,6 +10,7 @@ import {
   isAutoProjectId,
   serializeSessionProjectCatalog,
 } from "../shared/session-projects.ts";
+import { normalizeWorkspacePath } from "../shared/workspace-history.ts";
 
 export class SessionProjectCatalogStore {
   declare _userDir: string;
@@ -83,13 +84,14 @@ export class SessionProjectCatalogStore {
     return catalog;
   }
 
-  createProject({ name, folderId = null }) {
+  createProject({ name, folderId = null, workspacePath = null }) {
     const catalog = this.getCatalog();
     const normalizedFolderId = resolveFolderId(catalog, folderId);
     const project = {
       id: this._nextId("project", new Set(catalog.projects.map(item => item.id))),
       name: requiredName(normalizeProjectName(name), "project name is required"),
       folderId: normalizedFolderId,
+      workspacePath: normalizeWorkspacePath(workspacePath),
       order: nextOrder(catalog.projects.filter(item => item.folderId === normalizedFolderId)),
     };
     catalog.projects.push(project);
@@ -110,6 +112,7 @@ export class SessionProjectCatalogStore {
         id: projectId,
         name: requiredName(normalizeProjectName(patch.name), "project name is required"),
         folderId,
+        workspacePath: normalizeWorkspacePath(patch.workspacePath),
         order: nextOrder(catalog.projects.filter(item => item.folderId === folderId)),
       };
       catalog.projects.push(project);
@@ -127,6 +130,9 @@ export class SessionProjectCatalogStore {
         next.folderId = folderId;
         next.order = nextOrder(catalog.projects.filter(item => item.id !== current.id && item.folderId === folderId));
       }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "workspacePath")) {
+      next.workspacePath = normalizeWorkspacePath(patch.workspacePath);
     }
     catalog.projects[index] = next;
     this._writeCatalog(catalog);

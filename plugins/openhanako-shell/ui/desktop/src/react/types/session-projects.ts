@@ -4,6 +4,7 @@ export interface SessionProject {
   id: string;
   name: string;
   folderId: string | null;
+  workspacePath?: string | null;
   order: number;
 }
 
@@ -22,6 +23,7 @@ export interface SessionProjectGroup {
   id: string;
   name: string;
   folderId: string | null;
+  workspacePath?: string | null;
   order: number;
   source: 'catalog' | 'cwd';
   items: Session[];

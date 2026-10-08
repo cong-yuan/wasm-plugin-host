@@ -10,7 +10,7 @@
 - 流式 thinking / text / tool 事件
 - 模型列表、默认模型与会话内模型切换
 - archive / restore / rename / delete
-- pin / pin-order / session projects（当前为本地持久化）
+- pin / pin-order / session projects（当前为本地持久化；catalog project 已支持 workspacePath 映射）
 - 用户资料、appearance、sidebar UI、quick chat、notifications（当前为本地持久化）
 - automation 草稿 CRUD；Studio 无 scheduler 时明确拒绝启用
 - 权限模式在 Studio 无底层控制命令时 fail-closed 到 `ask`
@@ -70,10 +70,16 @@
 - session batch archive：已支持多选后一次性归档，并在成功后统一清理 session runtime/chat/file/todo cache；当前会话未被选中时保持焦点不跳走。
 - archived batch actions：归档管理器现在支持 checkbox 多选后批量 restore / permanent delete；restore 只做一次 session reload，不逐条切换当前会话；delete 也串行写入后统一刷新列表。
 - authorized folders：已落到 Studio session event + file-tool enforcement；shell sandbox 仍单独待宿主级能力。
-- project / workspace mapping
+- project / workspace mapping / 已完成第一阶段
+  - catalog project 增加可选 `workspacePath`；创建项目时从当前 session 的 cwd 自动建立映射，旧 catalog 自动补 `null`。
+  - 从 project 创建新 session 时优先使用 project workspace；显式 `cwd` 始终覆盖 project mapping；unknown project fail-closed，不创建幽灵 assignment。
+  - 该映射仍属于 OpenHanako catalog 本地持久层，不冒充 Studio 的原生 project manager。
 - embedded Studio file/workbench bridge：`/api/workbench/*`、Desk 兼容文件读写、file-history、resource-io、generated-resource preview 已加入 Studio iframe bridge allowlist；未加入无关 Desk 管理 API，避免把不具备 Studio 原生能力的路径伪装成已接入。
 - file / workbench / preview
-- Jian 右侧栏开关已从 `hana-jian` / `hana-jian-chat` localStorage 迁到 `/api/preferences/sidebar-ui.shell.jianOpen`；首次 server payload 缺少 `shell` 时保留旧值做一次性迁移，之后以 Studio 持久值为准。其余重要 localStorage 状态继续按优先级迁移。
+- Sidebar UI persistence / 已完成第一阶段
+  - Jian 右侧栏开关已从 `hana-jian` / `hana-jian-chat` localStorage 迁到 `/api/preferences/sidebar-ui.shell.jianOpen`。
+  - sidebar / Jian / channel inspector / preview 四组宽度迁到 `/api/preferences/sidebar-ui.layout.*`；首次 server payload 缺少 `layout` 时从旧 `hana-*-width` keys 一次性迁移，之后以 Studio/adapter 持久值为准。
+  - 宽度只接受 120–1200 的有限整数，非法值 fail-closed；localStorage 只保留首帧兼容缓存，不再作为长期 source of truth。
 
 ## Phase 5 — Extended Hana
 

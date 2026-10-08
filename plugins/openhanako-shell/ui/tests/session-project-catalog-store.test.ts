@@ -42,6 +42,17 @@ describe("SessionProjectCatalogStore", () => {
     });
   });
 
+  it("persists and normalizes a project workspace path", () => {
+    const { store } = makeStore();
+
+    const project = store.createProject({ name: "OH-Plugins", workspacePath: "C:/Users/demo/OH-Plugins/" });
+    expect(project.workspacePath).toBe("C:/Users/demo/OH-Plugins");
+
+    const moved = store.updateProject(project.id, { workspacePath: "/tmp/oh-plugins/" });
+    expect(moved.workspacePath).toBe("/tmp/oh-plugins");
+    expect(store.getCatalog().projects[0].workspacePath).toBe("/tmp/oh-plugins");
+  });
+
   it("persists project ordering in a single project level", () => {
     const { store } = makeStore();
 
@@ -147,7 +158,7 @@ describe("SessionProjectCatalogStore", () => {
 
     expect(store.getCatalog()).toEqual({
       folders: [{ id: "folder-work", name: "作品集", order: 0 }],
-      projects: [{ id: "project-resume", name: "简历和作品集", folderId: "folder-work", order: 0 }],
+      projects: [{ id: "project-resume", name: "简历和作品集", folderId: "folder-work", workspacePath: null, order: 0 }],
     });
   });
 

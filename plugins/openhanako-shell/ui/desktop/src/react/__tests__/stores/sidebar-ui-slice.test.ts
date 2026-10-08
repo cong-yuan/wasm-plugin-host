@@ -95,8 +95,30 @@ describe('sidebar-ui-slice', () => {
       },
       sessionList: { rowMode: 'single-line' },
       shell: { jianOpen: true },
+      layout: { sidebarWidth: null, jianWidth: null, channelInspectorWidth: null, previewWidth: null },
     });
   });
+  it('migrates legacy sidebar widths only when the server has no layout branch', () => {
+    window.localStorage.setItem('hana-sidebar-width', '420');
+    window.localStorage.setItem('hana-preview-width', '640');
+    const store = createSidebarUiStore();
+
+    store.getState().applySidebarUiPrefs({
+      sidebarUi: {
+        projectView: { collapsedProjectIds: [], collapsedFolderIds: [], showAllProjectIds: [] },
+        sessionList: { rowMode: 'two-line' },
+        shell: { jianOpen: true },
+      },
+    });
+
+    expect(store.getState().sidebarUiPrefs.layout).toEqual({
+      sidebarWidth: 420,
+      jianWidth: null,
+      channelInspectorWidth: null,
+      previewWidth: 640,
+    });
+  });
+
   it('migrates the legacy Jian localStorage value only when the server has no shell branch', () => {
     window.localStorage.setItem('hana-jian', 'closed');
     const store = createSidebarUiStore();

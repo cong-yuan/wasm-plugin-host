@@ -8,6 +8,7 @@ export interface SessionProjectRecord {
   id: string;
   name: string;
   folderId: string | null;
+  workspacePath: string | null;
   order: number;
 }
 
@@ -99,6 +100,7 @@ export function normalizeSessionProjectCatalog(input: unknown = {}): SessionProj
       id,
       name,
       folderId: folderId && folderIds.has(folderId) ? folderId : null,
+      workspacePath: normalizeWorkspacePath(entry.workspacePath),
       order: finiteOrder(entry.order, index),
     });
   }
