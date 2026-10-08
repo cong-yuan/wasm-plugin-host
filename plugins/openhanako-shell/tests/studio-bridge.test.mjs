@@ -1257,6 +1257,10 @@ check('host bridge correlates requestId',
   const todosUnsupported = await adapter.http('POST', '/api/sessions/todos/complete', { path: 'studio://agent-2' });
   check('todo completion fails closed without persisted todo mutation',
     todosUnsupported?.ok === false && todosUnsupported?.code === 'capability_unavailable');
+
+  const continueUnsupported = await adapter.http('POST', '/api/sessions/continue-deleted-agent', { path: 'studio://agent-2' });
+  check('deleted-agent continuation fails closed without Studio replacement semantics',
+    continueUnsupported?.ok === false && continueUnsupported?.code === 'capability_unavailable');
 }
 
 // Busy session must refuse a second prompt (send lock).

@@ -1476,7 +1476,13 @@ return (function () {
     if (pathname.startsWith('/api/bridge')) {
       return { ok: true, studioBridge: api.mode() };
     }
-    if (pathname === '/api/sessions/continue-deleted-agent' && verb === 'POST') return { ok: false };
+    if (pathname === '/api/sessions/continue-deleted-agent' && verb === 'POST') {
+      return {
+        ok: false,
+        code: 'capability_unavailable',
+        error: 'studio backend does not expose deleted-agent continuation yet',
+      };
+    }
     if (pathname === '/api/sessions/fresh-compact' && verb === 'POST') {
       return {
         ok: false,
