@@ -1657,10 +1657,13 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   let holdModelSwitch = false;
   let releaseModelSwitch = null;
   let failModelSwitch = false;
+  let mismatchedModelAck = false;
   let failModelLoad = false;
+  let malformedModelLoad = false;
   adapter.http = async (method, path, body) => {
     if (method === 'GET' && path.startsWith('/api/models')) {
       if (failModelLoad) throw new Error('model list unavailable');
+      if (malformedModelLoad) return { ok: false, error: 'model discovery denied', models: [] };
       return {
         models: [
           { id: 'model-1', name: 'Model One', provider: 'provider-a', isCurrent: true },
@@ -1672,6 +1675,7 @@ adapterForShellRefresh.http = originalHttpForRefresh;
     if (method === 'POST' && (path === '/api/models/set' || path === '/api/models/switch')) {
       modelCalls.push({ method, path, body });
       if (failModelSwitch) throw new Error('model switch unavailable');
+      if (mismatchedModelAck) return { ok: true, model: { id: 'wrong-model', provider: body.provider } };
       if (holdModelSwitch) {
         return new Promise((resolve) => {
           releaseModelSwitch = () => resolve({
@@ -1708,6 +1712,7 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   check('model dropdown opens with available models',
     modelRoot.querySelector('.model-selector').classList.contains('open')
     && modelRoot.querySelectorAll('.model-option').length === 2);
+  check('model selector exposes expanded accessibility state', modelPill.getAttribute('aria-expanded') === 'true');
   modelRoot.querySelectorAll('.model-option')[1].fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   check('new-session model selection uses pending-model endpoint',
@@ -1756,6 +1761,13 @@ adapterForShellRefresh.http = originalHttpForRefresh;
     /model switch failed/i.test(modelRoot.querySelector('.model-switch-status')?.textContent || '')
     && /Model One/.test(modelPill.textContent));
   failModelSwitch = false;
+  mismatchedModelAck = true;
+  modelRoot.querySelectorAll('.model-option')[1]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('wrong-target model acknowledgement fails closed',
+    /not acknowledged/i.test(modelRoot.querySelector('.model-switch-status')?.textContent || '')
+    && /Model One/.test(modelPill.textContent));
+  mismatchedModelAck = false;
 
   modelPill.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1763,10 +1775,24 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   modelPill.fire('click');
   modelPill.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
+  check('closing during model refresh keeps closed popup closed',
+    modelRoot.querySelector('.model-selector')?.classList.contains('open') === false);
+  check('cancelled model load clears pending status and expanded state',
+    modelPill.getAttribute('aria-expanded') === 'false'
+    && !/Loading models/.test(modelRoot.querySelector('.model-switch-status')?.textContent || ''));
+  modelPill.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
   check('failed model refresh removes stale model options',
     modelRoot.querySelectorAll('.model-option').length === 1
     && modelRoot.querySelector('.model-option')?.getAttribute('data-model-state') === 'unavailable');
+  failModelLoad = false;
+  malformedModelLoad = true;
   modelPill.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('model discovery fails closed on HTTP error payload with an empty model list',
+    /model discovery denied/.test(modelRoot.querySelector('.model-switch-status')?.textContent || '')
+    && modelRoot.querySelectorAll('.model-option').length === 1);
+  malformedModelLoad = false;
 
   failModelLoad = true;
   const modelLoadFailureHost = new El('div');
@@ -1781,6 +1807,54 @@ adapterForShellRefresh.http = originalHttpForRefresh;
 
   if (typeof disposeModelShell === 'function') disposeModelShell();
   adapter.http = originalHttp;
+}
+
+// Model-list responses from an obsolete conversation must not repaint a newly
+// selected session, and an abandoned popup must not reopen after an async load.
+{
+  const conversation = studio.require('panels/conversation');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const originalTranscript = api.transcript;
+  let releaseOldModels;
+  let releasePopup;
+  let pausePopup = false;
+  const oldModels = new Promise((resolve) => { releaseOldModels = resolve; });
+  adapter.http = async (method, path, body) => {
+    if (method === 'GET' && path === '/api/models') {
+      return oldModels;
+    }
+    if (method === 'GET' && path.startsWith('/api/models?sessionPath=')) {
+      if (pausePopup) return new Promise((resolve) => { releasePopup = resolve; });
+      return { models: [{ id: 'current', provider: 'p', name: 'Current Session Model', isCurrent: true }],
+        activeModel: { id: 'current', provider: 'p' } };
+    }
+    return oldHttp(method, path, body);
+  };
+  api.transcript = async () => [];
+  const panel = conversation.render({ onChanged() {}, onOpened() {}, onCreated() {} });
+  const selected = await panel.open({ id: 'new-session-model', live: true });
+  check('new session hydrates its own model before obsolete initial load',
+    selected === true && /Current Session Model/.test(panel.root.querySelector('.model-pill')?.textContent || ''));
+  releaseOldModels?.({ models: [{ id: 'old', provider: 'p', name: 'Stale Model', isCurrent: true }] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('outdated model list cannot overwrite current session',
+    /Current Session Model/.test(panel.root.querySelector('.model-pill')?.textContent || '')
+    && !/Stale Model/.test(panel.root.querySelector('.model-pill')?.textContent || ''));
+  const pill = panel.root.querySelector('.model-pill');
+  pausePopup = true;
+  pill.fire('click');
+  await Promise.resolve();
+  check('model popup fetch started before cancel', typeof releasePopup === 'function');
+  pill.fire('click');
+  releasePopup?.({ models: [{ id: 'late', name: 'Late Model', provider: 'p', isCurrent: true }] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('closing model popup invalidates delayed fetch and prevents reopen',
+    panel.root.querySelector('.model-selector')?.classList.contains('open') === false
+    && /Current Session Model/.test(pill.textContent || ''));
+  panel.reset();
+  adapter.http = oldHttp;
+  api.transcript = originalTranscript;
 }
 
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);

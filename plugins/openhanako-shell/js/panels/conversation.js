@@ -105,7 +105,7 @@ return (function () {
     const trailing = h('span', { class: 'input-trailing-slot hana-slot' });
     slots.mount('openhanako.conversation.input.right', trailing);
 
-    const modelPill = h('button', { class: 'model-pill', type: 'button', 'data-open': 'false' },
+    const modelPill = h('button', { class: 'model-pill', type: 'button', 'data-open': 'false', 'aria-expanded': 'false', 'aria-haspopup': 'true' },
       h('span', { class: 'model-pill-label' }, '—'), svg(CHEVRON_DOWN));
     const modelDropdown = h('div', { class: 'model-dropdown' });
     const modelStatus = h('span', {
@@ -164,14 +164,21 @@ return (function () {
       modelPill.firstChild.textContent = label || '—';
     }
 
+    let modelRequestVersion = 0;
+    let modelOpenIntent = false;
     const closeModels = () => {
+      modelOpenIntent = false;
+      modelRequestVersion += 1;
       modelSelector.classList.remove('open');
       modelPill.setAttribute('data-open', 'false');
+      modelPill.setAttribute('aria-expanded', 'false');
+      if (modelStatus.textContent === 'Loading models…') modelStatus.textContent = '';
     };
 
     const chooseModel = async (model) => {
       if (!model || state.opening || state.busy || state.switchingModel) return;
       state.switchingModel = true;
+      modelRequestVersion += 1;
       const switchEpoch = state.epoch;
       modelStatus.textContent = 'Switching model…';
       modelStatus.className = 'model-switch-status';
@@ -187,7 +194,11 @@ return (function () {
             })
           : await adapter.http('POST', '/api/models/set', payload);
         if (state.epoch !== switchEpoch) return;
-        const selected = result && result.model ? result.model : model;
+        if (!result || result.ok !== true || !result.model
+          || result.model.id !== model.id || result.model.provider !== model.provider) {
+          throw new Error(result?.error || 'Model switch was not acknowledged for the selected model');
+        }
+        const selected = result.model;
         setModelLabel(selected.name || selected.id || model.id);
         closeModels();
         options.onChanged();
@@ -207,13 +218,19 @@ return (function () {
       }
     };
 
-    const refreshModels = async () => {
+    const refreshModels = async (requestVersion, requestEpoch) => {
       const modelEndpoint = state.id
         ? `/api/models?sessionPath=${encodeURIComponent('studio://' + state.id)}`
         : '/api/models';
       const result = await adapter.http('GET', modelEndpoint);
+      if (state.epoch !== requestEpoch || modelRequestVersion !== requestVersion) return null;
+      if (!result || result.ok === false || result.error || !Array.isArray(result.models)
+        || result.models.some((model) => !model || typeof model.id !== 'string' || !model.id.trim()
+          || typeof model.provider !== 'string' || !model.provider.trim())) {
+        throw new Error(result?.error || 'Invalid model list response');
+      }
       modelStatus.className = 'model-switch-status';
-      const models = result && Array.isArray(result.models) ? result.models : [];
+      const models = result.models;
       clear(modelDropdown);
       for (const model of models) {
         const active = !!model.isCurrent
@@ -238,12 +255,17 @@ return (function () {
     };
 
     const refreshModelsWithStatus = async () => {
+      const requestEpoch = state.epoch;
+      const requestVersion = ++modelRequestVersion;
+      modelStatus.textContent = 'Loading models…';
       try {
-        const result = await refreshModels();
+        const result = await refreshModels(requestVersion, requestEpoch);
+        if (!result || state.epoch !== requestEpoch || modelRequestVersion !== requestVersion) return null;
         modelStatus.textContent = '';
         modelStatus.className = 'model-switch-status';
         return result;
       } catch (err) {
+        if (state.epoch !== requestEpoch || modelRequestVersion !== requestVersion) return null;
         modelStatus.textContent = `Models unavailable: ${(err && err.message) ? err.message : String(err)}`;
         modelStatus.className = 'model-switch-status error';
         clear(modelDropdown);
@@ -263,14 +285,20 @@ return (function () {
 
     modelPill.onclick = async () => {
       if (state.opening || state.busy || state.switchingModel) return;
-      const opening = !modelSelector.classList.contains('open');
-      if (!opening) {
+      if (modelOpenIntent) {
         closeModels();
         return;
       }
-      await refreshModelsWithStatus();
+      modelOpenIntent = true;
+      const epoch = state.epoch;
+      const result = await refreshModelsWithStatus();
+      if (!modelOpenIntent || state.epoch !== epoch || !result) {
+        if (state.epoch === epoch && !result) modelOpenIntent = false;
+        return;
+      }
       modelSelector.classList.add('open');
       modelPill.setAttribute('data-open', 'true');
+      modelPill.setAttribute('aria-expanded', 'true');
     };
 
     const retryFailedTurn = (index, message) => {
@@ -365,6 +393,7 @@ return (function () {
       const wasBusy = state.busy;
       state.epoch += 1;
       const openEpoch = state.epoch;
+      closeModels();
       state.id = session.id;
       state.busy = false;
       state.cancelling = false;

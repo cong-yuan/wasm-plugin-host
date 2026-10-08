@@ -135,3 +135,10 @@
 - Cleanup preview is a side-effect-free `POST /api/sessions/cleanup` with `dryRun: true`. Confirmed cleanup includes the full `expectedSessionIds` snapshot. The Hana adapter rejects malformed/duplicate IDs or mismatched candidate sets **before** invoking any disposal; legacy callers without `expectedSessionIds` still work.
 - Cleanup, bulk restore/archive/delete share a single mutation lock. Real deletion acknowledges the exact session ID and surfaces partial failures. Successful cleanup refreshes archived rows and invalidates cached search results; missing/malformed backend acknowledgment never pretends that deletion succeeded.
 - `studio-bridge.test.mjs` checks dry-run non-deletion, malformed snapshots, changed candidate rejection, retention validation and real disposal. DOM smoke covers view gating, preview/cancel, age-change re-preview, backend conflict, confirmation and list rehydration.
+
+### Model selector async consistency (2026-10-09)
+
+- The standalone conversation's model selector now versions each GET request against both the currently opened session epoch and request generation. A late initial fetch, abandoned popup fetch, or previous-session failure cannot overwrite new session models, labels, options, or error state.
+- Popup open/close requests are intent-driven, so a double-click during loading cancels the first opening rather than leaving a reopened stale dropdown. Current expanded state is reflected in `aria-expanded`, loading is announced, and cancellation clears only its own transient loading label.
+- Model selection requires `ok: true` with matching `model.id` and `model.provider` from the authoritative backend. Malformed success or a mismatched target fails visibly without changing the current model label. Model listing rejects malformed, unacknowledged, or explicit error payloads instead of showing phantom empty lists.
+- DOM smoke regression cases cover session switching during initial discovery, popup cancellation, stale GET responses, mismatched switch acknowledgments, malformed listing responses, and the existing success/failure/lock behavior.
