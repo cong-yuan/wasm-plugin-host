@@ -788,6 +788,11 @@ return (function () {
       if (!tauri.available()) return null;
       return tauri.invoke('complete_session_todos', { agentId });
     },
+    freshCompactSessionAvailable: () => tauri.available(),
+    freshCompactSession: async (agentId) => {
+      if (!tauri.available()) return null;
+      return tauri.invoke('fresh_compact_session', { agentId });
+    },
 
     sendWithProgress,
 

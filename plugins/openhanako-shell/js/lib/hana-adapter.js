@@ -1710,7 +1710,7 @@ return (function () {
           sessionSearch: true,
           sessionProjects: true,
           runtimeIncremental: true,
-          sessionCompaction: false,
+          sessionCompaction: typeof api.freshCompactSessionAvailable === 'function' && api.freshCompactSessionAvailable(),
           sessionTodoMutation: typeof api.completeSessionTodosAvailable === 'function' && api.completeSessionTodosAvailable(),
         },
       };
@@ -1775,11 +1775,32 @@ return (function () {
       };
     }
     if (pathname === '/api/sessions/fresh-compact' && verb === 'POST') {
-      return {
-        ok: false,
-        code: 'capability_unavailable',
-        error: 'studio backend does not support session compaction yet',
-      };
+      if (typeof api.freshCompactSession !== 'function' || typeof api.freshCompactSessionAvailable !== 'function' || !api.freshCompactSessionAvailable()) {
+        return {
+          ok: false,
+          code: 'capability_unavailable',
+          error: 'studio backend does not expose persisted session compaction yet',
+        };
+      }
+      const sessionId = sessionIdFromBody(body, null);
+      if (!sessionId) {
+        return { ok: false, code: 'invalid_session', error: 'missing session id' };
+      }
+      try {
+        const result = await api.freshCompactSession(sessionId);
+        if (!result || result.fresh !== true) {
+          return {
+            ok: false,
+            code: 'compaction_failed',
+            error: result?.error || 'studio fresh compact failed',
+          };
+        }
+        return { ok: true, ...result };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const code = message === 'session is busy' ? 'session_busy' : 'compaction_failed';
+        return { ok: false, code, error: message };
+      }
     }
     if (pathname === '/api/sessions/todos/complete' && verb === 'POST') {
       if (typeof api.completeSessionTodos !== 'function' || typeof api.completeSessionTodosAvailable !== 'function' || !api.completeSessionTodosAvailable()) {

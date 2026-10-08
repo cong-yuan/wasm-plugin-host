@@ -32,7 +32,7 @@
 
 2. **Fresh compact / cleanup / todo complete** — P1 / 部分完成
    - `/api/sessions/cleanup`：已按本地归档元数据的 `archivedAt` + `maxAgeDays` 选择候选，并通过真实 `dispose_agent` 永久删除；返回实际 `deleted/failed`。
-   - `/api/sessions/fresh-compact`：Studio 当前没有会话摘要/压缩原语，已从 soft-success 改为 `capability_unavailable`，等待宿主命令。
+   - `/api/sessions/fresh-compact`：已接入 Studio 原生 `fresh_compact_session`；Studio 使用当前 session 的 LLM route 生成 durable summary，追加 dsh `session/compact` 事件并 flush；后续 `derive_messages()` 只把最新 summary + 新消息交给模型，旧 JSONL transcript 保留用于 UI/audit replay。
    - `/api/sessions/todos/complete`：已接入 Studio 原生 `complete_session_todos`；读取当前分支最新 `todo/write` 快照，追加全量 `completed` 快照并 flush，UI 仍只有真实成功才清本地 todo。
 
 3. **Search / summary / authorized folders / continue-deleted-agent** — P1 / 部分完成

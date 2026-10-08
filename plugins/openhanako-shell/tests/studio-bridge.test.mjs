@@ -108,6 +108,29 @@ check('api mode is mock without invoke', api.mode() === 'mock');
   studio.hostAction = null;
 }
 
+{
+  const calls = [];
+  studio.hostAction = async (action) => {
+    calls.push(action);
+    if (action.command === 'fresh_compact_session') {
+      return { fresh: true, reason: 'manual', tokensBefore: null, tokensAfter: null };
+    }
+    throw new Error(`unexpected host command: ${action.command}`);
+  };
+  const capabilities = await adapter.http('GET', '/api/capabilities');
+  check('Studio capability registry exposes fresh session compaction',
+    capabilities?.capabilities?.sessionCompaction === true);
+  const result = await adapter.http('POST', '/api/sessions/fresh-compact', {
+    path: 'studio://compact-session',
+  });
+  const call = calls.find((action) => action.command === 'fresh_compact_session');
+  check('fresh compact uses the Studio native command',
+    result?.ok === true && result?.fresh === true && !!call);
+  check('fresh compact resolves the session id from studio path',
+    call?.args?.agentId === 'compact-session');
+  studio.hostAction = null;
+}
+
 const health = await adapter.http('GET', '/api/health');
 check('mock health is labeled', health.studioBridge === 'mock' && health.status === 'ok');
 const listed = await adapter.http('GET', '/api/sessions');
@@ -1283,6 +1306,9 @@ check('host bridge correlates requestId',
         { content: 'write', status: 'completed' },
       ]);
     }
+    if (cmd === 'fresh_compact_session') {
+      return Promise.resolve({ fresh: true, reason: 'manual', tokensBefore: null, tokensAfter: null });
+    }
     return Promise.resolve(undefined);
   };
 
@@ -1442,7 +1468,7 @@ check('host bridge correlates requestId',
 }
 
 // Cleanup must really dispose archived sessions older than the requested age;
-// unsupported compact/todo mutation routes must fail closed instead of lying.
+// Studio-native compact/todo mutation routes must delegate to real host commands.
 {
   await adapter.http('POST', '/api/sessions/archive', { sessionId: 'agent-2' });
   calls.length = 0;
@@ -1456,9 +1482,11 @@ check('host bridge correlates requestId',
   check('archived cleanup removes disposed metadata',
     !archivedAfterCleanup.some((row) => row.sessionId === 'agent-2'));
 
-  const compactUnsupported = await adapter.http('POST', '/api/sessions/fresh-compact', { path: 'studio://agent-2' });
-  check('fresh compact fails closed without a Studio compaction primitive',
-    compactUnsupported?.ok === false && compactUnsupported?.code === 'capability_unavailable');
+  const compactResult = await adapter.http('POST', '/api/sessions/fresh-compact', { path: 'studio://agent-2' });
+  check('fresh compact uses the Studio persisted compaction command',
+    compactResult?.ok === true
+    && compactResult?.fresh === true
+    && calls.some((c) => c.cmd === 'fresh_compact_session' && c.args.agentId === 'agent-2'));
 
   const todosCompleted = await adapter.http('POST', '/api/sessions/todos/complete', { path: 'studio://agent-2' });
   check('todo completion uses the Studio persisted mutation command',
