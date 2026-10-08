@@ -71,6 +71,7 @@
 - archived batch actions：归档管理器现在支持 checkbox 多选后批量 restore / permanent delete；restore 只做一次 session reload，不逐条切换当前会话；delete 也串行写入后统一刷新列表。
 - authorized folders：已落到 Studio session event + file-tool enforcement；shell sandbox 仍单独待宿主级能力。
 - project / workspace mapping
+- embedded Studio file/workbench bridge：`/api/workbench/*`、Desk 兼容文件读写、file-history、resource-io、generated-resource preview 已加入 Studio iframe bridge allowlist；未加入无关 Desk 管理 API，避免把不具备 Studio 原生能力的路径伪装成已接入。
 - file / workbench / preview
 - 把当前重要的 localStorage 状态逐步迁到 Studio 持久层。
 

@@ -266,6 +266,14 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/sessions/turns/retry') return true;
   if (pathname === '/api/sessions/fork') return true;
   if (pathname === '/api/session-projects' || pathname.startsWith('/api/session-projects/')) return true;
+  // File/workbench vertical slice: keep embedded Studio sessions on the native backend
+  // instead of silently falling back to the legacy Hana server. These are the APIs used
+  // by Desk/RightWorkspacePanel, file history, and generated-resource previews.
+  if (pathname === '/api/workbench' || pathname.startsWith('/api/workbench/')) return true;
+  if (pathname === '/api/desk/files' || pathname === '/api/desk/search-files' || pathname === '/api/desk/jian') return true;
+  if (pathname === '/api/file-history' || pathname.startsWith('/api/file-history/')) return true;
+  if (pathname === '/api/resource-io' || pathname.startsWith('/api/resource-io/')) return true;
+  if (pathname === '/api/resources' || pathname.startsWith('/api/resources/')) return true;
   if (pathname.startsWith('/api/bridge')) return true;
   if (/^\/api\/agents\/[^/]+\/config$/.test(pathname)) return true;
   return false;
