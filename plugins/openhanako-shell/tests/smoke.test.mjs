@@ -62,6 +62,7 @@ class El {
   append(...cs) { for (const c of cs) if (c != null) this.appendChild(c); }
   replaceChildren(...cs) { this.children = cs; this._text = ''; }
   remove() {}
+  focus() { this.focused = true; }
   querySelector(sel) { return this.querySelectorAll(sel)[0] ?? null; }
   querySelectorAll(sel) {
     const out = [];
@@ -839,6 +840,93 @@ skillsButton?.fire('click');
     /2 selected/.test(side.root.querySelector('.sessionBulkCount')?.textContent || ''));
   side.destroy?.();
   adapterForBatch.http = originalHttp;
+}
+
+// Keyboard and mouse range selection must operate on real sidebar rows, with
+// visible-only commands and no interference with input controls.
+{
+  const sidebar = studio.require('panels/sidebar');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const active = [
+    { sessionId: 'keyboard-a', title: 'Alpha', modified: '2026-10-03' },
+    { sessionId: 'keyboard-b', title: 'Beta', modified: '2026-10-02' },
+    { sessionId: 'keyboard-c', title: 'Gamma', modified: '2026-10-01' },
+  ];
+  let openings = 0;
+  adapter.http = async (method, path, body) => {
+    if (method === 'GET' && path === '/api/sessions') return active;
+    if (method === 'GET' && path === '/api/sessions/archived') return active;
+    if (method === 'GET' && path === '/api/runtime-state') return { sessions: [], mode: 'studio' };
+    return oldHttp(method, path, body);
+  };
+  const side = sidebar.render({ selected: null, onNew() {}, onCollapse() {}, onSelect() { openings += 1; } });
+  await side.refresh(null);
+  const rows = () => side.root.querySelectorAll('.sessionItem');
+  const count = () => side.root.querySelector('.sessionBulkCount')?.textContent;
+  const evt = (target, extra = {}) => ({ target, preventDefault() {}, stopPropagation() {}, ...extra });
+  check('sidebar has a single keyboard Tab stop at first visible row',
+    rows().filter((el) => el.getAttribute('tabindex') === '0').length === 1
+    && rows()[0].getAttribute('tabindex') === '0');
+  await side.refresh('keyboard-b');
+  check('active chat uses aria-current and supplies the default Tab stop',
+    rows()[1]?.getAttribute('aria-current') === 'page'
+    && rows()[1]?.getAttribute('tabindex') === '0'
+    && rows()[0]?.getAttribute('aria-current') === null);
+  await side.refresh(null);
+
+  rows()[0]?.fire('click', evt(rows()[0], { ctrlKey: true }));
+  await side.refresh(null);
+  check('Ctrl-click toggles a row without opening a session', count() === '1 selected' && openings === 0);
+  rows()[2]?.fire('click', evt(rows()[2], { shiftKey: true }));
+  await side.refresh(null);
+  check('Shift-click selects the visible interval', count() === '3 selected');
+  rows()[1]?.fire('keydown', evt(rows()[1], { key: 'Escape' }));
+  await side.refresh(null);
+  check('Escape clears batch selection', count() === '3 visible');
+  rows()[1]?.fire('keydown', evt(rows()[1], { key: 'a', metaKey: true }));
+  await side.refresh(null);
+  check('Cmd+A selects all visible sessions', count() === '3 selected');
+  rows()[2]?.fire('keydown', evt(rows()[2], { key: ' ' }));
+  await side.refresh(null);
+  check('Space toggles one session checkbox', count() === '2 selected');
+  rows()[2]?.fire('keydown', evt(rows()[2], { key: 'Home', shiftKey: true }));
+  await side.refresh(null);
+  check('Shift+Home extends selection to the first row', count() === '3 selected');
+  rows()[0]?.fire('keydown', evt(rows()[0], { key: 'End' }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('End moves focus to the last visible row without opening a session',
+    rows()[2]?.focused === true && openings === 0);
+  check('roving tabindex follows the focused row and exposes shortcuts',
+    rows()[2]?.getAttribute('tabindex') === '0'
+    && rows()[0]?.getAttribute('tabindex') === '-1'
+    && /Home End/.test(rows()[2]?.getAttribute('aria-keyshortcuts') || ''));
+  rows()[1]?.fire('keydown', evt(new El('input'), { key: 'Escape' }));
+  check('shortcuts ignore nested editable input', count() === '3 selected');
+  rows()[1]?.fire('click', evt(new El('button'), { ctrlKey: true }));
+  check('row modifier click ignores nested action button', count() === '3 selected');
+  rows()[1]?.fire('click', evt(rows()[1]));
+  check('unmodified active row click still opens the session', openings === 1);
+  await side.refresh(null);
+  // Checkbox Shift-click also updates the other checkboxes, not only the count.
+  rows()[0]?.querySelector('.sessionSelectBox')?.fire('click', evt(rows()[0], { shiftKey: true }));
+  await side.refresh(null);
+  check('Shift checkbox range redraws selected interval from last clicked row',
+    rows()[0]?.querySelector('.sessionSelectBox')?.checked === true
+    && rows()[1]?.querySelector('.sessionSelectBox')?.checked === true
+    && rows()[2]?.querySelector('.sessionSelectBox')?.checked === false);
+
+  side.root.querySelectorAll('.sessionViewBtn')[1]?.fire('click');
+  await side.refresh(null);
+  rows()[0]?.fire('keydown', evt(rows()[0], { key: 'Enter' }));
+  await side.refresh(null);
+  check('archived row Enter toggles selection without opening', count() === '1 selected' && openings === 1);
+  rows()[0]?.fire('keydown', evt(rows()[0], { key: 'Escape' }));
+  await side.refresh(null);
+  check('archived row Escape clears selection', count() === '3 visible');
+
+  side.destroy?.();
+  adapter.http = oldHttp;
 }
 
 // Rapid session switching must keep the newest transcript when an older

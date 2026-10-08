@@ -30,11 +30,12 @@ return (function () {
   ].filter((entry) => entry[1]));
 
   const nextKeyboardId = (visibleIds, currentId, key) => {
-    if (key !== 'ArrowDown' && key !== 'ArrowUp') return null;
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(key)) return null;
     const visible = Array.from(visibleIds || []);
     const index = visible.indexOf(currentId);
     if (index < 0 || visible.length === 0) return null;
-    const target = Math.max(0, Math.min(visible.length - 1, index + (key === 'ArrowDown' ? 1 : -1)));
+    const target = key === 'Home' ? 0 : key === 'End' ? visible.length - 1
+      : Math.max(0, Math.min(visible.length - 1, index + (key === 'ArrowDown' ? 1 : -1)));
     return visible[target] || null;
   };
 

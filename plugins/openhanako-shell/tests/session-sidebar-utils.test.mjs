@@ -53,6 +53,19 @@ const check = (label, condition) => { if (!condition) failures.push(label); };
   check('toggle visible selects visible ids', selected.has('a') && selected.has('b'));
   selected = bulk.toggleVisible(selected, ['a', 'b']);
   check('toggle visible clears fully selected visible ids', selected.size === 0);
+  const visible = ['a', 'b', 'c', 'd'];
+  check('range selection includes both endpoints in displayed order',
+    Array.from(bulk.selectRange(new Set(['old']), visible, 'd', 'b')).join(',') === 'b,c,d');
+  check('additive range retains existing selections',
+    Array.from(bulk.selectRange(new Set(['a']), visible, 'b', 'c', true)).join(',') === 'a,b,c');
+  check('missing anchor selects only the visible target',
+    Array.from(bulk.selectRange(new Set(), visible, 'absent', 'c')).join(',') === 'c');
+  check('missing target preserves the previous selection',
+    Array.from(bulk.selectRange(new Set(['a']), visible, 'a', 'absent')).join(',') === 'a');
+  check('select all visible keeps existing selections',
+    Array.from(bulk.selectAllVisible(new Set(['extra']), visible)).join(',') === 'extra,a,b,c,d');
+  check('toggle one returns an isolated selection',
+    bulk.toggleOne(new Set(['a']), 'a').size === 0 && bulk.toggleOne(new Set(['a']), 'b').size === 2);
   selected = bulk.pruneSelection(new Set(['a', 'gone']), ['a', 'b']);
   check('prune selection drops unavailable ids', selected.size === 1 && selected.has('a'));
 
@@ -125,6 +138,12 @@ const check = (label, condition) => { if (!condition) failures.push(label); };
   check('row keyboard navigation stays within visible bounds',
     row.nextKeyboardId(['a', 'b'], 'a', 'ArrowDown') === 'b'
     && row.nextKeyboardId(['a', 'b'], 'a', 'ArrowUp') === 'a');
+  check('Home and End navigate the displayed list',
+    row.nextKeyboardId(['a','b','c'], 'b', 'Home') === 'a'
+    && row.nextKeyboardId(['a','b','c'], 'a', 'End') === 'c');
+  check('navigation refuses unknown rows and unhandled keys',
+    row.nextKeyboardId(['a', 'b'], 'absent', 'Home') === null
+    && row.nextKeyboardId(['a', 'b'], 'a', 'Escape') === null);
 }
 
 {

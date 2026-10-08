@@ -15,6 +15,33 @@ return (function () {
     return new Set(Array.from(selectedIds || []).filter((id) => available.has(id)));
   };
 
+  // Keep keyboard/mouse ranges relative to the current visible list. A stale
+  // anchor must never select hidden, archived, or unrelated sessions.
+  const selectRange = (selectedIds, visibleIds, anchorId, targetId, additive = false) => {
+    const visible = Array.from(visibleIds || []);
+    const target = visible.indexOf(targetId);
+    if (target < 0) return new Set(selectedIds || []);
+    const anchor = visible.indexOf(anchorId);
+    const start = anchor < 0 ? target : Math.min(anchor, target);
+    const end = anchor < 0 ? target : Math.max(anchor, target);
+    const next = additive ? new Set(selectedIds || []) : new Set();
+    visible.slice(start, end + 1).forEach((id) => next.add(id));
+    return next;
+  };
+
+  const selectAllVisible = (selectedIds, visibleIds) => {
+    const next = new Set(selectedIds || []);
+    for (const id of visibleIds || []) next.add(id);
+    return next;
+  };
+
+  const toggleOne = (selectedIds, sessionId) => {
+    const next = new Set(selectedIds || []);
+    if (next.has(sessionId)) next.delete(sessionId);
+    else next.add(sessionId);
+    return next;
+  };
+
   const runBatch = async (ids, request, concurrency = 4, options = {}) => {
     const source = Array.from(ids || []);
     const width = Math.max(1, Math.min(source.length || 1, Number(concurrency) || 1));
@@ -45,5 +72,5 @@ return (function () {
     return { completed: source.length - failed.length, failed };
   };
 
-  return { toggleVisible, pruneSelection, runBatch };
+  return { toggleVisible, selectRange, selectAllVisible, toggleOne, pruneSelection, runBatch };
 })();

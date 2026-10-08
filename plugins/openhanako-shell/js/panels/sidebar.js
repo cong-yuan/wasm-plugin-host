@@ -28,7 +28,7 @@ return (function () {
   };
 
   function render(options) {
-    const view = { archived: false, query: '', searchVersion: 0, selectionVersion: 0, expanded: new Set(), selectedIds: new Set(), visibleIds: [], keyboardId: null, renamingId: null, deleteConfirmId: null, bulkDeleteArmed: false };
+    const view = { archived: false, query: '', searchVersion: 0, selectionVersion: 0, expanded: new Set(), selectedIds: new Set(), visibleIds: [], keyboardId: null, rangeAnchorId: null, renamingId: null, deleteConfirmId: null, bulkDeleteArmed: false };
     const searchController = sessionSearchController.create({ adapter, ttlMs: 15000, maxEntries: 20 });
     const actionLock = sessionActionLock.create();
     const mutations = sessionMutations.create({ adapter, api });
@@ -205,19 +205,40 @@ return (function () {
       bulkDelete.textContent = view.bulkDeleteArmed ? 'Confirm delete' : 'Delete selected';
     };
 
-    bulkSelectVisible.onclick = () => {
-      view.selectedIds = sessionBulk.toggleVisible(view.selectedIds, view.visibleIds);
+    // A single state transition for mouse and keyboard selection. Every edit
+    // revokes destructive confirmation and prevents old batches from replacing it.
+    const setSelection = (ids) => {
+      view.selectedIds = ids;
       view.selectionVersion += 1;
       view.bulkDeleteArmed = false;
       refreshBulkBar();
+    };
+    const focusRowAfterDraw = (id, selected) => {
+      view.keyboardId = id;
+      return draw(selected).then(() => {
+        if (destroyed || view.keyboardId !== id) return;
+        // Match IDs as data, not interpolated CSS selectors (IDs are opaque).
+        const row = Array.from(scroller.querySelectorAll('.sessionItem'))
+          .find((item) => item.getAttribute('data-session-id') === id);
+        row?.focus?.();
+      });
+    };
+    const rangeSelect = (id, additive = false, anchorFallback = id) => {
+      const anchor = view.rangeAnchorId && view.visibleIds.includes(view.rangeAnchorId)
+        ? view.rangeAnchorId : anchorFallback;
+      view.rangeAnchorId = anchor;
+      setSelection(sessionBulk.selectRange(view.selectedIds, view.visibleIds, anchor, id, additive));
+    };
+
+    bulkSelectVisible.onclick = () => {
+      setSelection(sessionBulk.toggleVisible(view.selectedIds, view.visibleIds));
+      view.rangeAnchorId = null;
       draw(options.selected);
     };
 
     bulkClear.onclick = () => {
-      view.selectionVersion += 1;
-      view.selectedIds.clear();
-      view.bulkDeleteArmed = false;
-      refreshBulkBar();
+      setSelection(new Set());
+      view.rangeAnchorId = null;
       draw(options.selected);
     };
 
@@ -338,6 +359,7 @@ return (function () {
         view.bulkDeleteArmed = false;
       }
       view.selectedIds = pruned;
+      if (!view.visibleIds.includes(view.rangeAnchorId)) view.rangeAnchorId = null;
       refreshBulkBar();
 
       clear(scroller);
@@ -346,6 +368,8 @@ return (function () {
           query ? 'No matching sessions' : view.archived ? 'No archived sessions' : t('sidebar.empty')));
         return;
       }
+      const tabbableId = view.visibleIds.includes(view.keyboardId) ? view.keyboardId
+        : view.visibleIds.includes(selected) ? selected : view.visibleIds[0];
       const pinnedIds = allRows.filter((row) => !!row.pinnedAt).map((row) => row.id);
       rows.forEach((s) => {
         const state = runtimeById.get(s.id) || null;
@@ -357,11 +381,17 @@ return (function () {
         const selectBox = sessionRowView.selectionBox(s, view.selectedIds.has(s.id));
         selectBox.onclick = (event) => {
           event?.stopPropagation?.();
-          if (selectBox.checked) view.selectedIds.add(s.id);
-          else view.selectedIds.delete(s.id);
-          view.selectionVersion += 1;
-          view.bulkDeleteArmed = false;
-          refreshBulkBar();
+          if (event?.shiftKey) {
+            rangeSelect(s.id, !!(event.ctrlKey || event.metaKey));
+            focusRowAfterDraw(s.id, selected);
+          } else {
+            const next = new Set(view.selectedIds);
+            if (selectBox.checked) next.add(s.id);
+            else next.delete(s.id);
+            setSelection(next);
+            view.rangeAnchorId = s.id;
+          }
+          view.keyboardId = s.id;
         };
 
         const rename = h('button', { class: 'sessionRenameBtn', type: 'button', title: 'Rename session' }, '✎');
@@ -567,6 +597,7 @@ return (function () {
           session: s,
           selected,
           keyboardId: view.keyboardId,
+          tabbable: s.id === tabbableId,
           archived: view.archived,
           runtime: rowRuntime,
           expanded: view.expanded.has(s.id),
@@ -608,24 +639,73 @@ return (function () {
             else options.onSelect(s);
           };
         }
-        if (!view.archived && !renaming) row.onclick = () => options.onSelect(s);
-        if (!view.archived && !renaming) {
-          row.onkeydown = (event) => {
-            const key = event?.key;
-            if (key === 'Enter' || key === ' ') {
+        if (!renaming) {
+          row.onclick = (event) => {
+            // Nested action buttons/checkboxes have their own semantics.
+            const targetTag = String(event?.target?.tagName || '').toUpperCase();
+            if (['INPUT', 'BUTTON', 'TEXTAREA', 'SELECT'].includes(targetTag)) return;
+            const modified = !!(event?.ctrlKey || event?.metaKey);
+            if (event?.shiftKey) {
               event?.preventDefault?.();
-              options.onSelect(s);
+              rangeSelect(s.id, modified);
+              focusRowAfterDraw(s.id, selected);
+            } else if (modified) {
+              event?.preventDefault?.();
+              setSelection(sessionBulk.toggleOne(view.selectedIds, s.id));
+              view.rangeAnchorId = s.id;
+              focusRowAfterDraw(s.id, selected);
+            } else {
+              view.keyboardId = s.id;
+              view.rangeAnchorId = s.id;
+              if (!view.archived) options.onSelect(s);
+            }
+          };
+          row.onkeydown = (event) => {
+            // Never intercept native editing/action controls or browser shortcuts.
+            const targetTag = String(event?.target?.tagName || '').toUpperCase();
+            if (['INPUT', 'BUTTON', 'TEXTAREA', 'SELECT'].includes(targetTag) || event?.altKey) return;
+            const key = event?.key;
+            const modified = !!(event?.ctrlKey || event?.metaKey);
+            if (modified && String(key || '').toLowerCase() === 'a') {
+              event?.preventDefault?.();
+              setSelection(sessionBulk.selectAllVisible(view.selectedIds, view.visibleIds));
+              view.rangeAnchorId = s.id;
+              focusRowAfterDraw(s.id, selected);
               return;
             }
-            if (key !== 'ArrowDown' && key !== 'ArrowUp') return;
-            event?.preventDefault?.();
+            if (key === 'Escape') {
+              if (!view.selectedIds.size && !view.bulkDeleteArmed && !view.deleteConfirmId) return;
+              event?.preventDefault?.();
+              setSelection(new Set());
+              view.deleteConfirmId = null;
+              view.rangeAnchorId = null;
+              focusRowAfterDraw(s.id, selected);
+              return;
+            }
+            if (modified) return;
+            if (key === ' ' || key === 'Spacebar') {
+              event?.preventDefault?.();
+              setSelection(sessionBulk.toggleOne(view.selectedIds, s.id));
+              view.rangeAnchorId = s.id;
+              focusRowAfterDraw(s.id, selected);
+              return;
+            }
+            if (key === 'Enter') {
+              event?.preventDefault?.();
+              if (!view.archived) options.onSelect(s);
+              else {
+                setSelection(sessionBulk.toggleOne(view.selectedIds, s.id));
+                view.rangeAnchorId = s.id;
+                focusRowAfterDraw(s.id, selected);
+              }
+              return;
+            }
             const nextId = sessionRow.nextKeyboardId(view.visibleIds, s.id, key);
-            if (!nextId || nextId === s.id) return;
-            view.keyboardId = nextId;
-            draw(selected).then(() => {
-              const nextRow = scroller.querySelector(`[data-session-id="${nextId}"]`);
-              nextRow?.focus?.();
-            });
+            if (!nextId) return;
+            event?.preventDefault?.();
+            if (event?.shiftKey) rangeSelect(nextId, false, s.id);
+            else view.rangeAnchorId = nextId;
+            focusRowAfterDraw(nextId, selected);
           };
         }
         scroller.appendChild(row);
@@ -646,6 +726,7 @@ return (function () {
       view.selectedIds.clear();
       view.bulkDeleteArmed = false;
       view.keyboardId = null;
+      view.rangeAnchorId = null;
       view.deleteConfirmId = null;
       view.renamingId = null;
       draw(options.selected);
@@ -656,6 +737,7 @@ return (function () {
       view.selectedIds.clear();
       view.bulkDeleteArmed = false;
       view.keyboardId = null;
+      view.rangeAnchorId = null;
       view.deleteConfirmId = null;
       view.renamingId = null;
       draw(options.selected);

@@ -120,3 +120,11 @@
 - Bulk mutation operations are mutually exclusive. The original active/archived mode is pinned for the entire batch; post-request failure selection reconciliation only runs if the user has not changed selection or view.
 - Changing a checkbox, selecting/clearing rows, or pruning missing selections revokes a pending destructive delete confirmation. A new confirmation is required for the new exact selection.
 - Successful session archive, restore, delete, rename, and pin mutations invalidate cached searches and older in-flight sidebar drawings. Regression coverage is in `session-sidebar-utils.test.mjs` and the DOM smoke suite (failed search while typing, confirmation revocation, in-flight selection retention).
+
+### Sidebar keyboard and range selection (2026-10-09)
+
+- Legacy `openhanako-shell` sidebar now supports Ctrl/Cmd+click toggle, Shift+click inclusive range, Ctrl/Cmd+Shift additive range, and Shift-click on row checkboxes. Range anchors are always constrained to the currently visible result set and are reset when views/selections invalidate them.
+- Focused session rows support Home/End/ArrowUp/ArrowDown navigation; Shift+navigation extends range selection; Ctrl/Cmd+A selects all visible rows; Space toggles the focused checkbox; Escape clears selection and cancels destructive confirmation. Enter opens an active session, or toggles checkbox selection for archived rows. Shortcuts never intercept nested input/button controls.
+- A single roving Tab stop follows keyboard focus, with native DOM focus restoration after redraw; current session uses `aria-current=page`, and rows advertise keyboard shortcuts. Session IDs are matched as data instead of interpolated into CSS selectors.
+- Visible bulk selection retains the existing toolbar controls. Every keyboard, checkbox, or mouse selection change invalidates the pending permanent-delete confirmation; no background batch can rewrite a newer user selection.
+- Unit and real DOM smoke regressions cover range endpoints, additive selection, stale anchors, Ctrl/Cmd+A, Escape, keyboard focus, Tab stops, active/archived Enter, nested button/input isolation, and checkbox redraw.
