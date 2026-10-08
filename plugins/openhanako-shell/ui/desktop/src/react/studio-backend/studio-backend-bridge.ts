@@ -266,15 +266,10 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/sessions/turns/retry') return true;
   if (pathname === '/api/sessions/fork') return true;
   if (pathname === '/api/session-projects' || pathname.startsWith('/api/session-projects/')) return true;
-  // File/workbench vertical slice: keep embedded Studio sessions on the native backend
-  // instead of silently falling back to the legacy Hana server. These are the APIs used
-  // by Desk/RightWorkspacePanel, file history, and generated-resource previews.
-  if (pathname === '/api/workbench' || pathname.startsWith('/api/workbench/')) return true;
-  if (pathname === '/api/mobile/workbench' || pathname.startsWith('/api/mobile/workbench/')) return true;
-  if (pathname === '/api/desk/files' || pathname === '/api/desk/search-files' || pathname === '/api/desk/jian') return true;
-  if (pathname === '/api/file-history' || pathname.startsWith('/api/file-history/')) return true;
-  if (pathname === '/api/resource-io' || pathname.startsWith('/api/resource-io/')) return true;
-  if (pathname === '/api/resources' || pathname.startsWith('/api/resources/')) return true;
+  // File/workbench/preview remains on Hana HTTP until Studio exposes real host
+  // commands for these surfaces. Do not intercept them here: hana-adapter has no
+  // native implementation yet, and intercepting would turn an unsupported feature
+  // into a misleading HTTP 200 `{ error: ... }` response inside the iframe.
   if (pathname.startsWith('/api/bridge')) return true;
   if (/^\/api\/agents\/[^/]+\/config$/.test(pathname)) return true;
   return false;
@@ -435,9 +430,22 @@ function installFetchShim(): void {
       search: target.search,
       body: readJsonBody(init),
     });
-    return new Response(JSON.stringify(result == null ? null : result), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
+    const envelope = result && typeof result === 'object'
+      ? result as { __httpStatus?: unknown; __httpHeaders?: unknown; __httpBody?: unknown }
+      : null;
+    const rawStatus = envelope?.__httpStatus;
+    const status = Number.isInteger(rawStatus)
+      ? Math.max(100, Math.min(599, Number(rawStatus)))
+      : 200;
+    const payload = envelope && Object.prototype.hasOwnProperty.call(envelope, '__httpBody')
+      ? envelope.__httpBody
+      : result;
+    const headers = envelope && envelope.__httpHeaders && typeof envelope.__httpHeaders === 'object'
+      ? { 'Content-Type': 'application/json', ...(envelope.__httpHeaders as Record<string, string>) }
+      : { 'Content-Type': 'application/json' };
+    return new Response(JSON.stringify(payload == null ? null : payload), {
+      status,
+      headers,
     });
   };
   (patched as unknown as { __studioBridge?: boolean }).__studioBridge = true;

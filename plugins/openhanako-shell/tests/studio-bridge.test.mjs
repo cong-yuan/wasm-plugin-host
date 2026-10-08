@@ -131,6 +131,18 @@ check('api mode is mock without invoke', api.mode() === 'mock');
   studio.hostAction = null;
 }
 
+const unsupportedFileSurface = await adapter.http('GET', '/api/workbench/files');
+check('unsupported file/workbench surface fails closed',
+  unsupportedFileSurface?.ok === false
+  && unsupportedFileSurface?.code === 'capability_unavailable'
+  && unsupportedFileSurface?.__httpStatus === 501);
+const capabilitiesBeforeFileWork = await adapter.http('GET', '/api/capabilities');
+check('capability registry does not advertise unsupported file surfaces',
+  capabilitiesBeforeFileWork?.capabilities?.fileWorkbench === false
+  && capabilitiesBeforeFileWork?.capabilities?.fileHistory === false
+  && capabilitiesBeforeFileWork?.capabilities?.resourceIO === false
+  && capabilitiesBeforeFileWork?.capabilities?.generatedResourcePreview === false);
+
 const health = await adapter.http('GET', '/api/health');
 check('mock health is labeled', health.studioBridge === 'mock' && health.status === 'ok');
 const listed = await adapter.http('GET', '/api/sessions');

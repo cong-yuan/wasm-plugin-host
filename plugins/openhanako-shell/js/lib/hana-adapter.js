@@ -1651,6 +1651,29 @@ return (function () {
   // vertical slice. Returning empty/ok stops noisy 404s in the harness and
   // iframe console without pretending the feature exists.
   const stubHttp = async (pathname, verb, body) => {
+    const fileSurfaceCapabilityUnavailable = (surface) => ({
+      ok: false,
+      code: 'capability_unavailable',
+      error: `studio backend does not expose ${surface} commands yet`,
+      __httpStatus: 501,
+    });
+    if (
+      pathname === '/api/desk/files'
+      || pathname === '/api/desk/search-files'
+      || pathname === '/api/desk/jian'
+      || pathname === '/api/file-history'
+      || pathname.startsWith('/api/file-history/')
+      || pathname === '/api/resource-io'
+      || pathname.startsWith('/api/resource-io/')
+      || pathname === '/api/resources'
+      || pathname.startsWith('/api/resources/')
+      || pathname === '/api/workbench'
+      || pathname.startsWith('/api/workbench/')
+      || pathname === '/api/mobile/workbench'
+      || pathname.startsWith('/api/mobile/workbench/')
+    ) {
+      return fileSurfaceCapabilityUnavailable('file/workbench/preview');
+    }
     if (pathname === '/api/preferences/models' && verb === 'GET') {
       return {
         models: [{ id: api.DEFAULT_MODEL, name: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER }],
@@ -1753,6 +1776,10 @@ return (function () {
           sessionSummary: typeof api.sessionSummaryAvailable === 'function' && api.sessionSummaryAvailable(),
           authorizedFolders: typeof api.sessionFolderScopeAvailable === 'function' && api.sessionFolderScopeAvailable(),
           sessionTodoMutation: typeof api.completeSessionTodosAvailable === 'function' && api.completeSessionTodosAvailable(),
+          fileWorkbench: false,
+          fileHistory: false,
+          resourceIO: false,
+          generatedResourcePreview: false,
         },
       };
     }

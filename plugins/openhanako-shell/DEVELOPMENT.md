@@ -75,8 +75,8 @@
   - 从 project 创建新 session 时优先使用 project workspace；显式 `cwd` 始终覆盖 project mapping；unknown project fail-closed，不创建幽灵 assignment。
   - Project 右键菜单现在可以选择/清除 workspace；cwd 自动生成的临时 project 不允许伪装成可编辑 catalog workspace。
   - 该映射仍属于 OpenHanako catalog 本地持久层，不冒充 Studio 的原生 project manager。
-- embedded Studio file/workbench bridge：`/api/workbench/*`、`/api/mobile/workbench/*`、Desk 兼容文件读写、file-history、resource-io、generated-resource preview 已加入 Studio iframe bridge allowlist；未加入无关 Desk 管理 API，避免把不具备 Studio 原生能力的路径伪装成已接入。
-- file / workbench / preview
+- embedded Studio file/workbench bridge：当前**不拦截** `/api/workbench/*`、`/api/mobile/workbench/*`、Desk 文件读写、file-history、resource-io、generated-resource preview；这些 surface 在 Studio 尚无对应 host command，因此继续走 Hana HTTP，adapter 直调则统一 `capability_unavailable` / HTTP 501 fail-closed。不能把未实现的 native 能力伪装成已接入。
+- file / workbench / preview / 当前阶段：边界收口完成，下一步再补最小 host command 后逐条接回 bridge；不得先扩大 allowlist 再补实现。
 - Sidebar UI persistence / 已完成第一阶段
   - Jian 右侧栏开关已从 `hana-jian` / `hana-jian-chat` localStorage 迁到 `/api/preferences/sidebar-ui.shell.jianOpen`。
   - sidebar / Jian / channel inspector / preview 四组宽度迁到 `/api/preferences/sidebar-ui.layout.*`；首次 server payload 缺少 `layout` 时从旧 `hana-*-width` keys 一次性迁移，之后以 Studio/adapter 持久值为准。
