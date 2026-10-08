@@ -841,18 +841,33 @@ function SessionListInner() {
       </SectionTitle>
     ));
   }
-  const selectionToolbar = selectedCount > 0 && !isSearching ? (
+  const allSessionsSelected = selectableSessionPaths.length > 0 && selectedCount === selectableSessionPaths.length;
+  const selectionToolbar = selectableSessionPaths.length > 0 && !isSearching ? (
     <div className={styles.sessionSelectionToolbar} role="toolbar" aria-label={t('session.bulk.toolbar')}>
       <span className={styles.sessionSelectionCount}>{t('session.bulk.selected', { count: selectedCount })}</span>
-      <button type="button" className={styles.sessionSelectionButton} onClick={selectAllSessions} disabled={bulkArchiving}>
-        {t('session.bulk.selectAll')}
+      <button
+        type="button"
+        className={styles.sessionSelectionButton}
+        onClick={allSessionsSelected ? clearSessionSelection : selectAllSessions}
+        disabled={bulkArchiving}
+      >
+        {allSessionsSelected ? t('session.bulk.clear') : t('session.bulk.selectAll')}
       </button>
-      <button type="button" className={styles.sessionSelectionButton} onClick={clearSessionSelection} disabled={bulkArchiving}>
-        {t('session.bulk.clear')}
-      </button>
-      <button type="button" className={`${styles.sessionSelectionButton} ${styles.sessionSelectionDanger}`} onClick={() => { void handleBulkArchive(); }} disabled={bulkArchiving}>
-        {bulkArchiving ? t('common.loading') : t('session.archive')}
-      </button>
+      {selectedCount > 0 && !allSessionsSelected && (
+        <button type="button" className={styles.sessionSelectionButton} onClick={clearSessionSelection} disabled={bulkArchiving}>
+          {t('session.bulk.clear')}
+        </button>
+      )}
+      {selectedCount > 0 && (
+        <button
+          type="button"
+          className={`${styles.sessionSelectionButton} ${styles.sessionSelectionDanger}`}
+          onClick={() => { void handleBulkArchive(); }}
+          disabled={bulkArchiving}
+        >
+          {bulkArchiving ? t('common.loading') : t('session.archive')}
+        </button>
+      )}
     </div>
   ) : null;
 

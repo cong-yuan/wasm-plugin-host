@@ -1375,6 +1375,17 @@ return (function () {
     };
   };
 
+  const runtimeSignature = (sessions) => (Array.isArray(sessions) ? sessions : [])
+    .map((state) => [
+      state?.sessionId || '',
+      state?.status || '',
+      state?.isStreaming ? 1 : 0,
+      Number(state?.activeToolCount) || 0,
+      state?.error || '',
+    ].join(':'))
+    .sort()
+    .join('|');
+
   const sessionIdOf = (body, query) => {
     // Prefer path/sessionPath from the clicked row — sessionId alone has been
     // observed to point at the *current* session while path points at another,
@@ -2130,10 +2141,12 @@ return (function () {
       for (const id of runtimeTranscriptCache.keys()) {
         if (!liveIds.has(id)) runtimeTranscriptCache.delete(id);
       }
-      return {
-        mode: api.mode(),
-        sessions: await Promise.all(rows.map(runtimeProjection)),
-      };
+      const sessions = await Promise.all(rows.map(runtimeProjection));
+      const signature = runtimeSignature(sessions);
+      if (query.since && query.since === signature) {
+        return { mode: api.mode(), signature, unchanged: true };
+      }
+      return { mode: api.mode(), signature, sessions };
     }
 
     const runtimeSessionMatch = pathname.match(/^\/api\/runtime-state\/([^/]+)$/);

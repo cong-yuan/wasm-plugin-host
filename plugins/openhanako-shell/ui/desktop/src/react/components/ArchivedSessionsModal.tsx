@@ -157,18 +157,27 @@ export function ArchivedSessionsModal({ open, onClose, zIndex = 1000 }: Props) {
                 {t('session.archived.cleanup90')}
               </button>
             </div>
-            {selectedCount > 0 && (
+            {list.length > 0 && (
               <div className={styles.bulkBtns} role="toolbar" aria-label={t('session.archived.bulkToolbar')}>
                 <span className={styles.bulkCount}>{t('session.archived.bulkSelected', { count: selectedCount })}</span>
                 <button onClick={allSelected ? clearSelection : selectAll}>
                   {allSelected ? t('session.archived.clearSelection') : t('session.archived.selectAll')}
                 </button>
-                <button onClick={() => { void handleBulkRestore(); }}>
-                  {t('session.archived.restore')}
-                </button>
-                <button className={styles.bulkDanger} onClick={() => { void handleBulkDelete(); }}>
-                  {t('session.archived.deleteForever')}
-                </button>
+                {selectedCount > 0 && !allSelected && (
+                  <button onClick={clearSelection}>
+                    {t('session.archived.clearSelection')}
+                  </button>
+                )}
+                {selectedCount > 0 && (
+                  <>
+                    <button onClick={() => { void handleBulkRestore(); }}>
+                      {t('session.archived.restore')}
+                    </button>
+                    <button className={styles.bulkDanger} onClick={() => { void handleBulkDelete(); }}>
+                      {t('session.archived.deleteForever')}
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>

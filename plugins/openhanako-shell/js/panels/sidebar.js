@@ -626,8 +626,12 @@ return (function () {
       if (runtimeRefreshPending || view.archived || view.query.trim() || view.renamingId) return;
       runtimeRefreshPending = true;
       try {
-        const runtime = await adapter.http('GET', '/api/runtime-state');
-        const nextSignature = sessionRuntime.signature(runtime);
+        const suffix = lastRuntimeSignature
+          ? `?since=${encodeURIComponent(lastRuntimeSignature)}`
+          : '';
+        const runtime = await adapter.http('GET', '/api/runtime-state' + suffix);
+        if (runtime?.unchanged === true) return;
+        const nextSignature = runtime?.signature || sessionRuntime.signature(runtime);
         updateBridgeStatus(runtime);
         if (activityPanel.style.display !== 'none') infoPanels.renderActivity(runtime);
         if (nextSignature !== lastRuntimeSignature) {

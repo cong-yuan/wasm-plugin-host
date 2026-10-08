@@ -250,6 +250,24 @@ describe('SessionList context menu', () => {
     expect(document.activeElement).toBe(first);
   });
 
+  it('exposes a select-all toolbar for the visible session list', () => {
+    render(<SessionList />);
+
+    const toolbar = screen.getByRole('toolbar', { name: 'session.bulk.toolbar' });
+    const selectAll = within(toolbar).getByText('session.bulk.selectAll');
+    fireEvent.click(selectAll);
+
+    expect(sessionButton('Has summary')).toHaveAttribute('aria-selected', 'true');
+    expect(sessionButton('No summary')).toHaveAttribute('aria-selected', 'true');
+    expect(within(toolbar).getByText('session.bulk.clear')).toBeInTheDocument();
+    expect(within(toolbar).getByText('session.archive')).toBeEnabled();
+
+    fireEvent.click(within(toolbar).getByText('session.bulk.clear'));
+    expect(sessionButton('Has summary')).toHaveAttribute('aria-selected', 'false');
+    expect(sessionButton('No summary')).toHaveAttribute('aria-selected', 'false');
+    expect(within(toolbar).queryByText('session.archive')).not.toBeInTheDocument();
+  });
+
   it('supports modifier selection, Ctrl/Cmd+A, range selection, and bulk archive', async () => {
     render(<SessionList />);
 

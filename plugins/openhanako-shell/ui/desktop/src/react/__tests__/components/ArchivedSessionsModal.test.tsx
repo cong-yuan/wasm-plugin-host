@@ -240,6 +240,30 @@ describe('ArchivedSessionsModal', () => {
     expect(restoreMock).not.toHaveBeenCalled();
   });
 
+  it('shows select-all controls before any archived session is selected', async () => {
+    listMock.mockResolvedValue([
+      {
+        path: '/x/a.jsonl', sessionId: 'sess_a', title: 'Alpha',
+        archivedAt: new Date().toISOString(), sizeBytes: 100, agentId: 'a', agentName: 'Hana',
+      },
+      {
+        path: '/x/b.jsonl', sessionId: 'sess_b', title: 'Beta',
+        archivedAt: new Date().toISOString(), sizeBytes: 100, agentId: 'b', agentName: 'Yuan',
+      },
+    ]);
+    render(<ArchivedSessionsModal open={true} onClose={() => {}} />);
+    await waitFor(() => screen.getByText('Alpha'));
+
+    const toolbar = screen.getByRole('toolbar', { name: 'session.archived.bulkToolbar' });
+    fireEvent.click(within(toolbar).getByText('session.archived.selectAll'));
+    expect(screen.getAllByRole('checkbox').every((box) => (box as HTMLInputElement).checked)).toBe(true);
+    expect(within(toolbar).getByText('session.archived.restore')).toBeInTheDocument();
+    expect(within(toolbar).getByText('session.archived.deleteForever')).toBeInTheDocument();
+
+    fireEvent.click(within(toolbar).getByText('session.archived.clearSelection'));
+    expect(screen.getAllByRole('checkbox').every((box) => !(box as HTMLInputElement).checked)).toBe(true);
+  });
+
   it('bulk deletes selected archived sessions after one confirmation', async () => {
     listMock.mockResolvedValue([
       {

@@ -19,7 +19,7 @@
 
 目标：把日常会话操作补齐，避免核心聊天动作掉回 Hana Server 或 soft stub。
 
-当前推进顺序：retry/fork、cleanup 已完成；search 已接线；下一批继续补 Session UI 键盘可达性、批量操作与 runtime incremental 更新。
+当前推进顺序：retry/fork、cleanup、search、Session 键盘可达性、批量操作已完成；本批补齐 React Session/Archived 的可见全选入口与 runtime-state signature incremental transport；下一批进入 attachment/file ingest 与宿主能力补齐。
 
 1. **Session retry + fork** — P0 / 已实现
    - `/api/sessions/turns/retry` → `retry_session_turn`
@@ -37,10 +37,12 @@
 
 3. **Search / summary / authorized folders / continue-deleted-agent** — P1 / 部分完成
    - `/api/sessions/search`：已纳入 Studio iframe bridge；adapter 复用稳定的 title/content 两阶段搜索、transcript cache、limit 上限和已删除/归档过滤；SessionList 已支持 ArrowUp/ArrowDown/Home/End 键盘导航，并用 `aria-current=page` 标出当前会话。
-   - Session bulk actions：支持 Ctrl/Cmd-click 多选、Shift range、Ctrl/Cmd+A 全选、Escape 清除；批量归档通过单独的 `archiveSessions()` 串行提交并只刷新一次 session list，避免逐项归档造成多次 hydrate/race。
+   - Session bulk actions：支持 Ctrl/Cmd-click 多选、Shift range、Ctrl/Cmd+A 全选、Escape 清除；React SessionList 现在始终提供可见 session 的 Select All 入口，选中后才显示归档动作；批量归档通过单独的 `archiveSessions()` 串行提交并只刷新一次 session list，避免逐项归档造成多次 hydrate/race。
    - `/api/sessions/summary`：Studio 当前没有持久化 summary 原语，已纳入 bridge 并返回 `capability_unavailable`，不再掉回 Hana Server 产生错误或假数据。
    - `/api/sessions/authorized-folders`：Studio 当前没有 session folder-scope 持久化原语，已纳入 bridge 并对 GET/PATCH fail closed；不能把“显示的授权目录”伪装成真正的工具访问控制。
    - `/api/sessions/continue-deleted-agent`：OpenHanako 需要“删除 Agent → 用 primary Agent 新建会话 → 迁移 transcript → 可选 compact”的专用生命周期语义；Studio 目前没有 deleted-agent/agent replacement 原语，继续保持 fail closed。
+- Archived Session UI：React ArchivedSessionsModal 在零选择时也提供 Select All；全选后可批量 restore / permanent delete，仍保留一次确认和统一 refresh。
+- Runtime incremental：`/api/runtime-state` 返回稳定 `signature`，带 `?since=<signature>` 且无变化时只返回 `unchanged=true`；legacy sidebar 的 3 秒 runtime refresh 已使用该增量握手，避免重复传输完整 session runtime payload。
 
 ## Phase 2 — Model & Input
 

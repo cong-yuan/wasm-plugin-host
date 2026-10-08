@@ -742,6 +742,14 @@ check('session projection falls back to configured host model',
   await adapter.http('GET', '/api/runtime-state');
   await adapter.http('GET', '/api/runtime-state');
   check('idle runtime-state reuses transcript cache', transcriptCalls === 1);
+  const runtimeBaseline = await adapter.http('GET', '/api/runtime-state');
+  const runtimeUnchanged = await adapter.http(
+    'GET', '/api/runtime-state?since=' + encodeURIComponent(runtimeBaseline.signature),
+  );
+  check('runtime-state supports signature-based incremental no-change responses',
+    runtimeUnchanged?.unchanged === true
+    && runtimeUnchanged?.signature === runtimeBaseline.signature
+    && !Array.isArray(runtimeUnchanged?.sessions));
 
   const cachedSearch = await adapter.http(
     'GET',
