@@ -58,6 +58,7 @@ import { useStore } from '../../stores';
 
 function jsonResponse(data: unknown) {
   return {
+    ok: !(data && typeof data === 'object' && 'ok' in data) || (data as { ok?: unknown }).ok !== false,
     json: async () => data,
   };
 }
@@ -1210,6 +1211,51 @@ describe('SessionList context menu', () => {
         }),
       }));
     });
+  });
+  it('moves all selected sessions to a project from the bulk toolbar', async () => {
+    hanaFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/browser/session-states') return jsonResponse({});
+      if (url === '/api/session-projects') {
+        return jsonResponse({
+          catalog: {
+            folders: [],
+            projects: [{ id: 'project-custom', name: 'Custom Project', folderId: null, order: 0 }],
+          },
+        });
+      }
+      if (url === '/api/session-projects/session-assignment' && init?.method === 'POST') {
+        return jsonResponse({ ok: true, assignment: JSON.parse(String(init.body)) });
+      }
+      return jsonResponse({});
+    });
+
+    render(<SessionList />);
+    await switchToProjectView();
+
+    const toolbar = screen.getByRole('toolbar', { name: 'session.bulk.toolbar' });
+    fireEvent.click(within(toolbar).getByText('session.bulk.selectAll'));
+    const projectSelect = screen.getByRole('combobox', { name: 'sidebar.view.project' });
+    fireEvent.change(projectSelect, { target: { value: 'project-custom' } });
+
+    await waitFor(() => {
+      const assignmentCalls = hanaFetchMock.mock.calls.filter(([url, init]) =>
+        url === '/api/session-projects/session-assignment' && (init as RequestInit)?.method === 'POST');
+      expect(assignmentCalls).toHaveLength(2);
+    });
+    expect(hanaFetchMock).toHaveBeenCalledWith('/api/session-projects/session-assignment', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        sessionPath: '/tmp/agents/hana/sessions/with-summary.jsonl',
+        projectId: 'project-custom',
+      }),
+    }));
+    expect(hanaFetchMock).toHaveBeenCalledWith('/api/session-projects/session-assignment', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        sessionPath: '/tmp/agents/hana/sessions/no-summary.jsonl',
+        projectId: 'project-custom',
+      }),
+    }));
   });
 
   it('reorders projects when a project is dragged onto another project at the same level', async () => {

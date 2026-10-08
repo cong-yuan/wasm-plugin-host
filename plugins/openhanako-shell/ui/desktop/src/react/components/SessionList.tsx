@@ -39,7 +39,7 @@ import {
 } from '../stores/session-project-actions';
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
 import { renderMarkdown } from '../utils/markdown';
-import { cwdFromAutoProjectId } from '../../../../shared/session-projects.ts';
+import { cwdFromAutoProjectId, UNCATEGORIZED_PROJECT_ID } from '../../../../shared/session-projects.ts';
 import type { SidebarSessionListRowMode } from '../../../../shared/sidebar-ui-state.ts';
 import { FolderIcon } from './shared/FolderIcon';
 import styles from './SessionList.module.css';
@@ -227,6 +227,7 @@ function SessionListInner() {
   const [selectedSessionPaths, setSelectedSessionPaths] = useState<Set<string>>(() => new Set());
   const [selectionAnchorPath, setSelectionAnchorPath] = useState<string | null>(null);
   const [bulkArchiving, setBulkArchiving] = useState(false);
+  const [bulkAssigningProject, setBulkAssigningProject] = useState(false);
   const closingBrowserSessionsRef = useRef(new Set<string>());
   const projectNameInputRef = useRef<HTMLInputElement>(null);
   const searchQueryTrimmed = searchQuery.trim();
@@ -469,6 +470,25 @@ function SessionListInner() {
   const updateSessionProjectAssignment = useCallback(async (sessionPath: string, projectId: string | null) => {
     await setSessionProjectAssignmentForSession(sessionPath, projectId);
   }, []);
+
+  const handleBulkAssignProject = useCallback(async (projectId: string | null) => {
+    if (bulkAssigningProject || selectedCount === 0) return;
+    setBulkAssigningProject(true);
+    try {
+      for (const sessionPath of selectedSessionPaths) {
+        await updateSessionProjectAssignment(sessionPath, projectId);
+      }
+      clearSessionSelection();
+    } catch (err) {
+      useStore.getState().addToast(
+        err instanceof Error ? err.message : t('session.archiveFailed'),
+        'error',
+        5000,
+      );
+    } finally {
+      setBulkAssigningProject(false);
+    }
+  }, [bulkAssigningProject, clearSessionSelection, selectedCount, selectedSessionPaths, t, updateSessionProjectAssignment]);
 
   const patchProject = useCallback(async (projectId: string, patch: { folderId?: string | null; name?: string }) => {
     return patchSessionProjectInCatalog(projectId, patch);
@@ -858,12 +878,31 @@ function SessionListInner() {
           {t('session.bulk.clear')}
         </button>
       )}
+      {selectedCount > 0 && projectCatalogLoaded && projectCatalog.projects.length > 0 && (
+        <select
+          className={styles.sessionSelectionButton}
+          aria-label={t('sidebar.view.project')}
+          value=""
+          disabled={bulkArchiving || bulkAssigningProject}
+          onChange={(event) => {
+            const value = event.target.value;
+            if (!value) return;
+            void handleBulkAssignProject(value === UNCATEGORIZED_PROJECT_ID ? null : value);
+          }}
+        >
+          <option value="">{t('sidebar.view.project')}</option>
+          <option value={UNCATEGORIZED_PROJECT_ID}>{t('session.bulk.clear')}</option>
+          {projectCatalog.projects.map(project => (
+            <option key={project.id} value={project.id}>{project.name}</option>
+          ))}
+        </select>
+      )}
       {selectedCount > 0 && (
         <button
           type="button"
           className={`${styles.sessionSelectionButton} ${styles.sessionSelectionDanger}`}
           onClick={() => { void handleBulkArchive(); }}
-          disabled={bulkArchiving}
+          disabled={bulkArchiving || bulkAssigningProject}
         >
           {bulkArchiving ? t('common.loading') : t('session.archive')}
         </button>

@@ -204,14 +204,19 @@ export async function deleteSessionProjectFolderFromCatalog(folderId: string): P
 }
 
 export async function setSessionProjectAssignmentForSession(sessionPath: string, projectId: string | null): Promise<void> {
-  await hanaFetch('/api/session-projects/session-assignment', {
+  const res = await hanaFetch('/api/session-projects/session-assignment', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionPath, projectId }),
+    throwOnHttpError: false,
   });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.ok === false || data?.error) {
+    throw new Error(typeof data?.error === 'string' ? data.error : 'session project assignment failed');
+  }
   useStore.setState(state => ({
     sessions: state.sessions.map(session => session.path === sessionPath
-      ? { ...session, projectId }
+      ? { ...session, projectId: projectId || null }
       : session),
   }));
 }

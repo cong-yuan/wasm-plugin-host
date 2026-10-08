@@ -19,7 +19,7 @@
 
 目标：把日常会话操作补齐，避免核心聊天动作掉回 Hana Server 或 soft stub。
 
-当前推进顺序：retry/fork、cleanup、search、Session 键盘可达性、批量操作已完成；本批补齐 React Session/Archived 的可见全选入口与 runtime-state signature incremental transport；下一批进入 attachment/file ingest 与宿主能力补齐。
+当前推进顺序：retry/fork、cleanup、search、Session 键盘可达性、批量操作已完成；本批继续补 React Session/Archived 的可见全选入口、runtime-state signature incremental transport，以及 session→project 批量归类；下一批进入 attachment/file ingest 与宿主能力补齐。
 
 1. **Session retry + fork** — P0 / 已实现
    - `/api/sessions/turns/retry` → `retry_session_turn`
@@ -63,7 +63,7 @@
 
 ## Phase 4 — Workspace
 
-- session-project assignment：已补 GET read-back，并在 POST 时校验 project 必须真实存在；清空 assignment 统一回到 uncategorized，避免 localStorage 中留下悬挂 project id。
+- session-project assignment：已补 GET read-back，并在 POST 时校验 project 必须真实存在；React SessionList 支持多选后批量移动到 catalog project 或 uncategorized，并串行写入避免 localStorage read-modify-write race；assignment API HTTP/JSON 失败时 UI store 不再提前更新。
 - session batch archive：已支持多选后一次性归档，并在成功后统一清理 session runtime/chat/file/todo cache；当前会话未被选中时保持焦点不跳走。
 - archived batch actions：归档管理器现在支持 checkbox 多选后批量 restore / permanent delete；restore 只做一次 session reload，不逐条切换当前会话；delete 也串行写入后统一刷新列表。
 - authorized folders
