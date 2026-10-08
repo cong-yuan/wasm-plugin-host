@@ -12,6 +12,7 @@ import { useI18n } from '../../hooks/use-i18n';
 import { useStore } from '../../stores';
 import {
   fetchHistoryFiles, fetchHistoryVersions, fetchHistorySnapshot, restoreHistorySnapshot,
+  FileHistoryRestoreConflictError,
   type FileHistoryFileEntry, type FileHistoryVersionEntry, type FileHistoryExpectedVersion,
 } from '../../utils/file-history-api';
 import { diffLines, type DiffLine } from '../../utils/line-diff';
@@ -38,7 +39,7 @@ export function FileHistoryModal() {
   useEffect(() => () => { restoreEpoch.current += 1; }, [modal.open, agentId, selectedPath]);
 
   const [snapshotLoading, setSnapshotLoading] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'loading' | 'restoring' | 'restored' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'restoring' | 'restored' | 'error' | 'conflict'>('idle');
 
   // 打开时装载文件列表 + 应用预选
   useEffect(() => {
@@ -167,8 +168,33 @@ export function FileHistoryModal() {
       } catch (err) {
         console.warn('[FileHistory] post-restore history refresh failed:', err);
       }
-    } catch {
-      if (isCurrent()) setStatus('error');
+    } catch (err) {
+      if (!isCurrent()) return;
+      if (err instanceof FileHistoryRestoreConflictError) {
+        // Another writer changed the file after we previewed it. Refresh the
+        // comparison and version token but NEVER automatically retry the write.
+        setStatus('conflict');
+        setCurrentVersion(null);
+        setCurrentText(null);
+        if (nativeRoot) {
+          const filePath = `${nativeRoot.replace(/\/+$/, '')}/${selectedPath}`;
+          try {
+            const latest = await window.platform?.readFileSnapshot?.(filePath);
+            if (isCurrent() && latest) {
+              setCurrentText(latest.content ?? null);
+              const version = latest.version;
+              if (version && typeof version === 'object'
+                && ('mtimeMs' in version || 'sha256' in version)) {
+                setCurrentVersion(version as FileHistoryExpectedVersion);
+              }
+            }
+          } catch {
+            // Without a new version token, retry stays disabled.
+          }
+        }
+      } else {
+        setStatus('error');
+      }
     } finally {
       restoreInFlight.current = false;
     }
@@ -250,8 +276,9 @@ export function FileHistoryModal() {
           <div className={styles.actions}>
             {status === 'restored' && <span className={styles.restoredNote}>{t('fileHistory.restoreDone')}</span>}
             {status === 'error' && <span className={styles.errorNote}>{t('fileHistory.error')}</span>}
+            {status === 'conflict' && <span className={styles.errorNote}>{t('fileHistory.restoreConflict')}</span>}
             <button type="button" data-testid="fh-restore" className={styles.restoreBtn}
-              disabled={selectedVersion == null || snapshotLoading || snapshotText == null || status === 'restoring'}
+              disabled={selectedVersion == null || snapshotLoading || snapshotText == null || status === 'restoring' || (status === 'conflict' && currentVersion == null)}
               onClick={handleRestore}>
               {t('fileHistory.restore')}
             </button>

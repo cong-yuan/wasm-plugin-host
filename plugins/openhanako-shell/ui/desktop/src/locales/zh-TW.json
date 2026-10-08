@@ -3523,6 +3523,7 @@
     "restore": "還原此版本",
     "restoreConfirm": "確定要將此版本還原到工作區嗎？還原操作會記錄新的歷史快照。",
     "restoreDone": "已還原",
+    "restoreConflict": "檔案在預覽後已被修改。請先確認更新後的內容，再決定是否重試。",
     "error": "操作失敗",
     "origin": {
       "event": "應用內修改",

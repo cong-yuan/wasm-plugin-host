@@ -3607,6 +3607,7 @@
     "restore": "Restore this version",
     "restoreConfirm": "Restore this version to the workspace? A new restore snapshot will be recorded.",
     "restoreDone": "Restored",
+    "restoreConflict": "The file changed since preview. Compare the refreshed content before trying again.",
     "error": "Operation failed",
     "origin": {
       "event": "In-app edit",

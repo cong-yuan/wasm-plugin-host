@@ -71,6 +71,13 @@ export async function fetchHistorySnapshot(
   return res.json();
 }
 
+export class FileHistoryRestoreConflictError extends Error {
+  constructor(message = 'File changed since it was previewed') {
+    super(message);
+    this.name = 'FileHistoryRestoreConflictError';
+  }
+}
+
 export async function restoreHistorySnapshot(
   agentId: string,
   snapshotId: number,
@@ -80,8 +87,12 @@ export async function restoreHistorySnapshot(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agentId, snapshotId, ...(expectedVersion ? { expectedVersion } : {}) }),
+    throwOnHttpError: false,
   });
-  const result = await res.json();
+  const result = await res.json().catch(() => null);
+  if (res.status === 409 && result?.conflict === true) {
+    throw new FileHistoryRestoreConflictError();
+  }
   if (!res.ok || result?.ok !== true || typeof result.relPath !== 'string' || !result.relPath) {
     throw new Error(result?.error || 'File restore was not acknowledged');
   }

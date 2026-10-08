@@ -668,16 +668,19 @@ export function handleServerMessage(msg: any): void {
       const bUrl = msg.url || null;
       const prev = browserStateForPath(state, bsp);
       const hasFreshThumbnail = bRunning && typeof msg.thumbnail === 'string' && msg.thumbnail.length > 0;
-      const bThumbnail = bRunning ? (hasFreshThumbnail ? msg.thumbnail : prev?.thumbnail ?? null) : null;
+      // Navigation or a new browser lifecycle invalidates the previous page's
+      // thumbnail. A missing screenshot for a different URL is not a cached hit.
+      const samePage = prev?.running === true && prev.url === bUrl;
+      const bThumbnail = bRunning ? (hasFreshThumbnail ? msg.thumbnail : (samePage ? prev?.thumbnail ?? null : null)) : null;
       const thumbnailCapturedAt = bRunning
         ? hasFreshThumbnail
           ? (typeof msg.thumbnailCapturedAt === 'number' ? msg.thumbnailCapturedAt : Date.now())
-          : prev?.thumbnailCapturedAt ?? null
+          : samePage ? prev?.thumbnailCapturedAt ?? null : null
         : null;
       const thumbnailUrl = bRunning
         ? hasFreshThumbnail
           ? (typeof msg.thumbnailUrl === 'string' ? msg.thumbnailUrl : bUrl)
-          : prev?.thumbnailUrl ?? null
+          : samePage ? prev?.thumbnailUrl ?? null : null
         : null;
       const thumbnailFresh = bRunning && hasFreshThumbnail;
       // 卡片的"收起"是用户意图，状态更新不该把它抹掉；只有浏览器重新启用（running false→true）

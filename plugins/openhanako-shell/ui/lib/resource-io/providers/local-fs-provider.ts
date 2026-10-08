@@ -272,6 +272,14 @@ export class LocalFsProvider {
       || Date.now() - owner.createdAt < CAS_LOCK_RECOVERY_MIN_AGE_MS
       || !isDeadLocalProcess(owner.pid)) return false;
 
+    // Unknown entries may belong to another writer or an operator. Never
+    // remove owner.json and strand a partially recovered lock directory.
+    try {
+      if (fs.readdirSync(lockDir).some(name => name !== "owner.json")) return false;
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return false;
+      throw err;
+    }
     // Move the exact observed lock out of the active path atomically. Verify
     // the nonce again after moving before touching its contents.
     const quarantine = `${lockDir}.recovery-${crypto.randomBytes(8).toString("hex")}`;
@@ -281,8 +289,10 @@ export class LocalFsProvider {
       if (err?.code === "ENOENT") return false;
       throw err;
     }
-    if (readCasLockOwner(quarantine)?.nonce !== nonce) {
-      // Concurrent replacement of the observed lock: preserve its contents.
+    if (readCasLockOwner(quarantine)?.nonce !== nonce
+      || fs.readdirSync(quarantine).some(name => name !== "owner.json")
+      || !isDeadLocalProcess(owner.pid)) {
+      // Concurrent replacement or new unknown entries: preserve the contents.
       if (!fs.existsSync(lockDir)) fs.renameSync(quarantine, lockDir);
       return false;
     }

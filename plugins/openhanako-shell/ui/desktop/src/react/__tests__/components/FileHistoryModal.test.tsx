@@ -6,6 +6,7 @@ import { act, cleanup, render, screen, waitFor, fireEvent } from '@testing-libra
 import '@testing-library/jest-dom/vitest';
 
 const mocks = vi.hoisted(() => ({
+  FileHistoryRestoreConflictError: class FileHistoryRestoreConflictError extends Error {},
   fetchHistoryFiles: vi.fn(async () => [
     { relPath: 'notes/a.md', deletedAt: null, lastCapturedAt: 1000, snapshotCount: 2 },
     { relPath: 'gone.md', deletedAt: 2000, lastCapturedAt: 900, snapshotCount: 1 },
@@ -197,6 +198,56 @@ describe('FileHistoryModal', () => {
 
     await act(async () => { finish({ ok: true, relPath: 'notes/a.md' }); });
     expect(screen.queryByText('fileHistory.restoreDone')).not.toBeInTheDocument();
+  });
+
+  it('shows an explicit conflict and refreshes the current file version without auto-retrying', async () => {
+    useStore.setState({ deskWorkspaceNativeRoot: '/tmp/workspace' } as never);
+    const readFileSnapshot = vi.fn()
+      .mockResolvedValueOnce({
+        content: 'before', version: { mtimeMs: 12, size: 6, sha256: 'a'.repeat(64) },
+      })
+      .mockResolvedValueOnce({
+        content: 'changed externally', version: { mtimeMs: 15, size: 18, sha256: 'b'.repeat(64) },
+      });
+    window.platform = { readFileSnapshot } as unknown as typeof window.platform;
+    mocks.restoreHistorySnapshot.mockRejectedValueOnce(new mocks.FileHistoryRestoreConflictError());
+
+    render(<FileHistoryModal />);
+    fireEvent.click(await screen.findByText('notes/a.md'));
+    await waitFor(() => expect(screen.getByTestId('fh-restore')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('fh-restore'));
+
+    await waitFor(() => expect(screen.getByText('fileHistory.restoreConflict')).toBeInTheDocument());
+    expect(mocks.restoreHistorySnapshot).toHaveBeenCalledTimes(1);
+    expect(mocks.restoreHistorySnapshot).toHaveBeenCalledWith('hana', 7, {
+      mtimeMs: 12, size: 6, sha256: 'a'.repeat(64),
+    });
+    expect(readFileSnapshot).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('changed externally')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('fh-restore')).not.toBeDisabled());
+
+    fireEvent.click(screen.getByTestId('fh-restore'));
+    expect(mocks.restoreHistorySnapshot).toHaveBeenLastCalledWith('hana', 7, {
+      mtimeMs: 15, size: 18, sha256: 'b'.repeat(64),
+    });
+  });
+
+  it('blocks a conflict retry if the updated file version cannot be fetched', async () => {
+    useStore.setState({ deskWorkspaceNativeRoot: '/tmp/workspace' } as never);
+    window.platform = {
+      readFileSnapshot: vi.fn()
+        .mockResolvedValueOnce({ content: 'before', version: { mtimeMs: 12, size: 6 } })
+        .mockResolvedValueOnce(null),
+    } as unknown as typeof window.platform;
+    mocks.restoreHistorySnapshot.mockRejectedValueOnce(new mocks.FileHistoryRestoreConflictError());
+
+    render(<FileHistoryModal />);
+    fireEvent.click(await screen.findByText('notes/a.md'));
+    await waitFor(() => expect(screen.getByTestId('fh-restore')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('fh-restore'));
+    await waitFor(() => expect(screen.getByText('fileHistory.restoreConflict')).toBeInTheDocument());
+    expect(screen.getByTestId('fh-restore')).toBeDisabled();
+    expect(mocks.restoreHistorySnapshot).toHaveBeenCalledTimes(1);
   });
 
   it('loads versions when a file is selected and restores on confirm', async () => {

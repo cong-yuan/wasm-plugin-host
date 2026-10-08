@@ -309,6 +309,25 @@ describe("LocalFsProvider", () => {
     expect(fs.readFileSync(path.join(cwd, "shared.md"), "utf-8")).toBe("original");
   });
 
+  it("does not recover a crashed lock containing unexpected files", async () => {
+    const { cwd, provider } = makeProvider();
+    const ref = { kind: "local-file", path: "shared.md" };
+    const lock = path.join(cwd, ".shared.md.openhanako-cas-lock");
+    fs.mkdirSync(lock);
+    const owner = {
+      version: 1,
+      nonce: "c".repeat(32),
+      pid: 999999999,
+      hostname: (await import("os")).hostname(),
+      createdAt: Date.now() - 120_000,
+    };
+    fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify(owner));
+    fs.writeFileSync(path.join(lock, "unexpected.txt"), "keep");
+    expect(provider.recoverOrphanedExpectedVersionLock(ref, owner.nonce)).toBe(false);
+    expect(fs.readFileSync(path.join(lock, "unexpected.txt"), "utf8")).toBe("keep");
+    expect(provider.inspectExpectedVersionLock(ref)).toEqual({ locked: true, owner });
+  });
+
   it("fails closed for ownerless and untrusted CAS locks", async () => {
     const { cwd, provider } = makeProvider();
     const lock = path.join(cwd, ".shared.md.openhanako-cas-lock");

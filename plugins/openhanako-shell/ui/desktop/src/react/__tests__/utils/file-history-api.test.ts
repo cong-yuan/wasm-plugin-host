@@ -20,6 +20,7 @@ describe('file-history restore API', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agentId: 'hana', snapshotId: 7 }),
+      throwOnHttpError: false,
     });
   });
 
@@ -32,6 +33,22 @@ describe('file-history restore API', () => {
     expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/file-history/restore', expect.objectContaining({
       body: JSON.stringify({ agentId: 'hana', snapshotId: 7, expectedVersion }),
     }));
+  });
+
+  it('classifies an actual HTTP 409 version conflict without treating it as generic failure', async () => {
+    mocks.hanaFetch.mockResolvedValue(new Response(
+      JSON.stringify({ error: 'Resource write conflict', conflict: true }), { status: 409 },
+    ));
+    await expect(restoreHistorySnapshot('hana', 7)).rejects.toMatchObject({
+      name: 'FileHistoryRestoreConflictError',
+    });
+  });
+
+  it('keeps a non-conflict HTTP failure generic', async () => {
+    mocks.hanaFetch.mockResolvedValue(new Response(
+      JSON.stringify({ error: 'Resource write failed' }), { status: 500 },
+    ));
+    await expect(restoreHistorySnapshot('hana', 7)).rejects.toThrow('Resource write failed');
   });
 
   it('rejects a success-status response when restore was not acknowledged', async () => {

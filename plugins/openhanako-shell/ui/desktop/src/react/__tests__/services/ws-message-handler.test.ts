@@ -1657,9 +1657,56 @@ describe('ws-message-handler turn_end side effects', () => {
     expect(useStore.getState().browserBySession['/session/a.jsonl']).toMatchObject({
       running: true,
       url: 'https://new.example',
-      thumbnail: 'OLD_THUMB',
+      thumbnail: null,
+      thumbnailCapturedAt: null,
+      thumbnailUrl: null,
+      thumbnailFresh: false,
+    });
+  });
+
+  it('retains the thumbnail only when the same running browser URL is unchanged', () => {
+    vi.stubGlobal('window', { platform: {} });
+    useStore.setState({
+      browserBySession: {
+        '/session/a.jsonl': {
+          running: true, url: 'https://same.example', thumbnail: 'SAME_PAGE',
+          thumbnailCapturedAt: 111, thumbnailUrl: 'https://same.example',
+          thumbnailFresh: true,
+        },
+      },
+    } as never);
+    handleServerMessage({
+      type: 'browser_status',
+      sessionPath: '/session/a.jsonl',
+      running: true,
+      url: 'https://same.example',
+    });
+    expect(useStore.getState().browserBySession['/session/a.jsonl']).toMatchObject({
+      thumbnail: 'SAME_PAGE',
       thumbnailCapturedAt: 111,
-      thumbnailUrl: 'https://old.example',
+      thumbnailFresh: false,
+    });
+  });
+
+  it('discards old thumbnail data on a new browser lifecycle even with a reused URL', () => {
+    vi.stubGlobal('window', { platform: {} });
+    useStore.setState({
+      browserBySession: {
+        '/session/a.jsonl': {
+          running: false, url: 'https://same.example', thumbnail: 'PREVIOUS_LIFECYCLE',
+          thumbnailCapturedAt: 111, thumbnailUrl: 'https://same.example',
+          thumbnailFresh: true,
+        },
+      },
+    } as never);
+    handleServerMessage({
+      type: 'browser_status',
+      sessionPath: '/session/a.jsonl',
+      running: true,
+      url: 'https://same.example',
+    });
+    expect(useStore.getState().browserBySession['/session/a.jsonl']).toMatchObject({
+      thumbnail: null, thumbnailCapturedAt: null, thumbnailUrl: null,
       thumbnailFresh: false,
     });
   });
@@ -1765,9 +1812,9 @@ describe('ws-message-handler turn_end side effects', () => {
     expect(useStore.getState().browserBySession.sess_browser_a).toMatchObject({
       running: true,
       url: 'https://new.example',
-      thumbnail: 'OLD_THUMB',
-      thumbnailCapturedAt: 111,
-      thumbnailUrl: 'https://old.example',
+      thumbnail: null,
+      thumbnailCapturedAt: null,
+      thumbnailUrl: null,
       thumbnailFresh: false,
     });
     expect(useStore.getState().browserBySession['/session/a-renamed.jsonl']).toBeUndefined();

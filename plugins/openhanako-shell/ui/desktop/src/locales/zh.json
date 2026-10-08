@@ -3484,6 +3484,7 @@
     "restore": "还原此版本",
     "restoreConfirm": "确定将此版本还原到工作区吗？还原操作会记录一个新的历史快照。",
     "restoreDone": "已还原",
+    "restoreConflict": "文件在预览后已被修改。请先核对刷新后的内容，再决定是否重试。",
     "error": "操作失败",
     "origin": {
       "event": "应用内修改",
