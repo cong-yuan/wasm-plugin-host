@@ -9,6 +9,7 @@ type WatchEntry = {
   refCount: number;
   subscriptionId: string | null;
   subscriptionGeneration: number;
+  subscribing: boolean;
   disposed: boolean;
   released: boolean;
   ready: Promise<void>;
@@ -31,6 +32,7 @@ type ResourceEventClientOptions = {
   fetchImpl?: ResourceEventFetch;
   applyEvent?: (event: ResourceEvent) => void;
   resubscribeWatches?: () => Promise<void> | void;
+  ensureWatches?: () => Promise<void> | void;
 };
 
 type ForegroundCatchUpOptions = {
@@ -45,6 +47,7 @@ export function createResourceEventClient({
   fetchImpl = hanaFetch,
   applyEvent,
   resubscribeWatches,
+  ensureWatches,
 }: ResourceEventClientOptions = {}) {
   let lastSeenSequence = 0;
   let catchUpInFlight: Promise<any> | null = null;
@@ -61,6 +64,9 @@ export function createResourceEventClient({
     // and dispatch its events only once; a failure must still permit a retry.
     if (catchUpInFlight) return catchUpInFlight;
     const pending = (async () => {
+      // Restore missing subscriptions before fetching events; otherwise a
+      // freshly recovered watch could miss changes between replay and reattach.
+      if (ensureWatches) await ensureWatches();
       const cursorAtStart = lastSeenSequence;
       const res = await fetchImpl(`/api/resource-io/events?since=${lastSeenSequence}`, {
         method: 'GET',
@@ -132,6 +138,7 @@ export function createResourceEventClient({
 const resourceEventClient = createResourceEventClient({
   fetchImpl: hanaFetch,
   resubscribeWatches: resubscribeActiveWatches,
+  ensureWatches: ensureActiveResourceWatches,
 });
 
 function normalizeResourceRef(ref: ResourceRef): ResourceRef {
@@ -160,7 +167,7 @@ export function retainResourceWatch(ref: ResourceRef): () => void {
   const existing = watches.get(key);
   if (existing) {
     existing.refCount += 1;
-    return () => releaseResourceWatch(key);
+    return releaseHandle(key, existing);
   }
 
   const entry: WatchEntry = {
@@ -168,18 +175,29 @@ export function retainResourceWatch(ref: ResourceRef): () => void {
     refCount: 1,
     subscriptionId: null,
     subscriptionGeneration: 0,
+    subscribing: false,
     disposed: false,
     released: false,
     ready: Promise.resolve(),
   };
   entry.ready = subscribeEntry(entry);
   watches.set(key, entry);
-  return () => releaseResourceWatch(key);
+  return releaseHandle(key, entry);
+}
+
+function releaseHandle(key: string, entry: WatchEntry): () => void {
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    releaseResourceWatch(key, entry);
+  };
 }
 
 function subscribeEntry(entry: WatchEntry): Promise<void> {
   const generation = ++entry.subscriptionGeneration;
   entry.released = false;
+  entry.subscribing = true;
   return hanaFetch('/api/resource-io/subscribe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -201,7 +219,10 @@ function subscribeEntry(entry: WatchEntry): Promise<void> {
       entry.subscriptionId = data.subscriptionId;
     })
     .catch((err) => {
-      if (!entry.disposed) console.warn('[resource-events] watch failed:', err);
+      if (!entry.disposed && generation === entry.subscriptionGeneration) console.warn('[resource-events] watch failed:', err);
+    })
+    .finally(() => {
+      if (generation === entry.subscriptionGeneration) entry.subscribing = false;
     });
 }
 
@@ -209,9 +230,10 @@ export function retainLocalFileResourceWatch(filePath: string): () => void {
   return retainResourceWatch({ kind: 'local-file', path: filePath });
 }
 
-function releaseResourceWatch(key: string): void {
-  const entry = watches.get(key);
-  if (!entry) return;
+function releaseResourceWatch(key: string, entry: WatchEntry): void {
+  // A stale React effect must never release a newly mounted watcher for the
+  // same path, nor may a callback run more than once.
+  if (watches.get(key) !== entry || entry.disposed) return;
   if (entry.refCount > 1) {
     entry.refCount -= 1;
     return;
@@ -240,6 +262,20 @@ function releaseEntry(entry: WatchEntry): void {
   const id = entry.subscriptionId;
   entry.subscriptionId = null;
   releaseSubscriptionId(id);
+}
+
+async function ensureActiveResourceWatches(): Promise<void> {
+  const entries = [...watches.values()].filter(entry => !entry.disposed);
+  await Promise.all(entries.map(async entry => {
+    // Do not block reconnect on an unresolved original subscribe; the next
+    // foreground/reconnect recovery will retry it if it eventually fails.
+    if (entry.disposed || entry.subscriptionId || entry.subscribing) return;
+    entry.ready = subscribeEntry(entry);
+    await entry.ready;
+    if (!entry.disposed && !entry.subscriptionId) {
+      throw new Error('Resource watch recovery was not acknowledged');
+    }
+  }));
 }
 
 async function resubscribeActiveWatches(): Promise<void> {

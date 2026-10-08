@@ -120,6 +120,105 @@ describe('resource-events', () => {
     });
   });
 
+  it('repairs failed active watches before replay without resubscribing healthy leases', async () => {
+    let subscribeCalls = 0;
+    hanaFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/resource-io/subscribe') {
+        subscribeCalls += 1;
+        if (subscribeCalls === 1) {
+          return { ok: false, status: 503, json: async () => ({ error: 'offline' }) };
+        }
+        return { ok: true, json: async () => ({ ok: true, subscriptionId: 'sub-recovered' }) };
+      }
+      if (path.startsWith('/api/resource-io/events?')) {
+        return { ok: true, json: async () => ({ stale: false, latestSequence: 2, events: [] }) };
+      }
+      return { ok: true, json: async () => ({ ok: true }) };
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { retainLocalFileResourceWatch, catchUpResourceEventsAfterReconnect } = await import('../../services/resource-events');
+      const release = retainLocalFileResourceWatch('/tmp/recover.md');
+      // Let the first attempt fail before reconnect; an in-flight subscribe
+      // is deliberately not preempted by watch recovery.
+      await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+      await new Promise(resolve => setTimeout(resolve, 0));
+      await catchUpResourceEventsAfterReconnect();
+      expect(subscribeCalls).toBe(2);
+      const calls = hanaFetch.mock.calls.map(([url]) => url);
+      expect(calls.indexOf('/api/resource-io/subscribe', 1)).toBeLessThan(
+        calls.findIndex(url => url.startsWith('/api/resource-io/events?')),
+      );
+      await catchUpResourceEventsAfterReconnect();
+      expect(subscribeCalls).toBe(2);
+      release();
+      await vi.waitFor(() => expect(hanaFetch).toHaveBeenCalledWith(
+        '/api/resource-io/subscriptions/sub-recovered', expect.objectContaining({ method: 'DELETE' }),
+      ));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('rejects catch-up while watch recovery fails, then retries on the next attempt', async () => {
+    let subscribeCalls = 0;
+    let eventFetches = 0;
+    hanaFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/resource-io/subscribe') {
+        subscribeCalls++;
+        return subscribeCalls < 3
+          ? { ok: false, status: 503, json: async () => ({ error: 'offline' }) }
+          : { ok: true, json: async () => ({ ok: true, subscriptionId: 'sub-ready' }) };
+      }
+      if (path.startsWith('/api/resource-io/events?')) {
+        eventFetches++;
+        return { ok: true, json: async () => ({ stale: false, latestSequence: 1, events: [] }) };
+      }
+      return { ok: true, json: async () => ({ ok: true }) };
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { retainLocalFileResourceWatch, catchUpResourceEventsAfterReconnect } = await import('../../services/resource-events');
+      const release = retainLocalFileResourceWatch('/tmp/transient.md');
+      await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+      await new Promise(resolve => setTimeout(resolve, 0));
+      await expect(catchUpResourceEventsAfterReconnect()).rejects.toThrow('watch recovery was not acknowledged');
+      expect(eventFetches).toBe(0);
+      await expect(catchUpResourceEventsAfterReconnect()).resolves.toMatchObject({ latestSequence: 1 });
+      expect(subscribeCalls).toBe(3);
+      expect(eventFetches).toBe(1);
+      release();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('makes each release callback idempotent and keeps a newer watcher for the same path', async () => {
+    let subscribeCalls = 0;
+    hanaFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/resource-io/subscribe') {
+        subscribeCalls++;
+        return { ok: true, json: async () => ({ ok: true, subscriptionId: `sub-${subscribeCalls}` }) };
+      }
+      return { ok: true, json: async () => ({ ok: true }) };
+    });
+    const { retainLocalFileResourceWatch } = await import('../../services/resource-events');
+    const releaseOld = retainLocalFileResourceWatch('/tmp/reused.md');
+    await Promise.resolve();
+    releaseOld();
+    const releaseNew = retainLocalFileResourceWatch('/tmp/reused.md');
+    await Promise.resolve();
+    releaseOld(); // stale cleanup from a previous mount
+    expect(subscribeCalls).toBe(2);
+    expect(hanaFetch).not.toHaveBeenCalledWith('/api/resource-io/subscriptions/sub-2', expect.anything());
+    releaseNew();
+    releaseNew(); // duplicated cleanup must also be harmless
+    await vi.waitFor(() => expect(hanaFetch).toHaveBeenCalledWith(
+      '/api/resource-io/subscriptions/sub-2', expect.objectContaining({ method: 'DELETE' }),
+    ));
+    expect(hanaFetch.mock.calls.filter(([url]) => url === '/api/resource-io/subscriptions/sub-2')).toHaveLength(1);
+  });
+
   it('requests catch-up after reconnect with the last seen resource event sequence', async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: true,

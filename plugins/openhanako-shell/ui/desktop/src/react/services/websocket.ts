@@ -7,6 +7,7 @@
 
 
 import { handleServerMessage, applyStreamingStatus } from './ws-message-handler';
+import { reconcileBrowserSessionsAfterReconnect } from './browser-reconnect';
 import { requestStreamResume, injectHandlers, injectWebSocketGetter } from './stream-resume';
 import {
   bindResourceEventForegroundCatchUp,
@@ -138,6 +139,16 @@ async function openConnectionWebSocket(connection: ServerConnection): Promise<vo
         ...(s.currentSessionId ? { sessionId: s.currentSessionId } : {}),
       }));
     }
+
+    // Browser sessions can stop while the socket is away. The HTTP snapshot
+    // is only used if this websocket is still the active connection; live
+    // browser messages received while fetching take precedence.
+    const openedSocket = _ws;
+    void reconcileBrowserSessionsAfterReconnect(
+      () => _ws === openedSocket && openedSocket?.readyState === WebSocket.OPEN,
+    ).catch((err) => {
+      console.warn('[ws] browser session reconciliation failed:', err);
+    });
 
     void catchUpResourceEventsAfterReconnect((event) => handleServerMessage(event)).catch((err) => {
       console.warn('[ws] resource event catch-up failed:', err);
