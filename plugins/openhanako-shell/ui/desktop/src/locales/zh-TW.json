@@ -1908,6 +1908,7 @@
         "exportSuccess": "匯出成功",
         "importSuccess": "已匯入 {count} 條記憶",
         "importing": "正在匯入...",
+        "exporting": "正在匯出...",
         "empty": "還沒有記憶",
         "invalidFile": "無效的記憶檔案",
         "activeOnly": "請先將此助手設為主助手"

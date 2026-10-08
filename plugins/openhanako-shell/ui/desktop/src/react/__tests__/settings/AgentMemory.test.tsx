@@ -7,12 +7,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-type MockResponse = { ok: boolean; status: number; json: () => Promise<any> };
+type MockResponse = { ok: boolean; status: number; json: () => Promise<any>; blob?: () => Promise<Blob> };
 
 let dreamRunError: unknown = null;
 let dreamStatusOverride: Record<string, unknown> | null = null;
 
-const hanaFetchMock = vi.fn(async (url: string, opts?: RequestInit): Promise<MockResponse> => {
+const defaultHanaFetch = async (url: string, opts?: RequestInit): Promise<MockResponse> => {
   if (url.includes('/memories/dream/status')) {
     return { ok: true, status: 200, json: async () => dreamStatusOverride || ({ status: 'idle', runId: null, startedAt: null, lastRun: null }) };
   }
@@ -40,7 +40,9 @@ const hanaFetchMock = vi.fn(async (url: string, opts?: RequestInit): Promise<Moc
       },
     },
   }) };
-});
+};
+
+const hanaFetchMock = vi.fn(defaultHanaFetch);
 
 vi.mock('../../settings/api', () => ({
   hanaFetch: (url: string, opts?: RequestInit) => hanaFetchMock(url, opts),
@@ -80,6 +82,12 @@ vi.mock('../../settings/helpers', () => ({
       'settings.memory.allMemories': '所有记忆',
       'settings.memory.actions.view': '查看记忆',
       'settings.memory.actions.clear': '清除记忆',
+      'settings.memory.actions.export': '导出记忆',
+      'settings.memory.actions.import': '导入记忆',
+      'settings.memory.actions.exportSuccess': '导出成功',
+      'settings.memory.actions.importSuccess': `已导入 ${params?.count} 条记忆`,
+      'settings.memory.actions.importing': '正在导入...',
+      'settings.memory.actions.invalidFile': '无效的记忆文件',
     };
     return messages[key] ?? key;
   },
@@ -90,14 +98,15 @@ vi.mock('../../settings/helpers', () => ({
 
 describe('Agent memory settings health notice', () => {
   beforeEach(() => {
-    hanaFetchMock.mockClear();
+    hanaFetchMock.mockReset();
+    hanaFetchMock.mockImplementation(defaultHanaFetch);
     dreamRunError = null;
     dreamStatusOverride = null;
   });
 
   afterEach(() => {
     cleanup();
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   it('shows a memory failure notice in the Agent memory section', async () => {
@@ -157,6 +166,78 @@ describe('Agent memory settings health notice', () => {
         }),
       );
     });
+  });
+
+  it('exports and imports the selected agent memories through the memory backup actions', async () => {
+    const { MemorySection } = await import('../../settings/tabs/agent/AgentMemory');
+    const originalCreateElement = document.createElement.bind(document);
+    const downloaded = originalCreateElement('a');
+    const clickSpy = vi.spyOn(downloaded, 'click').mockImplementation(() => {});
+    vi.spyOn(document, 'createElement').mockImplementation(((tagName: string) => {
+      if (tagName === 'a') return downloaded;
+      return originalCreateElement(tagName);
+    }) as typeof document.createElement);
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:memory-export');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    hanaFetchMock.mockImplementation(async (url: string, opts?: RequestInit) => {
+      if (url === '/api/memories/export?agentId=hana') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+          blob: async () => new Blob([JSON.stringify({ version: 2, facts: [{ fact: 'likes tea' }] })], {
+            type: 'application/json',
+          }),
+        };
+      }
+      if (url === '/api/memories/import?agentId=hana' && opts?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({ ok: true, imported: 1 }) };
+      }
+      if (url.includes('/memories/health')) {
+        return { ok: true, status: 200, json: async () => ({ status: 'healthy', failedSteps: [], steps: {}, maxFailCount: 0, lastSuccessAt: null, lastErrorAt: null }) };
+      }
+      if (url.includes('/memories/dream/status')) {
+        return { ok: true, status: 200, json: async () => ({ status: 'idle', runId: null, startedAt: null, lastRun: null }) };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    render(
+      <MemorySection
+        agentId="hana"
+        hasUtilityModel
+        memoryEnabled
+        currentPins={[]}
+      />,
+    );
+
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+
+    fireEvent.click(screen.getByRole('button', { name: '导出记忆' }));
+    await waitFor(() => {
+      expect(hanaFetchMock.mock.calls.some(([url]) => url === '/api/memories/export?agentId=hana')).toBe(true);
+    });
+    expect(downloaded.download).toMatch(/^hana-memory-hana-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(clickSpy).toHaveBeenCalledOnce();
+
+    const input = document.querySelector('input[type="file"][accept=".json,application/json"]') as HTMLInputElement;
+    const file = new File([JSON.stringify({ version: 2, facts: [{ fact: 'likes tea' }] })], 'memory.json', {
+      type: 'application/json',
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(hanaFetchMock).toHaveBeenCalledWith(
+        '/api/memories/import?agentId=hana',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ facts: [{ fact: 'likes tea' }] }),
+        }),
+      );
+    });
+    expect(dispatchSpy.mock.calls.some(([event]) => event.type === 'hana-memories-changed')).toBe(true);
+    dispatchSpy.mockRestore();
   });
 
   it('localizes a coded Dream start rejection instead of exposing backend English', async () => {

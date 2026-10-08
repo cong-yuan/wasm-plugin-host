@@ -115,6 +115,10 @@ export function MemorySection({ agentId, hasUtilityModel, memoryEnabled, autoDre
   const [pinInput, setPinInput] = useState('');
   const [health, setHealth] = useState<MemoryHealthPayload | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
+  const showToast = useSettingsStore(s => s.showToast);
+  const [memoryExporting, setMemoryExporting] = useState(false);
+  const [memoryImporting, setMemoryImporting] = useState(false);
+  const memoryImportRef = React.useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!agentId || hasUtilityModel !== true || memoryEnabled !== true) {
@@ -147,6 +151,69 @@ export function MemorySection({ agentId, hasUtilityModel, memoryEnabled, autoDre
       controller.abort();
     };
   }, [agentId, hasUtilityModel, memoryEnabled]);
+
+  const exportMemories = async () => {
+    if (!agentId || memoryExporting) return;
+    setMemoryExporting(true);
+    try {
+      const res = await hanaFetch(`/api/memories/export?agentId=${encodeURIComponent(agentId)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = await res.blob();
+      const url = URL.createObjectURL(payload);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `hana-memory-${agentId}-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      showToast(t('settings.memory.actions.exportSuccess'), 'success');
+    } catch (err: any) {
+      showToast(t('settings.saveFailed') + ': ' + (err?.message || String(err)), 'error');
+    } finally {
+      setMemoryExporting(false);
+    }
+  };
+
+  const importMemories = async (file: File) => {
+    if (!agentId || memoryImporting) return;
+    setMemoryImporting(true);
+    try {
+      const text = await file.text();
+      let payload: unknown;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        throw new Error(t('settings.memory.actions.invalidFile'));
+      }
+      const entries = payload && typeof payload === 'object'
+        ? (payload as { facts?: unknown; memories?: unknown }).facts
+          || (payload as { memories?: unknown }).memories
+        : null;
+      if (!Array.isArray(entries) || entries.length === 0) {
+        throw new Error(t('settings.memory.actions.invalidFile'));
+      }
+      const res = await hanaFetch(`/api/memories/import?agentId=${encodeURIComponent(agentId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ facts: entries }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) throw new Error(data?.error || `HTTP ${res.status}`);
+      window.dispatchEvent(new Event('hana-memories-changed'));
+      showToast(t('settings.memory.actions.importSuccess', { count: String(data.imported ?? entries.length) }), 'success');
+    } catch (err: any) {
+      showToast(t('settings.saveFailed') + ': ' + (err?.message || String(err)), 'error');
+    } finally {
+      setMemoryImporting(false);
+    }
+  };
+
+  const handleMemoryImportChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0] || null;
+    event.currentTarget.value = '';
+    if (file) void importMemories(file);
+  };
 
   const addPin = () => {
     const val = pinInput.trim();
@@ -235,6 +302,13 @@ export function MemorySection({ agentId, hasUtilityModel, memoryEnabled, autoDre
 
           <div className={styles['settings-subsection']}>
             <h3 className={styles['settings-subsection-title']}>{t('settings.memory.allMemories')}</h3>
+            <input
+              ref={memoryImportRef}
+              type="file"
+              accept=".json,application/json"
+              hidden
+              onChange={handleMemoryImportChange}
+            />
             <div className={`${styles['memory-actions-row']} ${styles['memory-actions-spaced']}`}>
               <button
                 className={styles['memory-action-btn']}
@@ -243,8 +317,23 @@ export function MemorySection({ agentId, hasUtilityModel, memoryEnabled, autoDre
                 {t('settings.memory.actions.view')}
               </button>
               <button
+                className={styles['memory-action-btn']}
+                onClick={() => void exportMemories()}
+                disabled={memoryExporting || memoryImporting || !agentId}
+              >
+                {memoryExporting ? t('settings.memory.actions.exporting') : t('settings.memory.actions.export')}
+              </button>
+              <button
+                className={styles['memory-action-btn']}
+                onClick={() => memoryImportRef.current?.click()}
+                disabled={memoryExporting || memoryImporting || !agentId}
+              >
+                {memoryImporting ? t('settings.memory.actions.importing') : t('settings.memory.actions.import')}
+              </button>
+              <button
                 className={`${styles['memory-action-btn']} ${styles['danger']}`}
                 onClick={() => window.dispatchEvent(new Event('hana-show-clear-confirm'))}
+                disabled={memoryExporting || memoryImporting}
               >
                 {t('settings.memory.actions.clear')}
               </button>

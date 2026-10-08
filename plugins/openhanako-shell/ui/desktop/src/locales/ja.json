@@ -1908,6 +1908,7 @@
         "exportSuccess": "エクスポートに成功しました",
         "importSuccess": "{count} 件の記憶をインポートしました",
         "importing": "インポート中...",
+        "exporting": "エクスポート中...",
         "empty": "記憶はまだありません",
         "invalidFile": "無効な記憶ファイルです",
         "activeOnly": "先にこのエージェントをアクティブに設定してください"

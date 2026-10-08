@@ -93,9 +93,9 @@
 - MCP / connectors — connector configuration export is now available from the first-class and legacy routes. Exports intentionally contain only non-sensitive reusable config; tokens, secrets, env/header values, runtime status, and discovered tools are excluded. Settings exposes one-click JSON copy and credentials must be re-entered on import.
 - plugins / widgets / pages
 - channels / DM
-- memories
+- memories — Agent Memory settings now expose JSON backup/restore for the selected Agent. Export downloads the existing server-generated memory payload; import accepts the versioned `facts`/`memories` array, routes it through the existing agent-scoped import endpoint, and broadcasts `hana-memories-changed` so an open Memory Viewer refreshes immediately after import or clear.
 - browser
-- skills
+- skills — Skills settings now has an explicit `Reload skills` action. It calls the backend reload endpoint, then refreshes the selected Agent skills and compatible external-path view; the action is guarded against concurrent clicks and covered by the existing SkillsTab safety net.
 - media / image / video
 - resource-io / checkpoints / file history
 

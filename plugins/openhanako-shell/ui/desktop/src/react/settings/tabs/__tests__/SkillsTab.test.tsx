@@ -800,6 +800,42 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
     confirmSpy.mockRestore();
   });
 
+  it('manually reloads skills and refreshes the selected agent view', async () => {
+    seedStore({ currentAgentId: 'agent-a' });
+    let reloadCount = 0;
+    fetchMock.mockImplementation((url: string, opts?: RequestInit) => {
+      if (url.includes('/api/skills/reload')) {
+        reloadCount += 1;
+        expect(opts).toMatchObject({ method: 'POST' });
+        return Promise.resolve(jsonResponse({ ok: true }));
+      }
+      if (url.includes('/api/skills/external-paths')) {
+        return Promise.resolve(jsonResponse({ configured: [], discovered: [] }));
+      }
+      if (url.includes('/api/skills/bundles')) {
+        return Promise.resolve(jsonResponse({ bundles: [] }));
+      }
+      if (url.includes('/api/skills?agentId=agent-a')) {
+        return Promise.resolve(jsonResponse({ skills: [] }));
+      }
+      return Promise.resolve(jsonResponse({ ok: true }));
+    });
+
+    render(<SkillsTab />);
+    await flushMicrotasks(6);
+
+    const reload = screen.getByRole('button', { name: 'settings.skills.reload' });
+    fireEvent.click(reload);
+
+    await waitFor(() => {
+      expect(reloadCount).toBe(1);
+      expect(useSettingsStore.getState().toastMessage).toBe('settings.skills.reloaded');
+    });
+    expect(fetchMock.mock.calls.filter((call) =>
+      typeof call[0] === 'string' && call[0].includes('/api/skills?agentId=agent-a'),
+    ).length).toBeGreaterThanOrEqual(2);
+  });
+
   it('exports a skill bundle from the manage tree', async () => {
     seedStore({ currentAgentId: 'agent-a' });
     const showInFinder = vi.fn();

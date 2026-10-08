@@ -10,10 +10,17 @@ export function MemoryViewer() {
   const [html, setHtml] = useState('');
 
   useEffect(() => {
-    const handler = () => { setVisible(true); loadMemories(); };
+    const handler = () => { setVisible(true); void loadMemories(); };
+    const changed = () => {
+      if (visible) void loadMemories();
+    };
     window.addEventListener('hana-view-memories', handler);
-    return () => window.removeEventListener('hana-view-memories', handler);
-  }, []);
+    window.addEventListener('hana-memories-changed', changed);
+    return () => {
+      window.removeEventListener('hana-view-memories', handler);
+      window.removeEventListener('hana-memories-changed', changed);
+    };
+  }, [visible]);
 
   const loadMemories = async () => {
     setHtml(`<div class="memory-viewer-empty">${t('settings.memory.actions.importing')}</div>`);

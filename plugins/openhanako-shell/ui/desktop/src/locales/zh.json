@@ -1977,6 +1977,7 @@
         "exportSuccess": "导出成功",
         "importSuccess": "已导入 {count} 条记忆",
         "importing": "正在导入...",
+        "exporting": "正在导出...",
         "empty": "还没有记忆",
         "invalidFile": "无效的记忆文件",
         "activeOnly": "请先将此助手设为主助手"

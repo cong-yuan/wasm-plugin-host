@@ -1908,6 +1908,7 @@
         "exportSuccess": "내보내기 성공",
         "importSuccess": "{count}개 기억 가져옴",
         "importing": "가져오는 중...",
+        "exporting": "내보내는 중...",
         "empty": "아직 기억이 없어요",
         "invalidFile": "잘못된 기억 파일이에요",
         "activeOnly": "먼저 이 에이전트를 활성 상태로 설정해 주세요"

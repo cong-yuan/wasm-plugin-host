@@ -1977,6 +1977,7 @@
         "exportSuccess": "Export successful",
         "importSuccess": "{count} memories imported",
         "importing": "Importing...",
+        "exporting": "Exporting...",
         "empty": "No memories yet",
         "invalidFile": "Invalid memory file",
         "activeOnly": "Set this agent as active first"

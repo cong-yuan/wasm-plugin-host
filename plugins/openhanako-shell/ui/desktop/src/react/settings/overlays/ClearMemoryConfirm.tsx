@@ -24,6 +24,7 @@ export function ClearMemoryConfirm() {
       const res = await hanaFetch(`/api/memories?agentId=${aid}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+      window.dispatchEvent(new Event('hana-memories-changed'));
       showToast(t('settings.memory.actions.clearSuccess'), 'success');
     } catch (err: any) {
       showToast(t('settings.saveFailed') + ': ' + err.message, 'error');

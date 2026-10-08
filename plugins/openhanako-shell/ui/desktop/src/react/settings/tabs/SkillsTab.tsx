@@ -44,6 +44,7 @@ export function SkillsTab() {
   const [skillsList, setSkillsList] = useState<SkillInfo[]>([]);
   const [skillBundles, setSkillBundles] = useState<SkillBundleInfo[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsReloading, setSkillsReloading] = useState(false);
   const skillsListOwnerIdRef = useRef<string | null>(null);
   const [bundleDialog, setBundleDialog] = useState<BundleDialogState | null>(null);
   const skillFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -149,6 +150,25 @@ export function SkillsTab() {
 
   // 全局安装：只注册 skill 到 engine.skillsDir，不自动对任何 agent 启用。
   // 原则：全局的管全局的。装完后用户到 Section 3 "Agent 配置" 自己打开开关。
+  const reloadSkills = async () => {
+    if (skillsReloading) return;
+    setSkillsReloading(true);
+    try {
+      const res = await hanaFetch('/api/skills/reload', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) throw new Error(data?.error || `HTTP ${res.status}`);
+      await Promise.all([loadSkills(), loadExternalPaths()]);
+      showToast(t('settings.skills.reloaded'), 'success');
+    } catch (err: unknown) {
+      showToast(
+        t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)),
+        'error',
+      );
+    } finally {
+      setSkillsReloading(false);
+    }
+  };
+
   const installSkillFromPath = async (filePath: string) => {
     try {
       const res = await hanaFetch('/api/skills/install', {
@@ -521,7 +541,20 @@ export function SkillsTab() {
     <div className={`${styles['settings-tab-content']} ${styles['active']}`} data-tab="skills">
 
       {/* Section 1: 管理技能 — Dropzone 虚线卡 + skill list 实线卡都自带视觉，flush 不再套白卡 */}
-      <SettingsSection title={t('settings.skills.manageTitle')} surface="plain">
+      <SettingsSection
+        title={t('settings.skills.manageTitle')}
+        surface="plain"
+        context={
+          <button
+            className={styles['memory-action-btn']}
+            type="button"
+            onClick={() => void reloadSkills()}
+            disabled={skillsReloading || skillsLoading}
+          >
+            {skillsReloading ? t('status.loading') : t('settings.skills.reload')}
+          </button>
+        }
+      >
         <div
           className={styles['skills-dropzone']}
           onClick={installSkill}
