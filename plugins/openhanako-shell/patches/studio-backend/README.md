@@ -44,6 +44,8 @@ Bootstrap-only (so `initApp` reaches the session list without a Hana API):
 
 Everything else is passed through to `fetch` / the real `WebSocket`.
 
+The checked-in patch copy is intentionally kept byte-for-byte identical to `ui/desktop/src/react/studio-backend/studio-backend-bridge.ts`; `studio-backend-patch-sync.test.mjs` fails if the two drift. File/workbench/preview routes are deliberately not intercepted until Studio exposes native host commands; unsupported direct adapter calls fail closed with `capability_unavailable` / HTTP 501.
+
 Inbound WS events are pushed as `{ type: 'event', requestId, event }` while
 `send_message` is in flight (Studio has no token Tauri channel; the parent
 polls `transcript` for growth). Final `response` carries `{ streamed: true, events: [] }`.

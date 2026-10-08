@@ -24,10 +24,16 @@ export const SHELL_SOURCE = 'openhanako-shell';
 
 type BridgeMode = 'pending' | 'on' | 'off';
 
+export type StudioBridgeStatus =
+  | { state: 'standalone' }
+  | { state: 'pending' }
+  | { state: 'connected' }
+  | { state: 'error'; message: string };
+
 type Pending = {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: number;
   socket?: StudioSocketLike;
 };
 
@@ -47,6 +53,42 @@ let readyPromise: Promise<boolean> | null = null;
 let readyWaiters: Array<() => void> = [];
 let seq = 0;
 const pending = new Map<string, Pending>();
+let bridgeStatus: StudioBridgeStatus = { state: 'pending' };
+const statusListeners = new Set<() => void>();
+
+function setBridgeStatus(next: StudioBridgeStatus): void {
+  if (
+    bridgeStatus.state === next.state
+    && (bridgeStatus.state !== 'error'
+      || next.state !== 'error'
+      || bridgeStatus.message === next.message)
+  ) return;
+  bridgeStatus = next;
+  statusListeners.forEach(listener => listener());
+}
+
+export function getStudioBridgeStatus(): StudioBridgeStatus {
+  return bridgeStatus;
+}
+
+export function subscribeStudioBridgeStatus(listener: () => void): () => void {
+  statusListeners.add(listener);
+  return () => statusListeners.delete(listener);
+}
+
+export function retryStudioBackendBridge(): void {
+  if (!inIframe()) {
+    mode = 'off';
+    setBridgeStatus({ state: 'standalone' });
+    return;
+  }
+  mode = 'pending';
+  readyPromise = null;
+  readyWaiters = [];
+  setBridgeStatus({ state: 'pending' });
+  probe();
+  void whenReady();
+}
 
 function inIframe(): boolean {
   try {
@@ -59,6 +101,7 @@ function inIframe(): boolean {
 function enable(): void {
   if (mode === 'on') return;
   mode = 'on';
+  setBridgeStatus({ state: 'connected' });
   const waiters = readyWaiters;
   readyWaiters = [];
   waiters.forEach((fn) => fn());
@@ -67,6 +110,7 @@ function enable(): void {
 function whenReady(): Promise<boolean> {
   if (!inIframe()) {
     mode = 'off';
+    setBridgeStatus({ state: 'standalone' });
     return Promise.resolve(false);
   }
   if (mode === 'on') return Promise.resolve(true);
@@ -74,7 +118,10 @@ function whenReady(): Promise<boolean> {
   if (!readyPromise) {
     readyPromise = new Promise((resolve) => {
       const timer = window.setTimeout(() => {
-        if (mode === 'pending') mode = 'off';
+        if (mode === 'pending') {
+          mode = 'off';
+          setBridgeStatus({ state: 'error', message: 'Studio bridge handshake timed out' });
+        }
         resolve(mode === 'on');
       }, HANDSHAKE_MS);
       readyWaiters.push(() => {
@@ -101,7 +148,9 @@ function rpc(payload: Record<string, unknown>, socket?: StudioSocketLike): Promi
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => {
       pending.delete(requestId);
-      reject(new Error('studio bridge timeout'));
+      const err = new Error('studio bridge timeout');
+      setBridgeStatus({ state: 'error', message: err.message });
+      reject(err);
     }, timeout);
     pending.set(requestId, { resolve, reject, timer, socket });
     try {
@@ -114,7 +163,9 @@ function rpc(payload: Record<string, unknown>, socket?: StudioSocketLike): Promi
     } catch (err) {
       window.clearTimeout(timer);
       pending.delete(requestId);
-      reject(err instanceof Error ? err : new Error(String(err)));
+      const normalized = err instanceof Error ? err : new Error(String(err));
+      setBridgeStatus({ state: 'error', message: normalized.message });
+      reject(normalized);
     }
   });
 }
@@ -137,8 +188,14 @@ function onParentMessage(ev: MessageEvent): void {
   if (!item) return;
   pending.delete(data.requestId);
   window.clearTimeout(item.timer);
-  if (data.ok) item.resolve(data.result);
-  else item.reject(new Error(data.error || 'studio bridge error'));
+  if (data.ok) {
+    setBridgeStatus({ state: 'connected' });
+    item.resolve(data.result);
+  } else {
+    const err = new Error(data.error || 'studio bridge error');
+    setBridgeStatus({ state: 'error', message: err.message });
+    item.reject(err);
+  }
 }
 
 function requestUrl(input: RequestInfo | URL): { pathname: string; search: string } {
@@ -172,9 +229,15 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/providers/test') return true;
   if (pathname.startsWith('/api/providers/')) return true;
   if (pathname === '/api/models/auxiliary-vision') return true;
+  if (pathname === '/api/capabilities') return true;
   if (pathname === '/api/server/identity') return true;
   if (pathname === '/api/ws-ticket') return true;
   if (pathname === '/api/preferences/session-permission-default') return true;
+  if (pathname === '/api/preferences/appearance') return true;
+  if (pathname === '/api/preferences/sidebar-ui') return true;
+  if (pathname === '/api/preferences/quick-chat') return true;
+  if (pathname === '/api/preferences/notifications') return true;
+  if (pathname === '/api/session-permission-mode') return true;
   if (pathname === '/api/preferences/models') return true;
   if (pathname === '/api/session-thinking-level') return true;
   if (pathname === '/api/user-profile') return true;
@@ -182,6 +245,9 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/providers/fetch-models') return true;
   if (pathname === '/api/upload-blob') return true;
   if (pathname === '/api/sessions') return true;
+  if (pathname === '/api/sessions/search') return true;
+  if (pathname === '/api/sessions/summary') return true;
+  if (pathname === '/api/sessions/authorized-folders') return true;
   if (pathname === '/api/sessions/messages') return true;
   if (pathname === '/api/sessions/switch') return true;
   if (pathname === '/api/sessions/new') return true;
@@ -197,7 +263,13 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/sessions/rename') return true;
   if (pathname === '/api/sessions/restore') return true;
   if (pathname === '/api/sessions/todos/complete') return true;
+  if (pathname === '/api/sessions/turns/retry') return true;
+  if (pathname === '/api/sessions/fork') return true;
   if (pathname === '/api/session-projects' || pathname.startsWith('/api/session-projects/')) return true;
+  // File/workbench/preview remains on Hana HTTP until Studio exposes real host
+  // commands for these surfaces. Do not intercept them here: hana-adapter has no
+  // native implementation yet, and intercepting would turn an unsupported feature
+  // into a misleading HTTP 200 `{ error: ... }` response inside the iframe.
   if (pathname.startsWith('/api/bridge')) return true;
   if (/^\/api\/agents\/[^/]+\/config$/.test(pathname)) return true;
   return false;
@@ -358,9 +430,22 @@ function installFetchShim(): void {
       search: target.search,
       body: readJsonBody(init),
     });
-    return new Response(JSON.stringify(result == null ? null : result), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
+    const envelope = result && typeof result === 'object'
+      ? result as { __httpStatus?: unknown; __httpHeaders?: unknown; __httpBody?: unknown }
+      : null;
+    const rawStatus = envelope?.__httpStatus;
+    const status = Number.isInteger(rawStatus)
+      ? Math.max(100, Math.min(599, Number(rawStatus)))
+      : 200;
+    const payload = envelope && Object.prototype.hasOwnProperty.call(envelope, '__httpBody')
+      ? envelope.__httpBody
+      : result;
+    const headers = envelope && envelope.__httpHeaders && typeof envelope.__httpHeaders === 'object'
+      ? { 'Content-Type': 'application/json', ...(envelope.__httpHeaders as Record<string, string>) }
+      : { 'Content-Type': 'application/json' };
+    return new Response(JSON.stringify(payload == null ? null : payload), {
+      status,
+      headers,
     });
   };
   (patched as unknown as { __studioBridge?: boolean }).__studioBridge = true;
@@ -411,9 +496,14 @@ function ensurePlatform(): void {
 
 /** Install fetch/WS shims and handshake with the parent. Idempotent. */
 export function startStudioBackendBridge(): () => void {
-  if (!inIframe()) return () => {};
+  if (!inIframe()) {
+    mode = 'off';
+    setBridgeStatus({ state: 'standalone' });
+    return () => {};
+  }
   if (installed) return () => {};
   installed = true;
+  setBridgeStatus({ state: 'pending' });
   window.addEventListener('message', onParentMessage);
   ensurePlatform();
   installFetchShim();
