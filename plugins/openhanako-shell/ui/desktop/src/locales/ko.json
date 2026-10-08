@@ -243,6 +243,12 @@
       "restoreFailed": "복원 실패",
       "deleteForever": "영구 삭제",
       "deleteConfirm": "이 보관 항목을 영구 삭제할까요? 되돌릴 수 없습니다.",
+      "bulkToolbar": "보관 항목 선택",
+      "bulkSelected": "{count}개 선택됨",
+      "selectAll": "모두 선택",
+      "clearSelection": "지우기",
+      "restoreBulkConfirm": "선택한 {count}개 대화를 복원할까요?",
+      "deleteBulkConfirm": "선택한 {count}개 보관 항목을 영구 삭제할까요? 되돌릴 수 없습니다.",
       "deleteFailed": "삭제 실패",
       "daysAgo": "{days}일 전 보관됨"
     },

@@ -1515,7 +1515,7 @@ export async function listArchivedSessions(): Promise<ArchivedSession[]> {
   }
 }
 
-export async function restoreSession(target: string | Pick<ArchivedSession, 'path' | 'sessionId'>): Promise<RestoreResult> {
+async function restoreSessionRequest(target: string | Pick<ArchivedSession, 'path' | 'sessionId'>): Promise<RestoreResult> {
   const sessionPath = typeof target === 'string' ? target : target.path;
   const sessionId = typeof target === 'string' ? null : normalizeSessionId(target.sessionId);
   try {
@@ -1530,27 +1530,58 @@ export async function restoreSession(target: string | Pick<ArchivedSession, 'pat
     const data = await res.json().catch(() => ({}));
     if (res.status === 409) return { status: 'conflict', error: data?.error };
     if (!res.ok) return { status: 'error', error: data?.error || res.statusText };
-    const restoredPath = typeof data?.restoredPath === 'string' ? data.restoredPath : null;
-    const restoredSessionId = normalizeSessionId(data?.sessionId) || sessionId;
-
-    await loadSessions();
-    const restoredSession = sessionByIdentityOrPath(
-      useStore.getState() as Record<string, any>,
-      restoredSessionId,
-      restoredPath,
-    );
-    if (restoredSession?.path) {
-      await switchSession(restoredSession.path);
-    }
-    void hydrateInputDrafts();
-    return { status: 'ok', restoredPath, sessionId: restoredSessionId };
+    return {
+      status: 'ok',
+      restoredPath: typeof data?.restoredPath === 'string' ? data.restoredPath : null,
+      sessionId: normalizeSessionId(data?.sessionId) || sessionId,
+    };
   } catch (err) {
     console.error('[archived] restore failed:', err);
     return { status: 'error', error: errorMessage(err) };
   }
 }
 
-export async function deleteArchivedSession(target: string | Pick<ArchivedSession, 'path' | 'sessionId'>): Promise<boolean> {
+export async function restoreSessions(
+  targets: Array<string | Pick<ArchivedSession, 'path' | 'sessionId'>>,
+): Promise<{ restored: number; conflicts: number; failed: number }> {
+  const unique = new Map<string, string | Pick<ArchivedSession, 'path' | 'sessionId'>>();
+  for (const target of targets || []) {
+    const path = typeof target === 'string' ? target : target.path;
+    if (typeof path === 'string' && path.trim() && !unique.has(path)) unique.set(path, target);
+  }
+  if (unique.size === 0) return { restored: 0, conflicts: 0, failed: 0 };
+
+  let restored = 0;
+  let conflicts = 0;
+  let failed = 0;
+  for (const target of unique.values()) {
+    const result = await restoreSessionRequest(target);
+    if (result.status === 'ok') restored += 1;
+    else if (result.status === 'conflict') conflicts += 1;
+    else failed += 1;
+  }
+  if (restored > 0) {
+    await loadSessions();
+    void hydrateInputDrafts();
+  }
+  return { restored, conflicts, failed };
+}
+
+export async function restoreSession(target: string | Pick<ArchivedSession, 'path' | 'sessionId'>): Promise<RestoreResult> {
+  const result = await restoreSessionRequest(target);
+  if (result.status !== 'ok') return result;
+  await loadSessions();
+  const restoredSession = sessionByIdentityOrPath(
+    useStore.getState() as Record<string, any>,
+    result.sessionId,
+    result.restoredPath,
+  );
+  if (restoredSession?.path) await switchSession(restoredSession.path);
+  void hydrateInputDrafts();
+  return result;
+}
+
+async function deleteArchivedSessionRequest(target: string | Pick<ArchivedSession, 'path' | 'sessionId'>): Promise<boolean> {
   const sessionPath = typeof target === 'string' ? target : target.path;
   const sessionId = typeof target === 'string' ? null : normalizeSessionId(target.sessionId);
   try {
@@ -1567,6 +1598,27 @@ export async function deleteArchivedSession(target: string | Pick<ArchivedSessio
     console.error('[archived] delete failed:', err);
     return false;
   }
+}
+
+export async function deleteArchivedSessions(
+  targets: Array<string | Pick<ArchivedSession, 'path' | 'sessionId'>>,
+): Promise<{ deleted: number; failed: number }> {
+  const unique = new Map<string, string | Pick<ArchivedSession, 'path' | 'sessionId'>>();
+  for (const target of targets || []) {
+    const path = typeof target === 'string' ? target : target.path;
+    if (typeof path === 'string' && path.trim() && !unique.has(path)) unique.set(path, target);
+  }
+  if (unique.size === 0) return { deleted: 0, failed: 0 };
+  let deleted = 0;
+  for (const target of unique.values()) {
+    if (await deleteArchivedSessionRequest(target)) deleted += 1;
+  }
+  return { deleted, failed: unique.size - deleted };
+}
+
+export async function deleteArchivedSession(target: string | Pick<ArchivedSession, 'path' | 'sessionId'>): Promise<boolean> {
+  const result = await deleteArchivedSessions([target]);
+  return result.deleted === 1;
 }
 
 export async function cleanupArchivedSessions(maxAgeDays: 30 | 90): Promise<{ deleted: number }> {

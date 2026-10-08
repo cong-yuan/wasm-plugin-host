@@ -243,6 +243,12 @@
       "restoreFailed": "恢复失败",
       "deleteForever": "永久删除",
       "deleteConfirm": "永久删除此归档？此操作无法撤销。",
+      "bulkToolbar": "归档选择",
+      "bulkSelected": "已选 {count} 条",
+      "selectAll": "全选",
+      "clearSelection": "清除",
+      "restoreBulkConfirm": "恢复已选的 {count} 条对话？",
+      "deleteBulkConfirm": "永久删除已选的 {count} 条归档？此操作无法撤销。",
       "deleteFailed": "删除失败",
       "daysAgo": "归档于 {days} 天前"
     },

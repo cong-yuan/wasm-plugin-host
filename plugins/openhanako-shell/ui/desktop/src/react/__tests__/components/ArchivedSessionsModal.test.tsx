@@ -2,19 +2,23 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
 const listMock = vi.fn();
 const restoreMock = vi.fn();
+const restoreSessionsMock = vi.fn();
 const deleteMock = vi.fn();
+const deleteArchivedSessionsMock = vi.fn();
 const cleanupMock = vi.fn();
 const toastMock = vi.fn();
 
 vi.mock('../../stores/session-actions', () => ({
   listArchivedSessions: (...args: unknown[]) => listMock(...args),
   restoreSession: (...args: unknown[]) => restoreMock(...args),
+  restoreSessions: (...args: unknown[]) => restoreSessionsMock(...args),
   deleteArchivedSession: (...args: unknown[]) => deleteMock(...args),
+  deleteArchivedSessions: (...args: unknown[]) => deleteArchivedSessionsMock(...args),
   cleanupArchivedSessions: (...args: unknown[]) => cleanupMock(...args),
   showSidebarToast: (...args: unknown[]) => toastMock(...args),
 }));
@@ -31,7 +35,9 @@ import { ArchivedSessionsModal } from '../../components/ArchivedSessionsModal';
 beforeEach(() => {
   listMock.mockReset();
   restoreMock.mockReset();
+  restoreSessionsMock.mockReset();
   deleteMock.mockReset();
+  deleteArchivedSessionsMock.mockReset();
   cleanupMock.mockReset();
   toastMock.mockReset();
 });
@@ -206,5 +212,56 @@ describe('ArchivedSessionsModal', () => {
       path: '/x/a.jsonl',
       sessionId: 'sess_archived_delete',
     })));
+  });
+
+  it('bulk restores selected archived sessions without routing through per-row restore', async () => {
+    listMock.mockResolvedValue([
+      {
+        path: '/x/a.jsonl', sessionId: 'sess_a', title: 'Alpha',
+        archivedAt: new Date().toISOString(), sizeBytes: 100, agentId: 'a', agentName: 'Hana',
+      },
+      {
+        path: '/x/b.jsonl', sessionId: 'sess_b', title: 'Beta',
+        archivedAt: new Date().toISOString(), sizeBytes: 100, agentId: 'b', agentName: 'Yuan',
+      },
+    ]);
+    restoreSessionsMock.mockResolvedValue({ restored: 2, conflicts: 0, failed: 0 });
+    window.confirm = vi.fn(() => true);
+    render(<ArchivedSessionsModal open={true} onClose={() => {}} />);
+    await waitFor(() => screen.getByText('Alpha'));
+    const boxes = screen.getAllByRole('checkbox');
+    fireEvent.click(boxes[0]);
+    fireEvent.click(boxes[1]);
+    fireEvent.click(within(screen.getByRole('toolbar', { name: 'session.archived.bulkToolbar' })).getByText('session.archived.restore'));
+    await waitFor(() => expect(restoreSessionsMock).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ path: '/x/a.jsonl' }),
+      expect.objectContaining({ path: '/x/b.jsonl' }),
+    ])));
+    expect(restoreMock).not.toHaveBeenCalled();
+  });
+
+  it('bulk deletes selected archived sessions after one confirmation', async () => {
+    listMock.mockResolvedValue([
+      {
+        path: '/x/a.jsonl', sessionId: 'sess_a', title: 'Alpha',
+        archivedAt: new Date().toISOString(), sizeBytes: 100, agentId: 'a', agentName: 'Hana',
+      },
+      {
+        path: '/x/b.jsonl', sessionId: 'sess_b', title: 'Beta',
+        archivedAt: new Date().toISOString(), sizeBytes: 100, agentId: 'b', agentName: 'Yuan',
+      },
+    ]);
+    deleteArchivedSessionsMock.mockResolvedValue({ deleted: 2, failed: 0 });
+    window.confirm = vi.fn(() => true);
+    render(<ArchivedSessionsModal open={true} onClose={() => {}} />);
+    await waitFor(() => screen.getByText('Alpha'));
+    fireEvent.click(screen.getAllByRole('checkbox')[0]);
+    fireEvent.click(screen.getAllByRole('checkbox')[1]);
+    fireEvent.click(within(screen.getByRole('toolbar', { name: 'session.archived.bulkToolbar' })).getByText('session.archived.deleteForever'));
+    await waitFor(() => expect(deleteArchivedSessionsMock).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ path: '/x/a.jsonl' }),
+      expect.objectContaining({ path: '/x/b.jsonl' }),
+    ])));
+    expect(deleteMock).not.toHaveBeenCalled();
   });
 });

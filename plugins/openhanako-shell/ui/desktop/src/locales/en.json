@@ -243,6 +243,12 @@
       "restoreFailed": "Restore failed",
       "deleteForever": "Delete forever",
       "deleteConfirm": "Permanently delete this archive? This cannot be undone.",
+      "bulkToolbar": "Archive selection",
+      "bulkSelected": "{count} selected",
+      "selectAll": "Select all",
+      "clearSelection": "Clear",
+      "restoreBulkConfirm": "Restore {count} selected conversations?",
+      "deleteBulkConfirm": "Permanently delete {count} selected archives? This cannot be undone.",
       "deleteFailed": "Delete failed",
       "daysAgo": "Archived {days} days ago"
     },

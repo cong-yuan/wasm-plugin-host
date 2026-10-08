@@ -4,7 +4,9 @@ import { Overlay } from '../ui';
 import {
   listArchivedSessions,
   restoreSession,
+  restoreSessions,
   deleteArchivedSession,
+  deleteArchivedSessions,
   cleanupArchivedSessions,
   showSidebarToast,
   type ArchivedSession,
@@ -35,6 +37,7 @@ export function ArchivedSessionsModal({ open, onClose, zIndex = 1000 }: Props) {
   const { t } = useI18n();
   const [list, setList] = useState<ArchivedSession[]>([]);
   const [loading, setLoading] = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -47,6 +50,39 @@ export function ArchivedSessionsModal({ open, onClose, zIndex = 1000 }: Props) {
   }, [open, refresh]);
 
   const totalSize = list.reduce((s, x) => s + x.sizeBytes, 0);
+  const selectedItems = list.filter(item => selectedPaths.has(item.path));
+  const selectedCount = selectedItems.length;
+  const allSelected = list.length > 0 && selectedCount === list.length;
+
+  const toggleSelected = (path: string, checked: boolean) => {
+    setSelectedPaths(current => {
+      const next = new Set(current);
+      if (checked) next.add(path);
+      else next.delete(path);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedPaths(new Set());
+  const selectAll = () => setSelectedPaths(new Set(list.map(item => item.path)));
+
+  const handleBulkRestore = async () => {
+    if (selectedCount === 0) return;
+    if (!window.confirm(t('session.archived.restoreBulkConfirm', { count: selectedCount }))) return;
+    const result = await restoreSessions(selectedItems);
+    if (result.conflicts > 0) showSidebarToast(t('session.archived.restoreConflict'));
+    else if (result.failed > 0) showSidebarToast(t('session.archived.restoreFailed'));
+    clearSelection();
+    await refresh();
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedCount === 0) return;
+    if (!window.confirm(t('session.archived.deleteBulkConfirm', { count: selectedCount }))) return;
+    const result = await deleteArchivedSessions(selectedItems);
+    if (result.failed > 0) showSidebarToast(t('session.archived.deleteFailed'));
+    clearSelection();
+    await refresh();
+  };
 
   const handleRestore = async (item: ArchivedSession) => {
     if (!window.confirm(t('session.archived.restoreConfirm'))) return;
@@ -121,6 +157,20 @@ export function ArchivedSessionsModal({ open, onClose, zIndex = 1000 }: Props) {
                 {t('session.archived.cleanup90')}
               </button>
             </div>
+            {selectedCount > 0 && (
+              <div className={styles.bulkBtns} role="toolbar" aria-label={t('session.archived.bulkToolbar')}>
+                <span className={styles.bulkCount}>{t('session.archived.bulkSelected', { count: selectedCount })}</span>
+                <button onClick={allSelected ? clearSelection : selectAll}>
+                  {allSelected ? t('session.archived.clearSelection') : t('session.archived.selectAll')}
+                </button>
+                <button onClick={() => { void handleBulkRestore(); }}>
+                  {t('session.archived.restore')}
+                </button>
+                <button className={styles.bulkDanger} onClick={() => { void handleBulkDelete(); }}>
+                  {t('session.archived.deleteForever')}
+                </button>
+              </div>
+            )}
           </div>
 
           <div className={styles.listCard}>
@@ -131,7 +181,15 @@ export function ArchivedSessionsModal({ open, onClose, zIndex = 1000 }: Props) {
                 <div className={styles.empty}>{t('session.archived.empty')}</div>
               ) : (
                 list.map((item) => (
-                  <div key={item.path} className={styles.row}>
+                  <div key={item.path} className={`${styles.row}${selectedPaths.has(item.path) ? ` ${styles.rowSelected}` : ''}`}>
+                    <label className={styles.rowCheck}>
+                      <input
+                        type="checkbox"
+                        checked={selectedPaths.has(item.path)}
+                        onChange={(event) => toggleSelected(item.path, event.target.checked)}
+                        aria-label={item.title || t('session.untitled')}
+                      />
+                    </label>
                     <div className={styles.rowMain}>
                       <div className={styles.rowTitle}>
                         {item.title || t('session.untitled')}

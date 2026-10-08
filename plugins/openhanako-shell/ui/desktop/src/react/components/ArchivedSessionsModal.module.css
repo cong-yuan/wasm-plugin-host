@@ -111,6 +111,35 @@
   border-color: var(--overlay-light, rgba(0, 0, 0, 0.18));
 }
 
+.bulkBtns {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.bulkCount {
+  color: var(--text-muted, rgba(0, 0, 0, 0.55));
+  font-size: var(--fs-hint);
+  white-space: nowrap;
+}
+
+.bulkBtns button {
+  min-height: 28px;
+  padding: 0 var(--space-8);
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.15));
+  border-radius: var(--radius-input, 6px);
+  background: var(--bg-card, #fff);
+  color: var(--text, inherit);
+  font: inherit;
+  font-size: var(--fs-hint);
+}
+
+.bulkBtns .bulkDanger {
+  color: var(--danger);
+}
+
 .listCard {
   flex: 1;
   min-height: 0;
@@ -136,6 +165,22 @@
 
 .row {
   display: flex;
+.rowSelected {
+  background: color-mix(in srgb, var(--accent-light) 72%, transparent);
+}
+
+.rowCheck {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 22px;
+}
+
+.rowCheck input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
   justify-content: space-between;
   align-items: center;
   gap: var(--space-16);

@@ -243,6 +243,12 @@
       "restoreFailed": "復元に失敗しました",
       "deleteForever": "完全に削除",
       "deleteConfirm": "このアーカイブを完全に削除しますか？取り消せません。",
+      "bulkToolbar": "アーカイブ選択",
+      "bulkSelected": "{count} 件選択中",
+      "selectAll": "すべて選択",
+      "clearSelection": "クリア",
+      "restoreBulkConfirm": "選択した {count} 件の会話を復元しますか？",
+      "deleteBulkConfirm": "選択した {count} 件のアーカイブを完全に削除しますか？取り消せません。",
       "deleteFailed": "削除に失敗しました",
       "daysAgo": "{days} 日前にアーカイブ"
     },
