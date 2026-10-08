@@ -31,56 +31,89 @@ export function FileHistoryModal() {
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const [snapshotText, setSnapshotText] = useState<string | null>(null);
   const [currentText, setCurrentText] = useState<string | null>(null);
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'loading' | 'restoring' | 'restored' | 'error'>('idle');
 
   // 打开时装载文件列表 + 应用预选
   useEffect(() => {
+    let cancelled = false;
+    setFiles([]);
+    setSelectedPath(null);
+    setVersions([]);
+    setSelectedVersion(null);
+    setSnapshotText(null);
+    setCurrentText(null);
     if (!modal.open || !agentId) return;
     setStatus('loading');
     fetchHistoryFiles(agentId)
       .then(list => {
+        if (cancelled) return;
         setFiles(list);
         setStatus('idle');
         setSelectedPath(modal.preselectRelPath && list.some(f => f.relPath === modal.preselectRelPath)
           ? modal.preselectRelPath : null);
       })
-      .catch(() => setStatus('error'));
+      .catch(() => { if (!cancelled) setStatus('error'); });
+    return () => { cancelled = true; };
   }, [modal.open, modal.preselectRelPath, agentId]);
 
   // 选中文件 → 装载版本
   useEffect(() => {
-    if (!modal.open || !agentId || !selectedPath) { setVersions([]); setSelectedVersion(null); return; }
+    let cancelled = false;
+    setVersions([]);
+    setSelectedVersion(null);
+    setSnapshotText(null);
+    setCurrentText(null);
+    if (!modal.open || !agentId || !selectedPath) return;
     fetchHistoryVersions(agentId, selectedPath)
-      .then(list => { setVersions(list); setSelectedVersion(list[0]?.id ?? null); })
-      .catch(() => setStatus('error'));
+      .then(list => {
+        if (cancelled) return;
+        setVersions(list);
+        setSelectedVersion(list[0]?.id ?? null);
+      })
+      .catch(() => { if (!cancelled) setStatus('error'); });
+    return () => { cancelled = true; };
   }, [modal.open, agentId, selectedPath]);
 
   // 选中版本 → 装载快照与当前内容
   useEffect(() => {
-    if (!agentId || selectedVersion == null) { setSnapshotText(null); setCurrentText(null); return; }
     let cancelled = false;
+    setSnapshotText(null);
+    setCurrentText(null);
+    setSnapshotLoading(false);
+    if (!modal.open || !agentId || !selectedPath || selectedVersion == null) return;
+    setSnapshotLoading(true);
     (async () => {
-      const snapshot = await fetchHistorySnapshot(agentId, selectedVersion).catch(() => null);
-      if (cancelled || !snapshot) return;
-      setSnapshotText(snapshot.content);
-      let current: string | null = null;
-      if (nativeRoot && selectedPath) {
-        const abs = `${nativeRoot.replace(/\/+$/, '')}/${selectedPath}`;
-        const snap = await window.platform?.readFileSnapshot?.(abs).catch(() => null);
-        current = snap?.content ?? null;
-      }
-      if (current == null) {
-        const idx = versions.findIndex(v => v.id === selectedVersion);
-        const prev = versions[idx + 1];
-        if (prev) {
-          const prevSnap = await fetchHistorySnapshot(agentId, prev.id).catch(() => null);
-          current = prevSnap?.content ?? null;
+      try {
+        const snapshot = await fetchHistorySnapshot(agentId, selectedVersion);
+        if (cancelled) return;
+        if (snapshot.relPath !== selectedPath) {
+          throw new Error('Snapshot does not belong to the selected file');
         }
+        setSnapshotText(snapshot.content);
+        let current: string | null = null;
+        if (nativeRoot) {
+          const abs = `${nativeRoot.replace(/\/+$/, '')}/${selectedPath}`;
+          const snap = await window.platform?.readFileSnapshot?.(abs).catch(() => null);
+          current = snap?.content ?? null;
+        }
+        if (current == null) {
+          const idx = versions.findIndex(v => v.id === selectedVersion);
+          const prev = versions[idx + 1];
+          if (prev) {
+            const prevSnap = await fetchHistorySnapshot(agentId, prev.id).catch(() => null);
+            current = prevSnap?.content ?? null;
+          }
+        }
+        if (!cancelled) setCurrentText(current);
+      } catch {
+        if (!cancelled) setStatus('error');
+      } finally {
+        if (!cancelled) setSnapshotLoading(false);
       }
-      if (!cancelled) setCurrentText(current);
     })();
     return () => { cancelled = true; };
-  }, [agentId, selectedVersion, selectedPath, nativeRoot, versions]);
+  }, [modal.open, agentId, selectedVersion, selectedPath, nativeRoot, versions]);
 
   const diff: DiffLine[] | null = useMemo(() => {
     if (snapshotText == null) return null;
@@ -89,7 +122,7 @@ export function FileHistoryModal() {
   }, [snapshotText, currentText]);
 
   const handleRestore = useCallback(async () => {
-    if (!agentId || selectedVersion == null || !selectedPath) return;
+    if (!agentId || selectedVersion == null || !selectedPath || snapshotLoading || snapshotText == null || status === 'restoring') return;
     if (!window.confirm(t('fileHistory.restoreConfirm'))) return;
     setStatus('restoring');
     try {
@@ -100,7 +133,7 @@ export function FileHistoryModal() {
     } catch {
       setStatus('error');
     }
-  }, [agentId, selectedVersion, selectedPath, t]);
+  }, [agentId, selectedVersion, selectedPath, snapshotLoading, snapshotText, status, t]);
 
   const visibleFiles = files.filter(f => !filter || f.relPath.includes(filter));
   const activeFiles = visibleFiles.filter(f => f.deletedAt == null);
@@ -123,7 +156,7 @@ export function FileHistoryModal() {
           {activeFiles.map(f => (
             <button key={f.relPath} type="button"
               className={`${styles.fileRow}${selectedPath === f.relPath ? ` ${styles.fileRowActive}` : ''}`}
-              onClick={() => setSelectedPath(f.relPath)}>
+              onClick={() => { setSelectedPath(f.relPath); setStatus('idle'); }}>
               {f.relPath}
             </button>
           ))}
@@ -133,7 +166,7 @@ export function FileHistoryModal() {
               {deletedFiles.map(f => (
                 <button key={f.relPath} type="button"
                   className={`${styles.fileRow} ${styles.fileRowDeleted}${selectedPath === f.relPath ? ` ${styles.fileRowActive}` : ''}`}
-                  onClick={() => setSelectedPath(f.relPath)}>
+                  onClick={() => { setSelectedPath(f.relPath); setStatus('idle'); }}>
                   {f.relPath}
                 </button>
               ))}
@@ -147,7 +180,7 @@ export function FileHistoryModal() {
           {versions.map(v => (
             <button key={v.id} type="button" data-testid={`fh-version-${v.id}`}
               className={`${styles.versionRow}${selectedVersion === v.id ? ` ${styles.versionRowActive}` : ''}`}
-              onClick={() => setSelectedVersion(v.id)}>
+              onClick={() => { setSelectedVersion(v.id); setStatus('idle'); }}>
               <span className={styles.versionTime}>{new Date(v.capturedAt).toLocaleString()}</span>
               <span className={styles.versionOrigin}>{t(`fileHistory.origin.${v.origin}`)}</span>
             </button>
@@ -176,7 +209,7 @@ export function FileHistoryModal() {
             {status === 'restored' && <span className={styles.restoredNote}>{t('fileHistory.restoreDone')}</span>}
             {status === 'error' && <span className={styles.errorNote}>{t('fileHistory.error')}</span>}
             <button type="button" data-testid="fh-restore" className={styles.restoreBtn}
-              disabled={selectedVersion == null || status === 'restoring'}
+              disabled={selectedVersion == null || snapshotLoading || snapshotText == null || status === 'restoring'}
               onClick={handleRestore}>
               {t('fileHistory.restore')}
             </button>

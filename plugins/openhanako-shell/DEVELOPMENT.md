@@ -97,7 +97,7 @@
 - browser — BrowserCard now has keyboard-accessible viewer activation while collapse remains a local UI-only action; opening the viewer fails closed when the current session has no path.
 - skills — Skills settings now has an explicit `Reload skills` action. It calls the backend reload endpoint, then refreshes the selected Agent skills and compatible external-path view; the action is guarded against concurrent clicks and covered by the existing SkillsTab safety net.
 - media / image / video — Global image/video/speech configuration writes are serialized per capability, so rapid selector/toggle changes preserve user order; image/video provider refreshes also reject stale focus-triggered responses.
-- resource-io / checkpoints / file history — File History restore now requires explicit confirmation and keeps the existing ResourceIO/history-backed restore semantics; cancellation is side-effect free.
+- resource-io / checkpoints / file history — File History restore requires explicit confirmation, checks the backend acknowledgement, and does not record success or a restore snapshot when ResourceIO reports a write conflict or failure (HTTP 409/500). File History hydration now ignores stale file/version/snapshot responses across selection/Agent changes, checks snapshot ownership, and blocks restore until the selected snapshot is ready. ResourceIO event catch-up now rejects malformed/unsafe cursors instead of silently rewinding. The checkpoint client also requires an explicit successful server acknowledgement; route, UI and client regressions cover these fail-closed paths.
 
 ## 接线原则
 

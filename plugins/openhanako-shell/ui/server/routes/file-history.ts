@@ -84,7 +84,19 @@ export function createFileHistoryRoute(engine: any) {
       const absPath = path.join(root, ...relPath.split("/"));
 
       // 还原走 ResourceIO：工作区树/编辑器沿既有事件链路刷新，还原动作本身也进历史（可反悔）
-      await engine.getResourceIO().write({ kind: "local-file", path: absPath }, snapshot.content, {});
+      const writeResult = await engine.getResourceIO().write(
+        { kind: "local-file", path: absPath },
+        snapshot.content,
+        {},
+      );
+      // ResourceIO may report a version conflict as a result rather than throwing.
+      // Never capture a "restore" snapshot, or acknowledge success, if the write failed.
+      if (writeResult?.ok === false) {
+        if (writeResult.conflict === true) {
+          return c.json({ error: writeResult.safeMessage || "Resource write conflict", conflict: true }, 409);
+        }
+        return c.json({ error: writeResult.safeMessage || "Resource write failed" }, 500);
+      }
       await service.captureNow(root, relPath, "restore");
       return c.json({ ok: true, relPath });
     } catch (err: any) {

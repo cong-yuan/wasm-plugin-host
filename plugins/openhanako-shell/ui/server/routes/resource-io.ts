@@ -230,9 +230,22 @@ function isConflictResult(result) {
 }
 
 function numericCursor(value) {
+  if (value === undefined) return 0;
+  // A malformed cursor must not silently rewind a watcher to the start.
+  // Requiring a safe decimal integer also prevents loss of sequence precision.
+  if (typeof value !== "string" || !/^[0-9]+$/.test(value)) {
+    throw invalidEventCursor();
+  }
   const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.floor(n);
+  if (!Number.isSafeInteger(n)) throw invalidEventCursor();
+  return n;
+}
+
+function invalidEventCursor() {
+  return Object.assign(new Error("Invalid resource event cursor"), {
+    code: "invalid_resource_event_cursor",
+    status: 400,
+  });
 }
 
 function resourceEventsSince(engine, sequence) {

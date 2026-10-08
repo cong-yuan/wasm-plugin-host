@@ -74,5 +74,9 @@ export async function restoreHistorySnapshot(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agentId, snapshotId }),
   });
-  return res.json();
+  const result = await res.json();
+  if (!res.ok || result?.ok !== true || typeof result.relPath !== 'string' || !result.relPath) {
+    throw new Error(result?.error || 'File restore was not acknowledged');
+  }
+  return result;
 }

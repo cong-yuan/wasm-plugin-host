@@ -59,6 +59,36 @@ describe("file-history route", () => {
     expect((await res.json()).content).toBe("hello");
   });
 
+  it("returns ResourceIO conflicts without claiming a restore or capturing a snapshot", async () => {
+    const { app, service, resourceIO } = makeApp();
+    resourceIO.write.mockResolvedValueOnce({ ok: false, conflict: true, safeMessage: "Version changed" });
+
+    const res = await app.request("/api/file-history/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId: "hana", snapshotId: 7 }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "Version changed", conflict: true });
+    expect(service.captureNow).not.toHaveBeenCalled();
+  });
+
+  it("does not report success or capture a snapshot on failed ResourceIO writes", async () => {
+    const { app, service, resourceIO } = makeApp();
+    resourceIO.write.mockResolvedValueOnce({ ok: false });
+
+    const res = await app.request("/api/file-history/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId: "hana", snapshotId: 7 }),
+    });
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Resource write failed" });
+    expect(service.captureNow).not.toHaveBeenCalled();
+  });
+
   it("restores through ResourceIO and records a restore snapshot", async () => {
     const { app, service, resourceIO, root } = makeApp();
     const res = await app.request("/api/file-history/restore", {

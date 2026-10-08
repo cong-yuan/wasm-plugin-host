@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -24,7 +24,7 @@ import { FileHistoryModal } from '../../components/file-history/FileHistoryModal
 import { useStore } from '../../stores';
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   vi.stubGlobal('confirm', vi.fn(() => true));
   window.t = ((key: string) => key) as typeof window.t;
   useStore.setState({
@@ -58,6 +58,86 @@ describe('FileHistoryModal', () => {
     expect(mocks.restoreHistorySnapshot).not.toHaveBeenCalled();
   });
 
+  it('does not display a late file list from a previously selected agent', async () => {
+    let resolveOld!: (files: any[]) => void;
+    mocks.fetchHistoryFiles.mockImplementation((agent: string) =>
+      agent === 'hana'
+        ? new Promise(resolve => { resolveOld = resolve; })
+        : Promise.resolve([{ relPath: 'other.md', deletedAt: null, lastCapturedAt: 50, snapshotCount: 1 }]),
+    );
+
+    render(<FileHistoryModal />);
+    await waitFor(() => expect(mocks.fetchHistoryFiles).toHaveBeenCalledWith('hana'));
+    act(() => { useStore.setState({ currentAgentId: 'other' }); });
+    expect(await screen.findByText('other.md')).toBeInTheDocument();
+
+    await act(async () => {
+      resolveOld([{ relPath: 'private-hana.md', deletedAt: null, lastCapturedAt: 100, snapshotCount: 1 }]);
+    });
+    expect(screen.getByText('other.md')).toBeInTheDocument();
+    expect(screen.queryByText('private-hana.md')).not.toBeInTheDocument();
+  });
+
+  it('ignores a slow version list from a file that is no longer selected', async () => {
+    let resolveOld!: (list: any[]) => void;
+    mocks.fetchHistoryVersions.mockImplementation((_agent: string, relPath: string) =>
+      relPath === 'notes/a.md'
+        ? new Promise(resolve => { resolveOld = resolve; })
+        : Promise.resolve([{ id: 8, capturedAt: 2000, origin: 'event', opContext: null, rawSize: 4 }]),
+    );
+    mocks.fetchHistorySnapshot.mockImplementation(async () => ({
+      relPath: 'gone.md', capturedAt: 2000, origin: 'event', content: 'gone',
+    }));
+    render(<FileHistoryModal />);
+    fireEvent.click(await screen.findByText('notes/a.md'));
+    await waitFor(() => expect(mocks.fetchHistoryVersions).toHaveBeenCalledWith('hana', 'notes/a.md'));
+    fireEvent.click(screen.getByText('gone.md'));
+    expect(await screen.findByTestId('fh-version-8')).toBeInTheDocument();
+
+    await act(async () => {
+      resolveOld([{ id: 7, capturedAt: 1000, origin: 'event', opContext: null, rawSize: 3 }]);
+    });
+    expect(screen.getByTestId('fh-version-8')).toBeInTheDocument();
+    expect(screen.queryByTestId('fh-version-7')).not.toBeInTheDocument();
+  });
+
+  it('does not display or restore a stale snapshot after switching files', async () => {
+    let resolveOld!: (snapshot: any) => void;
+    mocks.fetchHistoryVersions.mockImplementation(async (_agent: string, path: string) => [
+      { id: path === 'notes/a.md' ? 7 : 8, capturedAt: 1000, origin: 'event', opContext: null, rawSize: 5 },
+    ]);
+    mocks.fetchHistorySnapshot.mockImplementation((_agent: string, id: number) =>
+      id === 7
+        ? new Promise(resolve => { resolveOld = resolve; })
+        : Promise.resolve({ relPath: 'gone.md', capturedAt: 2000, origin: 'event', content: 'new-gone' }),
+    );
+    render(<FileHistoryModal />);
+    fireEvent.click(await screen.findByText('notes/a.md'));
+    await waitFor(() => expect(mocks.fetchHistorySnapshot).toHaveBeenCalledWith('hana', 7));
+    expect(screen.getByTestId('fh-restore')).toBeDisabled();
+
+    fireEvent.click(screen.getByText('gone.md'));
+    await waitFor(() => expect(screen.getByText('new-gone')).toBeInTheDocument());
+    await act(async () => {
+      resolveOld({ relPath: 'notes/a.md', capturedAt: 1000, origin: 'event', content: 'stale-a' });
+    });
+
+    expect(screen.getByText('new-gone')).toBeInTheDocument();
+    expect(screen.queryByText('stale-a')).not.toBeInTheDocument();
+    expect(screen.getByTestId('fh-restore')).not.toBeDisabled();
+  });
+
+  it('blocks restore when the backend returns a snapshot for the wrong file', async () => {
+    mocks.fetchHistorySnapshot.mockResolvedValueOnce({
+      relPath: 'another.md', capturedAt: 1000, origin: 'event', content: 'wrong',
+    });
+    render(<FileHistoryModal />);
+    fireEvent.click(await screen.findByText('notes/a.md'));
+    await waitFor(() => expect(screen.getByText('fileHistory.error')).toBeInTheDocument());
+    expect(screen.getByTestId('fh-restore')).toBeDisabled();
+    expect(mocks.restoreHistorySnapshot).not.toHaveBeenCalled();
+  });
+
   it('loads versions when a file is selected and restores on confirm', async () => {
     render(<FileHistoryModal />);
     await waitFor(() => expect(screen.getByText('notes/a.md')).toBeTruthy());
@@ -66,6 +146,7 @@ describe('FileHistoryModal', () => {
     const versionRow = await screen.findByTestId('fh-version-7');
     fireEvent.click(versionRow);
     await waitFor(() => expect(mocks.fetchHistorySnapshot).toHaveBeenCalledWith('hana', 7));
+    await waitFor(() => expect(screen.getByTestId('fh-restore')).not.toBeDisabled());
     fireEvent.click(screen.getByTestId('fh-restore'));
     await waitFor(() => expect(mocks.restoreHistorySnapshot).toHaveBeenCalledWith('hana', 7));
     expect(confirm).toHaveBeenCalledWith('fileHistory.restoreConfirm');

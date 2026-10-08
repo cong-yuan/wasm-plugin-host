@@ -6,9 +6,13 @@ export async function requestUserEditCheckpoint(
   filePath: string,
   reason: UserEditCheckpointReason,
 ): Promise<void> {
-  await hanaFetch('/api/checkpoints/user-edit', {
+  const res = await hanaFetch('/api/checkpoints/user-edit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filePath, reason }),
   });
+  const data = await res.json();
+  if (!res.ok || data?.ok !== true) {
+    throw new Error(data?.error || 'Checkpoint creation was not acknowledged');
+  }
 }

@@ -39,6 +39,25 @@ describe("resource-io route", () => {
     expect(resourceEventsSince).toHaveBeenCalledWith(3);
   });
 
+  it("rejects malformed event cursors instead of silently rewinding the event stream", async () => {
+    const resourceEventsSince = vi.fn(() => ({ stale: false, latestSequence: 1, events: [] }));
+    const app = new Hono();
+    app.route("/api", createResourceIoRoute({ resourceEventsSince }));
+
+    for (const cursor of ["-1", "1.2", "NaN", "1e3", "9007199254740993"]) {
+      const res = await app.request(`/api/resource-io/events?since=${cursor}`);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: "Invalid resource event cursor",
+        code: "invalid_resource_event_cursor",
+      });
+    }
+    expect(resourceEventsSince).not.toHaveBeenCalled();
+
+    expect((await app.request("/api/resource-io/events")).status).toBe(200);
+    expect(resourceEventsSince).toHaveBeenCalledWith(0);
+  });
+
   it("returns a resync hint when the event cursor is stale", async () => {
     const app = new Hono();
     app.route("/api", createResourceIoRoute({
