@@ -105,6 +105,15 @@ check('api mode is mock without invoke', api.mode() === 'mock');
     call?.args?.agentId === 'todo-session');
   check('todo completion returns completed snapshot for the bridge',
     result?.completed?.length === 2 && result.completed.every((todo) => todo.status === 'completed'));
+  studio.hostAction = async (action) => {
+    if (action.command === 'complete_session_todos') return undefined;
+    throw new Error('unexpected host command');
+  };
+  const missingTodoAck = await adapter.http('POST', '/api/sessions/todos/complete', {
+    sessionId: 'todo-session',
+  });
+  check('missing native TODO snapshot is not converted into fake success',
+    missingTodoAck?.ok === false && missingTodoAck?.code === 'todo_mutation_failed');
   studio.hostAction = null;
 }
 

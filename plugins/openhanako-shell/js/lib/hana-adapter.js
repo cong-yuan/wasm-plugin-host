@@ -1987,11 +1987,14 @@ return (function () {
       }
       try {
         const completed = await api.completeSessionTodos(sessionId);
-        return {
-          ok: true,
-          todos: [],
-          completed: Array.isArray(completed) ? completed : [],
-        };
+        if (!Array.isArray(completed)) {
+          return {
+            ok: false,
+            code: 'todo_mutation_failed',
+            error: 'studio did not acknowledge completed TODO snapshot',
+          };
+        }
+        return { ok: true, todos: [], completed };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const code = error?.code === 'capability_unavailable'

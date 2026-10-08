@@ -2197,6 +2197,130 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.transcript = oldTranscript;
 }
 
+// Studio-backed summary, compaction and TODO actions are confirmed, single-
+// flight, capability-gated operations scoped to the currently selected session.
+{
+  const conversation = studio.require('panels/conversation');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const oldTranscript = api.transcript;
+  const capabilities = {
+    freshCompactSessionAvailable: api.freshCompactSessionAvailable,
+    completeSessionTodosAvailable: api.completeSessionTodosAvailable,
+    sessionSummaryAvailable: api.sessionSummaryAvailable,
+  };
+  api.freshCompactSessionAvailable = () => true;
+  api.completeSessionTodosAvailable = () => true;
+  api.sessionSummaryAvailable = () => true;
+  api.transcript = async () => [];
+  let compactions = 0;
+  let completions = 0;
+  let denyCompact = false;
+  let holdCompact = false;
+  let releaseHeldCompact;
+  let malformedTodos = false;
+  let holdSummary = false;
+  let resolveSummary;
+  adapter.http = async (method, path, body) => {
+    if (method === 'GET' && path.startsWith('/api/models')) return { models: [] };
+    if (method === 'GET' && path.startsWith('/api/sessions/summary?')) {
+      if (holdSummary) return new Promise((resolve) => { resolveSummary = resolve; });
+      return { hasSummary: true, summary: 'Persisted compact summary' };
+    }
+    if (method === 'POST' && path === '/api/sessions/fresh-compact') {
+      compactions += 1;
+      if (holdCompact) return new Promise((resolve) => { releaseHeldCompact = resolve; });
+      if (denyCompact) return { ok: false, error: 'Context compact denied' };
+      return { ok: true, fresh: true };
+    }
+    if (method === 'POST' && path === '/api/sessions/todos/complete') {
+      completions += 1;
+      if (malformedTodos) return { ok: true, todos: [{ status: 'pending' }], completed: [] };
+      return { ok: true, todos: [], completed: [{ content: 'draft', status: 'completed' }] };
+    }
+    return oldHttp(method, path, body);
+  };
+  const panel = conversation.render({ onChanged() {}, onOpened() {}, onCreated() {} });
+  const toggle = panel.root.querySelector('.sessionToolsButton');
+  const tools = panel.root.querySelector('.sessionToolsPanel');
+  const summary = panel.root.querySelector('.sessionToolsSummary');
+  const compact = panel.root.querySelector('.sessionToolsCompact');
+  const todos = panel.root.querySelector('.sessionToolsTodos');
+  const status = panel.root.querySelector('.sessionToolsStatus');
+  check('native session actions are available only when host advertises capabilities', toggle.disabled === false);
+  toggle.fire('click');
+  check('session actions require an opened session and do not fake success',
+    tools.style.display === 'none' && compactions === 0 && completions === 0);
+  await panel.open({ id: 'native-action-session', live: true });
+  toggle.fire('click');
+  check('session actions open with accessible expanded state',
+    tools.style.display === '' && toggle.getAttribute('aria-expanded') === 'true');
+  summary.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('summary is read from backend and shown without mutation',
+    /Persisted compact summary/.test(tools.textContent) && compactions === 0);
+  compact.fire('click');
+  check('first compact click only arms explicit confirmation',
+    /Confirm compact/.test(compact.textContent) && compactions === 0);
+  denyCompact = true;
+  compact.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('failed compaction leaves a real backend error instead of success',
+    compactions === 1 && /Context compact denied/.test(status.textContent));
+  denyCompact = false;
+  compact.fire('click');
+  compact.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('second confirmed compact calls native route and reports success',
+    compactions === 2 && /context compacted/i.test(status.textContent));
+  todos.fire('click');
+  check('TODO completion requires confirmation before mutation',
+    completions === 0 && /Confirm complete/.test(todos.textContent));
+  malformedTodos = true;
+  todos.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('malformed native TODO acknowledgement cannot fake completion',
+    completions === 1 && /did not confirm TODO/.test(status.textContent));
+  malformedTodos = false;
+  todos.fire('click');
+  todos.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('confirmed TODO mutation updates status only after acknowledged snapshot',
+    completions === 2 && /1 TODOs marked completed/.test(status.textContent));
+  holdCompact = true;
+  compact.fire('click');
+  compact.fire('click');
+  await Promise.resolve();
+  check('native compaction runs single-flight',
+    compactions === 3 && typeof releaseHeldCompact === 'function');
+  panel.root.querySelector('.sessionToolsClose').fire('click');
+  toggle.fire('click');
+  compact.fire('click');
+  todos.fire('click');
+  await Promise.resolve();
+  check('closing and reopening a pending native action cannot start another mutation',
+    compactions === 3 && completions === 2 && compact.disabled === true);
+  releaseHeldCompact?.({ ok: true, fresh: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('native operation lock releases after request settles', compact.disabled === false);
+  holdCompact = false;
+  holdSummary = true;
+  summary.fire('click');
+  await Promise.resolve();
+  check('summary read is in flight', typeof resolveSummary === 'function');
+  await panel.open({ id: 'second-action-session', live: true });
+  resolveSummary?.({ hasSummary: true, summary: 'Stale private summary' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('late old-session summary never paints new conversation',
+    tools.style.display === 'none' && !/Stale private summary/.test(tools.textContent));
+  panel.reset();
+  api.freshCompactSessionAvailable = capabilities.freshCompactSessionAvailable;
+  api.completeSessionTodosAvailable = capabilities.completeSessionTodosAvailable;
+  api.sessionSummaryAvailable = capabilities.sessionSummaryAvailable;
+  api.transcript = oldTranscript;
+  adapter.http = oldHttp;
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));

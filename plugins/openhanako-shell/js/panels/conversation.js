@@ -166,6 +166,134 @@ return (function () {
     const trailing = h('span', { class: 'input-trailing-slot hana-slot' });
     slots.mount('openhanako.conversation.input.right', trailing);
 
+    const canCompact = !!api.freshCompactSessionAvailable?.();
+    const canCompleteTodos = !!api.completeSessionTodosAvailable?.();
+    const canReadSummary = !!api.sessionSummaryAvailable?.();
+    const hasSessionActions = canCompact || canCompleteTodos || canReadSummary;
+    const sessionToolsButton = h('button', {
+      class: 'sessionToolsButton', type: 'button',
+      title: 'Session context, summary and todos', 'aria-expanded': 'false',
+    }, 'Session');
+    if (!hasSessionActions) markUnsupported(sessionToolsButton,
+      'This Studio host does not expose native session actions.');
+    const sessionToolsStatus = h('span', { class: 'sessionToolsStatus', 'aria-live': 'polite' }, '');
+    const sessionSummaryContent = h('div', { class: 'sessionSummaryContent' });
+    const sessionToolsClose = h('button', { class: 'sessionToolsClose', type: 'button' }, 'Close');
+    const sessionToolsSummary = h('button', { class: 'sessionToolsSummary', type: 'button' }, 'Read summary');
+    const sessionToolsCompact = h('button', { class: 'sessionToolsCompact', type: 'button' }, 'Compact context');
+    const sessionToolsTodos = h('button', { class: 'sessionToolsTodos', type: 'button' }, 'Complete TODOs');
+    sessionToolsSummary.disabled = !canReadSummary;
+    sessionToolsCompact.disabled = !canCompact;
+    sessionToolsTodos.disabled = !canCompleteTodos;
+    const sessionToolsPanel = h('section', {
+      class: 'sessionToolsPanel', 'aria-label': 'Session tools',
+    }, h('div', { class: 'sessionToolsHeading' }, 'Session actions', sessionToolsClose),
+    h('div', { class: 'sessionToolsControls' },
+      sessionToolsSummary, sessionToolsCompact, sessionToolsTodos),
+    sessionSummaryContent, sessionToolsStatus);
+    sessionToolsPanel.style.display = 'none';
+    let toolsPending = false;
+    const pendingNativeActions = new Set();
+    let toolsGeneration = 0;
+    let toolsConfirm = null;
+    const toolsIsCurrent = (id, epoch, version) =>
+      state.id === id && state.epoch === epoch && toolsGeneration === version;
+    const toolsUpdateControls = () => {
+      const locked = toolsPending || pendingNativeActions.has(state.id) || state.busy || state.opening;
+      sessionToolsSummary.disabled = locked || !canReadSummary;
+      sessionToolsCompact.disabled = locked || !canCompact;
+      sessionToolsTodos.disabled = locked || !canCompleteTodos;
+      sessionToolsCompact.textContent = toolsConfirm === 'compact' ? 'Confirm compact' : 'Compact context';
+      sessionToolsTodos.textContent = toolsConfirm === 'todos' ? 'Confirm complete' : 'Complete TODOs';
+    };
+    const toolsReset = () => {
+      toolsGeneration += 1;
+      toolsPending = false;
+      toolsConfirm = null;
+      sessionToolsPanel.style.display = 'none';
+      sessionToolsButton.setAttribute('aria-expanded', 'false');
+      sessionToolsStatus.textContent = '';
+      clear(sessionSummaryContent);
+      toolsUpdateControls();
+    };
+    const toolsExecute = async (kind) => {
+      if (!state.id || state.busy || state.opening || toolsPending || pendingNativeActions.has(state.id)
+        || sessionToolsPanel.style.display === 'none') return;
+      if ((kind === 'summary' && !canReadSummary) || (kind === 'compact' && !canCompact)
+        || (kind === 'todos' && !canCompleteTodos)) return;
+      if (kind !== 'summary' && toolsConfirm !== kind) {
+        toolsConfirm = kind;
+        sessionToolsStatus.textContent = kind === 'compact'
+          ? 'Confirm native context compaction; transcript history is retained'
+          : 'Confirm marking every current TODO completed';
+        toolsUpdateControls();
+        return;
+      }
+      const id = state.id;
+      const epoch = state.epoch;
+      const version = ++toolsGeneration;
+      toolsConfirm = null;
+      toolsPending = true;
+      pendingNativeActions.add(id);
+      toolsUpdateControls();
+      sessionToolsStatus.textContent = kind === 'summary' ? 'Loading session summary…'
+        : kind === 'compact' ? 'Compacting session context…' : 'Completing session TODOs…';
+      try {
+        const result = kind === 'summary'
+          ? await adapter.http('GET', `/api/sessions/summary?sessionId=${encodeURIComponent(id)}`)
+          : await adapter.http('POST', kind === 'compact'
+            ? '/api/sessions/fresh-compact' : '/api/sessions/todos/complete', { sessionId: id });
+        if (!toolsIsCurrent(id, epoch, version)) return;
+        if (kind === 'summary') {
+          if (!result || result.error || typeof result.hasSummary !== 'boolean'
+            || (result.hasSummary && typeof result.summary !== 'string')) {
+            throw new Error(result?.error || 'Invalid native session summary');
+          }
+          clear(sessionSummaryContent);
+          sessionSummaryContent.appendChild(h('div', { class: 'sessionSummaryText' },
+            result.hasSummary ? result.summary : 'No persisted session summary yet'));
+          sessionToolsStatus.textContent = result.hasSummary ? 'Persisted summary loaded' : 'No summary yet';
+        } else if (kind === 'compact') {
+          if (!result || result.ok !== true || result.fresh !== true) {
+            throw new Error(result?.error || 'Studio did not confirm compaction');
+          }
+          clear(sessionSummaryContent);
+          sessionToolsStatus.textContent = 'Session context compacted';
+        } else {
+          if (!result || result.ok !== true || !Array.isArray(result.completed)
+            || !Array.isArray(result.todos) || result.todos.length > 0) {
+            throw new Error(result?.error || 'Studio did not confirm TODO completion');
+          }
+          sessionToolsStatus.textContent = `${result.completed.length} TODOs marked completed`;
+        }
+      } catch (err) {
+        if (toolsIsCurrent(id, epoch, version)) {
+          sessionToolsStatus.textContent = err?.message || 'Session action failed';
+        }
+      } finally {
+        pendingNativeActions.delete(id);
+        if (toolsIsCurrent(id, epoch, version)) toolsPending = false;
+        // Closing the panel invalidates its request, not the native mutation.
+        // The same session remains locked until that command settles.
+        toolsUpdateControls();
+      }
+    };
+    sessionToolsButton.onclick = () => {
+      if (!hasSessionActions) return;
+      if (sessionToolsPanel.style.display !== 'none') return toolsReset();
+      if (!state.id || state.opening || state.busy) {
+        conversationStatus.textContent = 'Open an idle session before using session actions';
+        return;
+      }
+      sessionToolsPanel.style.display = '';
+      sessionToolsButton.setAttribute('aria-expanded', 'true');
+      toolsUpdateControls();
+    };
+    sessionToolsClose.onclick = toolsReset;
+    sessionToolsSummary.onclick = () => toolsExecute('summary');
+    sessionToolsCompact.onclick = () => toolsExecute('compact');
+    sessionToolsTodos.onclick = () => toolsExecute('todos');
+
     const modelPill = h('button', { class: 'model-pill', type: 'button', 'data-open': 'false', 'aria-expanded': 'false', 'aria-haspopup': 'true' },
       h('span', { class: 'model-pill-label' }, '—'), svg(CHEVRON_DOWN));
     const modelDropdown = h('div', { class: 'model-dropdown' });
@@ -200,6 +328,8 @@ return (function () {
           svg(SEND_ENTER), h('span', {}, t('chat.send'))));
       }
       attach.disabled = !uploadAvailable || state.opening || state.busy;
+      sessionToolsButton.disabled = !hasSessionActions || state.opening || state.busy;
+      toolsUpdateControls();
       const modelDisabled = !!state.opening || !!state.busy || !!state.switchingModel;
       modelPill.disabled = modelDisabled;
       modelPill.classList.toggle('model-pill-disabled', modelDisabled);
@@ -208,7 +338,7 @@ return (function () {
 
     const controlBar = h('div', { class: 'input-bottom-bar' },
       h('div', { class: 'input-actions' }, attach, scopeBtn, slash, plan, trailing),
-      h('div', { class: 'input-controls' }, modelSelector, send));
+      h('div', { class: 'input-controls' }, sessionToolsButton, modelSelector, send));
 
     const wrapper = h('div', { class: 'input-wrapper' }, input, controlBar);
     const surface = h('div', { class: 'input-surface' },
@@ -356,7 +486,7 @@ return (function () {
       }
     };
     // ChatPage.tsx: <div className="input-area">
-    const inputArea = h('div', { class: 'input-area' }, scopePanel, surface);
+    const inputArea = h('div', { class: 'input-area' }, sessionToolsPanel, scopePanel, surface);
 
     const headerSlot = h('div', { class: 'conversation-header-slot hana-slot' });
     slots.mount('openhanako.conversation.header', headerSlot);
@@ -621,6 +751,7 @@ return (function () {
       const wasBusy = state.busy;
       state.epoch += 1;
       scopeReset();
+      toolsReset();
       const openEpoch = state.epoch;
       closeModels();
       state.id = session.id;
@@ -933,6 +1064,7 @@ return (function () {
         stagedFiles = [];
         renderAttachments();
         scopeReset();
+        toolsReset();
         state.id = null;
         state.turns = [];
         state.busy = false;

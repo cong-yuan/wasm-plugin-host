@@ -8870,6 +8870,34 @@ html[data-platform="linux"] .onboarding {
 }
 .attach-btn:disabled:hover,
 .plan-mode-btn:disabled:hover,
+/* Persisted per-session context actions are available only with native commands. */
+.sessionToolsButton {
+    border: 0; border-radius: 7px; padding: 4px 8px;
+    background: rgba(0,0,0,0.05); color: var(--text-muted);
+    font: inherit; font-size: 11px; cursor: pointer;
+}
+.sessionToolsButton:disabled { opacity: 0.4; cursor: not-allowed; }
+.sessionToolsPanel {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 10px 12px; margin-bottom: 8px;
+    border: 1px solid var(--border-subtle, rgba(0,0,0,0.12));
+    border-radius: 10px; background: var(--bg-card);
+    color: var(--text-primary); font-size: 12px;
+}
+.sessionToolsHeading, .sessionToolsControls {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+}
+.sessionToolsHeading { font-weight: 600; }
+.sessionToolsClose { margin-left: auto; }
+.sessionToolsPanel button {
+    border: 0; border-radius: 6px; padding: 4px 7px;
+    background: rgba(0,0,0,0.06); color: inherit;
+    cursor: pointer; font: inherit;
+}
+.sessionToolsPanel button:disabled { cursor: not-allowed; opacity: 0.4; }
+.sessionToolsStatus { color: var(--text-muted); min-height: 16px; }
+.sessionSummaryContent { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 170px; overflow-y: auto; }
+
 /* Attached local file staging is user-controlled until transport confirms send. */
 .nativeAttachmentChooser { display: none; }
 .nativeAttachmentList { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 5px; }
