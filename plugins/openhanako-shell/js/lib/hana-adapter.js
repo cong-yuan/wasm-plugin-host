@@ -1975,15 +1975,15 @@ return (function () {
     }
 
     if (pathname === '/api/agents' && verb === 'GET') {
-      const rows = (await api.sessions()).filter((row) => row && row.live !== false);
+      const rows = await api.agents();
       return {
-        agents: rows.map((row, index) => ({
+        agents: rows.map((row) => ({
           id: row.id,
           name: row.title || row.id,
           yuan: row.id === ASSISTANT_ID ? 'hanako' : undefined,
-          isPrimary: rows.length === 1 || index === 0,
+          isPrimary: row.id === ASSISTANT_ID,
           hasAvatar: false,
-          live: true,
+          live: row.live !== false,
           status: row.status || 'idle',
         })),
       };

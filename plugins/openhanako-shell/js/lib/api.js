@@ -234,6 +234,14 @@ return (function () {
     return rows.map(normalize).filter((row) => row.id);
   };
 
+  const liveAgents = async () => {
+    if (!tauri.available()) {
+      return [{ id: 'studio', title: 'Hanako', live: true, status: 'idle' }];
+    }
+    const rows = await tauri.invoke('list_agents');
+    return Array.isArray(rows) ? rows.map(normalize).filter((row) => row.id) : [];
+  };
+
   const mode = () => (tauri.available() ? 'tauri' : 'mock');
 
   const readTranscript = async (agentId) => {
@@ -671,6 +679,7 @@ return (function () {
     },
 
     sessions: () => (tauri.available() ? liveSessions() : Promise.resolve(mock.sessions())),
+    agents: () => liveAgents(),
 
     plugins: async () => {
       if (!tauri.available()) return mock.plugins();

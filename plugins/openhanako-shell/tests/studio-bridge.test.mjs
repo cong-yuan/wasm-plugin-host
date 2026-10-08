@@ -507,7 +507,7 @@ global.window.__TAURI_INTERNALS__ = {
         { id: 'agent-2', title: 'Cold', busy: false, live: false, messages: 1, turns: 1, status: 'idle', usage: null },
       ]);
     }
-    if (cmd === 'list_agents') return Promise.resolve([]);
+    if (cmd === 'list_agents') return Promise.resolve([{ id: 'studio', title: 'Hanako', live: true, status: 'idle' }]);
     if (cmd === 'create_agent') return Promise.resolve('agent-new');
     if (cmd === 'get_llm_config') return Promise.resolve({
       current: { provider: 'deepseek', model: 'deepseek-chat' },
@@ -773,10 +773,11 @@ check('session projection falls back to configured host model',
 
 const created = await adapter.http('POST', '/api/sessions/new-detached', {});
 const agentsResponse = await adapter.http('GET', '/api/agents');
-check('agent list preserves the API contract in mock mode',
+check('agent list comes from the agent surface rather than duplicating sessions',
   Array.isArray(agentsResponse?.agents)
-  && agentsResponse.agents.length > 0
-  && agentsResponse.agents.every((agent) => typeof agent.id === 'string' && agent.id.length > 0));
+  && agentsResponse.agents.length === 1
+  && agentsResponse.agents[0]?.id === 'studio'
+  && agentsResponse.agents[0]?.isPrimary === true);
 const providerModelEdit = await adapter.http('PUT', '/api/providers/mock/models/mock-1', {
   name: 'Mock Vision', context: 32768, maxOutput: 4096,
   image: true, reasoning: true, input: ['text', 'image'],

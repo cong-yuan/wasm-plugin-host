@@ -51,7 +51,7 @@
 
 ## Phase 3 — Studio-native Agent
 
-- 多 Agent 列表：GET `/api/agents` 已改为读取 Studio session registry 的 live rows，不再固定返回一个 Hanako；当前没有可信的 primary-agent 原语，因此单 Agent 时标 primary，多 Agent 时仅按 Studio 返回顺序给出临时 primary 标记，后续应接正式 primary 选择。
+- 多 Agent 列表：GET `/api/agents` 现在读取 Studio `list_agents`；mock 模式也使用单独的 `studio` agent fixture，不再把 session rows 冒充 agents。`isPrimary` 只对明确的 `studio` Agent 投影为 true，不再按返回顺序猜 primary。
 - agent switch：Studio 当前没有 primary-agent switch 命令，已改为带 `capability_unavailable` 的 fail-closed 响应，不伪造切换成功。
 - agent config：目前只保留最小兼容投影，真实 per-agent config 持久化仍待宿主能力。
 - permission mode / read-only / operate / auto：继续保持 `ask` locked，待宿主控制面。
