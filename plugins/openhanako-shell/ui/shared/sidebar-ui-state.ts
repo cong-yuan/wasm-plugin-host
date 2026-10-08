@@ -10,10 +10,17 @@ export interface SidebarUiSessionListPrefs {
   rowMode: SidebarSessionListRowMode;
 }
 
+export interface SidebarUiShellPrefs {
+  jianOpen: boolean;
+}
+
 export interface SidebarUiPrefs {
   projectView: SidebarUiProjectViewPrefs;
   sessionList: SidebarUiSessionListPrefs;
+  shell: SidebarUiShellPrefs;
 }
+
+const DEFAULT_JIAN_OPEN = true;
 
 const MAX_IDS = 256;
 const MAX_ID_LENGTH = 240;
@@ -46,6 +53,7 @@ function normalizeRowMode(value: unknown): SidebarSessionListRowMode {
 export type SidebarUiPrefsPatch = {
   projectView?: Partial<SidebarUiProjectViewPrefs>;
   sessionList?: Partial<SidebarUiSessionListPrefs>;
+  shell?: Partial<SidebarUiShellPrefs>;
 };
 
 export function normalizeSidebarUiPrefs(raw: unknown = {}): SidebarUiPrefs {
@@ -56,6 +64,9 @@ export function normalizeSidebarUiPrefs(raw: unknown = {}): SidebarUiPrefs {
   const sessionList = source.sessionList && typeof source.sessionList === "object" && !Array.isArray(source.sessionList)
     ? (source.sessionList as Record<string, unknown>)
     : {};
+  const shell = source.shell && typeof source.shell === "object" && !Array.isArray(source.shell)
+    ? (source.shell as Record<string, unknown>)
+    : {};
   return {
     projectView: {
       collapsedProjectIds: uniqueIds(projectView.collapsedProjectIds),
@@ -64,6 +75,9 @@ export function normalizeSidebarUiPrefs(raw: unknown = {}): SidebarUiPrefs {
     },
     sessionList: {
       rowMode: normalizeRowMode(sessionList.rowMode),
+    },
+    shell: {
+      jianOpen: typeof shell.jianOpen === "boolean" ? shell.jianOpen : DEFAULT_JIAN_OPEN,
     },
   };
 }
@@ -98,6 +112,13 @@ export function normalizeSidebarUiPrefsPatch(raw: unknown = {}): SidebarUiPrefsP
     }
   }
 
+  const shell = source.shell && typeof source.shell === "object" && !Array.isArray(source.shell)
+    ? (source.shell as Record<string, unknown>)
+    : null;
+  if (shell && typeof shell.jianOpen === "boolean") {
+    patch.shell = { jianOpen: shell.jianOpen };
+  }
+
   return patch;
 }
 
@@ -122,8 +143,16 @@ export function mergeSidebarUiPrefs(current: unknown = {}, partial: unknown = {}
       nextSessionList.rowMode = patchSessionList.rowMode;
     }
   }
+  const patchShell = patch.shell && typeof patch.shell === "object" && !Array.isArray(patch.shell)
+    ? (patch.shell as Record<string, unknown>)
+    : {};
+  const nextShell: SidebarUiShellPrefs = { ...base.shell };
+  if (Object.prototype.hasOwnProperty.call(patchShell, "jianOpen") && typeof patchShell.jianOpen === "boolean") {
+    nextShell.jianOpen = patchShell.jianOpen;
+  }
   return normalizeSidebarUiPrefs({
     projectView: nextProjectView,
     sessionList: nextSessionList,
+    shell: nextShell,
   });
 }

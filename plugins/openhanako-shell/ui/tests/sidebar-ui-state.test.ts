@@ -39,6 +39,7 @@ describe("sidebar UI preferences", () => {
         showAllProjectIds: ["project-b"],
       },
       sessionList: { rowMode: "single-line" },
+      shell: { jianOpen: true },
     });
 
     expect(mergeSidebarUiPrefs(current, {
@@ -50,6 +51,7 @@ describe("sidebar UI preferences", () => {
         showAllProjectIds: ["project-c"],
       },
       sessionList: { rowMode: "single-line" },
+      shell: { jianOpen: true },
     });
 
     expect(mergeSidebarUiPrefs(current, {
@@ -61,10 +63,15 @@ describe("sidebar UI preferences", () => {
         showAllProjectIds: ["project-b"],
       },
       sessionList: { rowMode: "two-line" },
+      shell: { jianOpen: true },
     });
 
     expect(mergeSidebarUiPrefs(current, {
       sessionList: { rowMode: "dense" },
     })).toEqual(current);
+
+    expect(mergeSidebarUiPrefs(current, {
+      shell: { jianOpen: false },
+    }).shell).toEqual({ jianOpen: false });
   });
 });

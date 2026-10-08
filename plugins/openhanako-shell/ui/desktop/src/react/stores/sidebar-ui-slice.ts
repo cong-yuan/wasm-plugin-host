@@ -7,7 +7,8 @@
  * 单行，前端繁忙时这段窗口肉眼可见。状态提升到 store 后：加载只做一次，实例
  * 只读；store 初值同步取 localStorage 上次已知值，首帧就是对的。
  *
- * server 仍是唯一持久真相，localStorage 只是首帧缓存，不参与冲突仲裁。
+ * server 仍是唯一持久真相，localStorage 只是首帧缓存；Jian 的旧 localStorage
+ * key 只在首次 server 响应没有 `shell` 分支时用于一次性迁移，之后由 Studio 值仲裁。
  */
 
 import { hanaFetch } from '../hooks/use-hana-fetch';
@@ -44,7 +45,19 @@ function normalizeSidebarUiResponse(data: unknown): SidebarUiPrefs {
   const raw = data && typeof data === 'object' && !Array.isArray(data)
     ? (data as { sidebarUi?: unknown })
     : {};
-  return normalizeSidebarUiPrefs(raw.sidebarUi || data);
+  const payload = raw.sidebarUi && typeof raw.sidebarUi === 'object' && !Array.isArray(raw.sidebarUi)
+    ? raw.sidebarUi as Record<string, unknown>
+    : (data && typeof data === 'object' && !Array.isArray(data) ? data as Record<string, unknown> : {});
+  // The first server response after this migration may legitimately have no shell branch.
+  // Preserve the existing local/cache value in that case; once Studio persists `shell`,
+  // the server becomes authoritative and wins on subsequent hydrations.
+  if (!Object.prototype.hasOwnProperty.call(payload, 'shell')) {
+    const cached = readCachedSidebarUiPrefs();
+    const legacy = window.localStorage?.getItem('hana-jian') ?? window.localStorage?.getItem('hana-jian-chat');
+    const legacyShell = legacy === null ? cached.shell : { jianOpen: legacy !== 'closed' };
+    return normalizeSidebarUiPrefs({ ...payload, shell: legacyShell });
+  }
+  return normalizeSidebarUiPrefs(payload);
 }
 
 export interface SidebarUiSlice {
@@ -56,6 +69,7 @@ export interface SidebarUiSlice {
     collapsedFolderIds?: string[];
     showAllProjectIds?: string[];
   }) => void;
+  setSidebarJianOpen: (open: boolean) => void;
 }
 
 export const createSidebarUiSlice = (
@@ -86,6 +100,17 @@ export const createSidebarUiSlice = (
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectView: next.projectView }),
     }).catch(err => console.warn('[sessions] persist sidebar UI prefs failed:', err));
+  },
+  setSidebarJianOpen: (open) => {
+    const current = get().sidebarUiPrefs;
+    const next = normalizeSidebarUiPrefs({ ...current, shell: { ...current.shell, jianOpen: open } });
+    writeCachedSidebarUiPrefs(next);
+    set({ sidebarUiPrefs: next });
+    hanaFetch('/api/preferences/sidebar-ui', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shell: { jianOpen: open } }),
+    }).catch(err => console.warn('[sessions] persist Jian sidebar preference failed:', err));
   },
 });
 

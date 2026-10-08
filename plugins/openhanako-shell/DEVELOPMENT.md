@@ -73,7 +73,7 @@
 - project / workspace mapping
 - embedded Studio file/workbench bridge：`/api/workbench/*`、Desk 兼容文件读写、file-history、resource-io、generated-resource preview 已加入 Studio iframe bridge allowlist；未加入无关 Desk 管理 API，避免把不具备 Studio 原生能力的路径伪装成已接入。
 - file / workbench / preview
-- 把当前重要的 localStorage 状态逐步迁到 Studio 持久层。
+- Jian 右侧栏开关已从 `hana-jian` / `hana-jian-chat` localStorage 迁到 `/api/preferences/sidebar-ui.shell.jianOpen`；首次 server payload 缺少 `shell` 时保留旧值做一次性迁移，之后以 Studio 持久值为准。其余重要 localStorage 状态继续按优先级迁移。
 
 ## Phase 5 — Extended Hana
 

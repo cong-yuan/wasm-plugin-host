@@ -94,7 +94,52 @@ describe('sidebar-ui-slice', () => {
         showAllProjectIds: ['project-b'],
       },
       sessionList: { rowMode: 'single-line' },
+      shell: { jianOpen: true },
     });
+  });
+  it('migrates the legacy Jian localStorage value only when the server has no shell branch', () => {
+    window.localStorage.setItem('hana-jian', 'closed');
+    const store = createSidebarUiStore();
+
+    store.getState().applySidebarUiPrefs({
+      sidebarUi: {
+        projectView: { collapsedProjectIds: [], collapsedFolderIds: [], showAllProjectIds: [] },
+        sessionList: { rowMode: 'two-line' },
+      },
+    });
+
+    expect(store.getState().sidebarUiPrefs.shell.jianOpen).toBe(false);
+    expect(JSON.parse(window.localStorage.getItem(SIDEBAR_UI_PREFS_CACHE_KEY) || '{}').shell).toEqual({ jianOpen: false });
+  });
+
+  it('prefers an explicit server shell value over the legacy localStorage value', () => {
+    window.localStorage.setItem('hana-jian', 'closed');
+    const store = createSidebarUiStore();
+
+    store.getState().applySidebarUiPrefs({
+      sidebarUi: {
+        projectView: { collapsedProjectIds: [], collapsedFolderIds: [], showAllProjectIds: [] },
+        sessionList: { rowMode: 'two-line' },
+        shell: { jianOpen: true },
+      },
+    });
+
+    expect(store.getState().sidebarUiPrefs.shell.jianOpen).toBe(true);
+  });
+
+  it('setSidebarJianOpen updates optimistically and persists the shell preference', () => {
+    const store = createSidebarUiStore();
+    store.getState().applySidebarUiPrefs(singleLinePrefsPayload());
+    hanaFetchMock.mockClear();
+
+    store.getState().setSidebarJianOpen(false);
+
+    expect(store.getState().sidebarUiPrefs.shell.jianOpen).toBe(false);
+    expect(hanaFetchMock).toHaveBeenCalledTimes(1);
+    const [url, options] = hanaFetchMock.mock.calls[0] as [string, { method: string; body: string }];
+    expect(url).toBe('/api/preferences/sidebar-ui');
+    expect(options.method).toBe('PUT');
+    expect(JSON.parse(options.body)).toEqual({ shell: { jianOpen: false } });
   });
 
   it('setSidebarProjectViewPrefs updates optimistically and persists only the project view', async () => {
