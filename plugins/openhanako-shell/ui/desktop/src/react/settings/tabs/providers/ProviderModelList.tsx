@@ -37,6 +37,14 @@ function modelIdOf(model: ProviderModelEntry): string {
   return typeof model === 'object' ? model.id : model;
 }
 
+async function requireSuccessfulResponse(res: Response, fallback: string): Promise<Record<string, any>> {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.ok === false || data?.error) {
+    throw new Error(typeof data?.error === 'string' ? data.error : fallback);
+  }
+  return data && typeof data === 'object' ? data : {};
+}
+
 function numberFromMeta(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
@@ -163,11 +171,12 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
     try {
       const discovered = discoveredModels.find(model => model.id === mid);
       const nextEntry = discovered ? compactDiscoveredModelEntry(discovered) : mid;
-      await hanaFetch('/api/config', {
+      const res = await hanaFetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ providers: { [providerId]: { models: [...rawModels, nextEntry] } } }),
       });
+      await requireSuccessfulResponse(res, 'failed to add model');
       invalidateConfigCache();
       await onRefresh();
     } catch (err: unknown) {
@@ -179,11 +188,12 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
   const removeModelFromProvider = async (mid: string) => {
     try {
       const next = rawModels.filter((m: ProviderModelEntry) => modelIdOf(m) !== mid);
-      await hanaFetch('/api/config', {
+      const res = await hanaFetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ providers: { [providerId]: { models: next } } }),
       });
+      await requireSuccessfulResponse(res, 'failed to remove model');
       invalidateConfigCache();
       await onRefresh();
     } catch (err: unknown) {
@@ -200,11 +210,12 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
       return;
     }
     try {
-      await hanaFetch('/api/config', {
+      const res = await hanaFetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ providers: { [providerId]: { models: [...rawModels, id] } } }),
       });
+      await requireSuccessfulResponse(res, 'failed to add custom model');
       invalidateConfigCache();
       setCustomInput('');
       await onRefresh();
@@ -230,8 +241,7 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: providerId, base_url: summary.base_url, api: summary.api }),
       });
-      const data = await res.json();
-      if (data.error) { showFetchHint(t('settings.providers.fetchFailed'), false); return; }
+      const data = await requireSuccessfulResponse(res, t('settings.providers.fetchFailed'));
       const models = (data.models || []) as DiscoveredModel[];
       if (models.length === 0) { showFetchHint(t('settings.providers.fetchFailed'), false); return; }
       setDiscoveredModels(models);

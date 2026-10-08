@@ -79,11 +79,15 @@ export function ModelEditPanel({ modelId, providerId, modelMeta, anchorEl, onClo
     if (dirtyCapabilities.reasoning) entry.reasoning = reasoning;
 
     try {
-      await hanaFetch(`/api/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}`, {
+      const res = await hanaFetch(`/api/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(entry),
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.ok === false || data?.error) {
+        throw new Error(typeof data?.error === 'string' ? data.error : t('settings.saveFailed'));
+      }
       showToast(t('settings.saved'), 'success');
       await onRefresh?.();
       onClose();
