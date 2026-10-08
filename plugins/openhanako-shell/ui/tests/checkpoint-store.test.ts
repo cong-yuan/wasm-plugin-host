@@ -168,6 +168,33 @@ describe("CheckpointStore", () => {
     fs.rmSync(srcDir, { recursive: true, force: true });
   });
 
+  it("rejects unsafe checkpoint ids before constructing a filesystem path", async () => {
+    await expect(store.restore("../outside")).rejects.toThrow("invalid checkpoint id");
+    await expect(store.remove("../outside")).rejects.toThrow("invalid checkpoint id");
+  });
+
+  it("refuses to restore through a symbolic-link target", async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-symlink-"));
+    const target = path.join(srcDir, "target.js");
+    const link = path.join(srcDir, "link.js");
+    fs.writeFileSync(target, "safe target");
+    fs.symlinkSync(target, link);
+
+    const id = await store.save({
+      sessionPath: null,
+      tool: "edit",
+      filePath: link,
+      maxSizeKb: 1024,
+    });
+    expect(id).toBeTruthy();
+
+    fs.writeFileSync(target, "changed target");
+    await expect(store.restore(id)).rejects.toThrow(/symbolic link/i);
+    expect(fs.readFileSync(target, "utf-8")).toBe("changed target");
+
+    fs.rmSync(srcDir, { recursive: true, force: true });
+  });
+
   it("cleanup removes entries older than retention", async () => {
     fs.mkdirSync(dir, { recursive: true });
     const oldTs = Date.now() - 3 * 24 * 60 * 60 * 1000;

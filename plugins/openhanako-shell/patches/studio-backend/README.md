@@ -68,6 +68,15 @@ File history commands receive an `agentId` and must resolve the tracked workspac
 - `file_history_get_snapshot({ agentId, snapshotId })` → `{ relPath, capturedAt, origin, content }`
 - `file_history_restore({ agentId, snapshotId })` → `{ ok, relPath }`
 
+Checkpoint commands keep the checkpoint directory on the host and expose only safe IDs / explicit edit reasons to the iframe:
+
+- `checkpoint_list({})` → `{ checkpoints }`
+- `checkpoint_create_user_edit({ filePath, reason })` → `{ ok, checkpoint }`
+- `checkpoint_restore({ id })` → `{ ok, restoredTo }`
+- `checkpoint_remove({ id })` → `{ ok, id }`
+
+The bridge validates `filePath` as absolute and `reason` as `edit-start` / `autosave-interval`; checkpoint IDs are restricted to a path-safe token. The host must additionally enforce the authenticated workspace/session scope before reading or writing checkpoint data.
+
 ResourceIO core commands receive logical resource references. `operationContext` is audit metadata only; host authorization must come from the authenticated plugin/session binding, not from `principal` or identity fields supplied by iframe JSON:
 
 - `resource_io_stat({ resource })` → ResourceIO stat result
@@ -86,6 +95,8 @@ Generated/session resource preview uses two commands:
 - `resource_read_content({ resourceId })` → `{ exists, mime, size, etag, filename, contentBase64 }`
 
 The bridge converts `contentBase64` into the browser `Response` body, preserving MIME, length, ETag and `HEAD` semantics. Ticketed `/api/resources/:resourceId/content?ticket=...` requests intentionally bypass the native preview path so Hana's existing ticket verification remains authoritative.
+
+Checkpoint route IDs are validated before the native command and the local `CheckpointStore` repeats the same validation before constructing filesystem paths. Restore refuses to write through a symbolic link. The existing `PreviewEditor` checkpoint caller continues to use the same HTTP surface, so standalone Hana behavior and native-host behavior share one contract.
 
 `workbench_read_file` is text-only in this native slice; the bridge preserves the response as a raw UTF-8 `Response` body and carries `Content-Type`, `Content-Length`, `ETag`, and file metadata headers. `HEAD` returns the same metadata without a body. `workbench_safe_delete` must use the host's recoverable-trash/checkpoint mechanism rather than a permanent unlink. Upload accepts the same base64 payload shape as the existing mobile workbench endpoint; the host must enforce the workspace scope and the existing per-file size limit before writing.
 

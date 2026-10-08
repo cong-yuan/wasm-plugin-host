@@ -1804,6 +1804,18 @@ return (function () {
           fileHistoryVersions: typeof api.fileHistoryListVersionsAvailable === 'function' && api.fileHistoryListVersionsAvailable(),
           fileHistorySnapshot: typeof api.fileHistoryGetSnapshotAvailable === 'function' && api.fileHistoryGetSnapshotAvailable(),
           fileHistoryRestore: typeof api.fileHistoryRestoreAvailable === 'function' && api.fileHistoryRestoreAvailable(),
+          checkpointList: typeof api.checkpointListAvailable === 'function' && api.checkpointListAvailable(),
+          checkpointCreateUserEdit: typeof api.checkpointCreateUserEditAvailable === 'function' && api.checkpointCreateUserEditAvailable(),
+          checkpointRestore: typeof api.checkpointRestoreAvailable === 'function' && api.checkpointRestoreAvailable(),
+          checkpointRemove: typeof api.checkpointRemoveAvailable === 'function' && api.checkpointRemoveAvailable(),
+          checkpoints: typeof api.checkpointListAvailable === 'function'
+            && typeof api.checkpointCreateUserEditAvailable === 'function'
+            && typeof api.checkpointRestoreAvailable === 'function'
+            && typeof api.checkpointRemoveAvailable === 'function'
+            && api.checkpointListAvailable()
+            && api.checkpointCreateUserEditAvailable()
+            && api.checkpointRestoreAvailable()
+            && api.checkpointRemoveAvailable(),
           resourceIO: typeof api.resourceIOStatAvailable === 'function'
             && typeof api.resourceIOReadAvailable === 'function'
             && typeof api.resourceIOListAvailable === 'function'
@@ -2131,6 +2143,15 @@ return (function () {
 
 
 
+    const isAbsolutePath = (value) => {
+      if (typeof value !== 'string' || !value.trim()) return false;
+      return value.startsWith('/') || /^[A-Za-z]:[\\\\/]/.test(value);
+    };
+    const isSafeCheckpointId = (value) => (
+      typeof value === 'string'
+      && /^[A-Za-z0-9_-]{1,200}$/.test(value)
+    );
+
     const resourceOperationContextForBridge = (payload) => ({
       reason: typeof payload?.reason === 'string' && payload.reason.trim() ? payload.reason.trim() : 'resource_io_route',
       sessionId: typeof payload?.sessionId === 'string' ? payload.sessionId : null,
@@ -2372,6 +2393,105 @@ return (function () {
         };
       } catch (error) {
         return nativeWorkbenchError(error, 'workbench_upload_failed');
+      }
+    }
+
+    // Checkpoints are capability-gated like file history. The host owns the
+    // checkpoint directory and must validate the path against its authenticated
+    // workspace/session scope.
+    if (pathname === '/api/checkpoints' && verb === 'GET') {
+      const command = 'checkpoint_list';
+      if (typeof api.checkpointListAvailable !== 'function' || !api.checkpointListAvailable()) {
+        return workbenchCapabilityUnavailable(command);
+      }
+      try {
+        const result = await api.checkpointList();
+        return Array.isArray(result) ? { checkpoints: result } : (result || { checkpoints: [] });
+      } catch (error) {
+        return nativeCommandError(error, 'checkpoint_list_failed');
+      }
+    }
+    if (pathname === '/api/checkpoints/user-edit' && verb === 'POST') {
+      const command = 'checkpoint_create_user_edit';
+      if (typeof api.checkpointCreateUserEditAvailable !== 'function' || !api.checkpointCreateUserEditAvailable()) {
+        return workbenchCapabilityUnavailable(command);
+      }
+      const filePath = typeof body?.filePath === 'string' ? body.filePath : '';
+      const reason = typeof body?.reason === 'string' ? body.reason : '';
+      if (!filePath || !isAbsolutePath(filePath)) {
+        return {
+          ok: false,
+          code: 'invalid_checkpoint_path',
+          error: 'absolute filePath required',
+          __httpStatus: 400,
+        };
+      }
+      if (reason !== 'edit-start' && reason !== 'autosave-interval') {
+        return {
+          ok: false,
+          code: 'invalid_checkpoint_reason',
+          error: 'invalid reason',
+          __httpStatus: 400,
+        };
+      }
+      try {
+        const result = await api.checkpointCreateUserEdit({ filePath, reason });
+        return {
+          ...(result && typeof result === 'object' ? result : {}),
+          ok: result?.ok !== false,
+        };
+      } catch (error) {
+        return nativeCommandError(error, 'checkpoint_create_failed');
+      }
+    }
+    const checkpointRestoreMatch = /^\/api\/checkpoints\/([^/]+)\/restore$/.exec(pathname);
+    if (checkpointRestoreMatch && verb === 'POST') {
+      const command = 'checkpoint_restore';
+      if (typeof api.checkpointRestoreAvailable !== 'function' || !api.checkpointRestoreAvailable()) {
+        return workbenchCapabilityUnavailable(command);
+      }
+      const id = decodeURIComponent(checkpointRestoreMatch[1]);
+      if (!isSafeCheckpointId(id)) {
+        return {
+          ok: false,
+          code: 'invalid_checkpoint_id',
+          error: 'invalid checkpoint id',
+          __httpStatus: 400,
+        };
+      }
+      try {
+        const result = await api.checkpointRestore(id);
+        return {
+          ...(result && typeof result === 'object' ? result : {}),
+          ok: result?.ok !== false,
+        };
+      } catch (error) {
+        return nativeCommandError(error, 'checkpoint_restore_failed');
+      }
+    }
+    const checkpointRemoveMatch = /^\/api\/checkpoints\/([^/]+)$/.exec(pathname);
+    if (checkpointRemoveMatch && verb === 'DELETE') {
+      const command = 'checkpoint_remove';
+      if (typeof api.checkpointRemoveAvailable !== 'function' || !api.checkpointRemoveAvailable()) {
+        return workbenchCapabilityUnavailable(command);
+      }
+      const id = decodeURIComponent(checkpointRemoveMatch[1]);
+      if (!isSafeCheckpointId(id)) {
+        return {
+          ok: false,
+          code: 'invalid_checkpoint_id',
+          error: 'invalid checkpoint id',
+          __httpStatus: 400,
+        };
+      }
+      try {
+        const result = await api.checkpointRemove(id);
+        return {
+          ...(result && typeof result === 'object' ? result : {}),
+          ok: result?.ok !== false,
+        };
+      } catch (error) {
+        return nativeCommandError(error, 'checkpoint_remove_failed');
       }
     }
 

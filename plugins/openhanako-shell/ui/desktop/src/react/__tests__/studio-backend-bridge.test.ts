@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { intercepts, interceptsWithCapabilities } from '../studio-backend/studio-backend-bridge';
 
 describe('Studio backend bridge file/workbench coverage', () => {
-  it('keeps file/workbench/preview routes out of Studio until native host commands exist', () => {
+  it('keeps file/workbench/preview routes capability-gated on the Studio host', () => {
     expect(intercepts('/api/workbench/files')).toBe(false);
     expect(intercepts('/api/workbench/search')).toBe(false);
     expect(intercepts('/api/workbench/content')).toBe(false);
@@ -129,6 +129,22 @@ describe('Studio backend bridge file/workbench coverage', () => {
     expect(interceptsWithCapabilities('/api/resources/res_sf_report/content', preview, 'HEAD')).toBe(true);
     expect(interceptsWithCapabilities('/api/resources/res_sf_report/ticket', preview, 'POST')).toBe(false);
     expect(interceptsWithCapabilities('/api/resources/res_sf_report/content', new Set(['resource_get_metadata']), 'GET')).toBe(false);
+
+    const checkpoints = new Set([
+      'checkpoint_list',
+      'checkpoint_create_user_edit',
+      'checkpoint_restore',
+      'checkpoint_remove',
+    ]);
+    expect(interceptsWithCapabilities('/api/checkpoints', checkpoints, 'GET')).toBe(true);
+    expect(interceptsWithCapabilities('/api/checkpoints/user-edit', checkpoints, 'POST', {
+      filePath: '/workspace/note.md',
+      reason: 'edit-start',
+    })).toBe(true);
+    expect(interceptsWithCapabilities('/api/checkpoints/1700000000_ab12/restore', checkpoints, 'POST')).toBe(true);
+    expect(interceptsWithCapabilities('/api/checkpoints/1700000000_ab12', checkpoints, 'DELETE')).toBe(true);
+    expect(interceptsWithCapabilities('/api/checkpoints/1700000000_ab12/restore', new Set(['checkpoint_list']), 'POST')).toBe(false);
+    expect(interceptsWithCapabilities('/api/checkpoints/1700000000_ab12', new Set(['checkpoint_restore']), 'DELETE')).toBe(false);
   });
 
   it('does not widen the bridge to unrelated legacy Desk APIs', () => {

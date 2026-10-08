@@ -975,6 +975,30 @@ return (function () {
         snapshotId: Number(snapshotId),
       });
     },
+    checkpointListAvailable: () => nativeCommandAvailable('checkpoint_list'),
+    checkpointList: async () => {
+      if (!tauri.available()) return null;
+      return invokeNative('checkpoint_list', {});
+    },
+    checkpointCreateUserEditAvailable: () => nativeCommandAvailable('checkpoint_create_user_edit'),
+    checkpointCreateUserEdit: async ({ filePath, reason } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('checkpoint_create_user_edit', {
+        filePath: typeof filePath === 'string' ? filePath : '',
+        reason: typeof reason === 'string' ? reason : '',
+      });
+    },
+    checkpointRestoreAvailable: () => nativeCommandAvailable('checkpoint_restore'),
+    checkpointRestore: async (id) => {
+      if (!tauri.available()) return null;
+      return invokeNative('checkpoint_restore', { id: String(id || '') });
+    },
+    checkpointRemoveAvailable: () => nativeCommandAvailable('checkpoint_remove'),
+    checkpointRemove: async (id) => {
+      if (!tauri.available()) return null;
+      return invokeNative('checkpoint_remove', { id: String(id || '') });
+    },
+
 
     resourceIOStatAvailable: () => nativeCommandAvailable('resource_io_stat'),
     resourceIOStat: async (resource) => {

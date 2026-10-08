@@ -2,6 +2,13 @@ import { Hono } from "hono";
 import path from "path";
 
 const USER_EDIT_CHECKPOINT_REASONS = new Set(["edit-start", "autosave-interval"]);
+const CHECKPOINT_ID_RE = /^[A-Za-z0-9_-]{1,200}$/;
+
+function safeCheckpointId(value: unknown): string | null {
+  if (typeof value !== "string" || !CHECKPOINT_ID_RE.test(value)) return null;
+  return value;
+}
+
 
 export function createCheckpointsRoute(engine) {
   const route = new Hono();
@@ -32,7 +39,8 @@ export function createCheckpointsRoute(engine) {
 
   route.post("/checkpoints/:id/restore", async (c) => {
     try {
-      const { id } = c.req.param();
+      const id = safeCheckpointId(c.req.param("id"));
+      if (!id) return c.json({ error: "invalid checkpoint id" }, 400);
       const result = await engine.restoreCheckpoint(id);
       return c.json({ ok: true, restoredTo: result.restoredTo });
     } catch (err) {
@@ -45,9 +53,10 @@ export function createCheckpointsRoute(engine) {
 
   route.delete("/checkpoints/:id", async (c) => {
     try {
-      const { id } = c.req.param();
+      const id = safeCheckpointId(c.req.param("id"));
+      if (!id) return c.json({ error: "invalid checkpoint id" }, 400);
       await engine.removeCheckpoint(id);
-      return c.json({ ok: true });
+      return c.json({ ok: true, id });
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }

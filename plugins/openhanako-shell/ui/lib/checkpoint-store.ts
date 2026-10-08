@@ -3,6 +3,15 @@ import path from "path";
 import { randomBytes } from "crypto";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
 
+const CHECKPOINT_ID_RE = /^[A-Za-z0-9_-]{1,200}$/;
+
+function assertSafeCheckpointId(id: string): string {
+  if (!CHECKPOINT_ID_RE.test(id)) {
+    throw new Error("invalid checkpoint id");
+  }
+  return id;
+}
+
 const BINARY_EXTENSIONS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg",
   ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
@@ -95,9 +104,21 @@ export class CheckpointStore {
   }
 
   async restore(id: string) {
-    const filePath = path.join(this._dir, `${id}.json`);
+    const safeId = assertSafeCheckpointId(id);
+    const filePath = path.join(this._dir, `${safeId}.json`);
     const raw = fs.readFileSync(filePath, "utf-8");
     const obj = JSON.parse(raw);
+    if (typeof obj.path !== "string" || !path.isAbsolute(obj.path)) {
+      throw new Error("checkpoint target path must be absolute");
+    }
+
+    try {
+      if (fs.lstatSync(obj.path).isSymbolicLink()) {
+        throw new Error("checkpoint restore refuses to write through a symbolic link");
+      }
+    } catch (err) {
+      if (err?.code !== "ENOENT") throw err;
+    }
 
     fs.mkdirSync(path.dirname(obj.path), { recursive: true });
     fs.writeFileSync(obj.path, obj.content, "utf-8");
@@ -106,10 +127,13 @@ export class CheckpointStore {
   }
 
   async remove(id: string) {
-    const filePath = path.join(this._dir, `${id}.json`);
+    const safeId = assertSafeCheckpointId(id);
+    const filePath = path.join(this._dir, `${safeId}.json`);
     try {
       fs.unlinkSync(filePath);
-    } catch {}
+    } catch (err) {
+      if (err?.code !== "ENOENT") throw err;
+    }
   }
 
   async cleanup(retentionDays: number) {

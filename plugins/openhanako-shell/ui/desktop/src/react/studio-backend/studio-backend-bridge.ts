@@ -304,10 +304,10 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/sessions/turns/retry') return true;
   if (pathname === '/api/sessions/fork') return true;
   if (pathname === '/api/session-projects' || pathname.startsWith('/api/session-projects/')) return true;
-  // File/workbench/preview remains on Hana HTTP until Studio exposes real host
-  // commands for these surfaces. Do not intercept them here: hana-adapter has no
-  // native implementation yet, and intercepting would turn an unsupported feature
-  // into a misleading HTTP 200 `{ error: ... }` response inside the iframe.
+  // File/workbench/history/resource/checkpoint routes are selected below only when
+  // their exact native command is advertised. Without that capability, the adapter
+  // returns the legacy Hana response (or a fail-closed capability error) instead of
+  // pretending that a partially upgraded Studio host supports the whole surface.
   if (pathname.startsWith('/api/bridge')) return true;
   if (/^\/api\/agents\/[^/]+\/config$/.test(pathname)) return true;
   return false;
@@ -362,8 +362,24 @@ function workbenchCommandFor(pathname: string, method = 'GET', body: unknown = n
     '/api/resource-io/move': 'resource_io_move',
     '/api/resource-io/trash': 'resource_io_trash',
   };
+  const checkpointCommands: Record<string, string> = {
+    '/api/checkpoints': 'checkpoint_list',
+    '/api/checkpoints/user-edit': 'checkpoint_create_user_edit',
+  };
   if (Object.prototype.hasOwnProperty.call(resourceIOCommands, pathname)) {
     return verb === 'POST' ? resourceIOCommands[pathname] : null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(checkpointCommands, pathname)) {
+    const command = checkpointCommands[pathname];
+    if (pathname === '/api/checkpoints') return verb === 'GET' ? command : null;
+    return verb === 'POST' ? command : null;
+  }
+  if (/^\/api\/checkpoints\/[^/]+\/(restore)$/.test(pathname)) {
+    return verb === 'POST' ? 'checkpoint_restore' : null;
+  }
+  if (/^\/api\/checkpoints\/[^/]+$/.test(pathname)) {
+    return verb === 'DELETE' ? 'checkpoint_remove' : null;
   }
 
   if (/^\/api\/resources\/[^/]+$/.test(pathname)) {

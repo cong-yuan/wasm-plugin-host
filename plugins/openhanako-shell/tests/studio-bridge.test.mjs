@@ -659,6 +659,41 @@ check('blob upload reports missing Studio capability explicitly',
         relPath: 'src/hello.txt',
       };
     }
+    if (action.command === 'checkpoint_list') {
+      return {
+        checkpoints: [{
+          id: '1700000000_ab12',
+          ts: 1700000000000,
+          tool: 'edit',
+          source: 'llm',
+          reason: 'tool-edit',
+          path: '/workspace/hello.txt',
+          size: 5,
+        }],
+      };
+    }
+    if (action.command === 'checkpoint_create_user_edit') {
+      return {
+        ok: true,
+        checkpoint: {
+          id: '1700000001_cd34',
+          path: action.args.filePath,
+          reason: action.args.reason,
+        },
+      };
+    }
+    if (action.command === 'checkpoint_restore') {
+      return {
+        ok: true,
+        restoredTo: '/workspace/hello.txt',
+      };
+    }
+    if (action.command === 'checkpoint_remove') {
+      return {
+        ok: true,
+        id: action.args.id,
+      };
+    }
     if (action.command === 'resource_io_stat') {
       return {
         exists: true,
@@ -776,6 +811,12 @@ check('blob upload reports missing Studio capability explicitly',
     workbenchCapabilities?.capabilities?.generatedResourcePreview === true
     && workbenchCapabilities?.capabilities?.resourceMetadata === true
     && workbenchCapabilities?.capabilities?.resourceContent === true);
+  check('checkpoint capability registry opens after native host advertises all checkpoint commands',
+    workbenchCapabilities?.capabilities?.checkpoints === true
+    && workbenchCapabilities?.capabilities?.checkpointList === true
+    && workbenchCapabilities?.capabilities?.checkpointCreateUserEdit === true
+    && workbenchCapabilities?.capabilities?.checkpointRestore === true
+    && workbenchCapabilities?.capabilities?.checkpointRemove === true);
 
 
 
@@ -887,6 +928,42 @@ check('blob upload reports missing Studio capability explicitly',
   });
   check('file history restore delegates to native command',
     historyRestore?.ok === true && historyRestore?.relPath === 'src/hello.txt');
+  const checkpointFiles = await adapter.http('GET', '/api/checkpoints');
+  check('checkpoint list delegates to native command',
+    checkpointFiles?.checkpoints?.[0]?.id === '1700000000_ab12');
+
+  const checkpointCreate = await adapter.http('POST', '/api/checkpoints/user-edit', {
+    filePath: '/workspace/hello.txt',
+    reason: 'edit-start',
+  });
+  check('user-edit checkpoint creation delegates to native command',
+    checkpointCreate?.ok === true
+    && checkpointCreate?.checkpoint?.id === '1700000001_cd34'
+    && checkpointCreate?.checkpoint?.path === '/workspace/hello.txt');
+
+  const checkpointRestore = await adapter.http('POST', '/api/checkpoints/1700000000_ab12/restore');
+  check('checkpoint restore delegates to native command',
+    checkpointRestore?.ok === true && checkpointRestore?.restoredTo === '/workspace/hello.txt');
+
+  const checkpointRemove = await adapter.http('DELETE', '/api/checkpoints/1700000000_ab12');
+  check('checkpoint remove delegates to native command',
+    checkpointRemove?.ok === true && checkpointRemove?.id === '1700000000_ab12');
+
+  const invalidCheckpointPath = await adapter.http('POST', '/api/checkpoints/user-edit', {
+    filePath: 'relative.md',
+    reason: 'edit-start',
+  });
+  check('native checkpoint create rejects relative paths before host invocation',
+    invalidCheckpointPath?.ok === false
+    && invalidCheckpointPath?.code === 'invalid_checkpoint_path'
+    && invalidCheckpointPath?.__httpStatus === 400);
+
+  const invalidCheckpointId = await adapter.http('DELETE', '/api/checkpoints/' + encodeURIComponent('../secret'));
+  check('native checkpoint delete rejects traversal ids before host invocation',
+    invalidCheckpointId?.ok === false
+    && invalidCheckpointId?.code === 'invalid_checkpoint_id'
+    && invalidCheckpointId?.__httpStatus === 400);
+
 
   const resourceStat = await adapter.http('POST', '/api/resource-io/stat', {
     resource: { kind: 'local-file', path: '/workspace/hello.txt' },
