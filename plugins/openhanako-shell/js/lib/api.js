@@ -527,7 +527,7 @@ return (function () {
     }
   };
 
-  const sendWithProgress = async (agentId, text, msgId, onProgress) => {
+  const sendWithProgress = async (agentId, text, msgId, onProgress, options = {}) => {
     if (!tauri.available()) return mock.sendStreaming(agentId, text, msgId, onProgress);
 
     const before = await readTranscript(agentId);
@@ -583,11 +583,16 @@ return (function () {
       try { console.warn('[openhanako] tauri.listen unavailable; using chat_partial poll'); } catch (_) {}
     }
 
-    const sendPromise = tauri.invoke('send_message', {
+    const command = Array.isArray(options?.images) && options.images.length > 0
+      ? 'send_message_with_images'
+      : 'send_message';
+    const sendPayload = {
       agentId,
       text,
       msgId: msgId || ('ohk-' + Date.now()),
-    });
+      ...(command === 'send_message_with_images' ? { images: options.images } : {}),
+    };
+    const sendPromise = tauri.invoke(command, sendPayload);
 
     // Event push (if listen works) + chat_partial/transcript poll fallback.
     const loop = (async () => {

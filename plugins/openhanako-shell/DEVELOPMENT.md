@@ -19,7 +19,7 @@
 
 目标：把日常会话操作补齐，避免核心聊天动作掉回 Hana Server 或 soft stub。
 
-当前推进顺序：retry/fork、cleanup、search、Session 键盘可达性、批量操作已完成；本批继续补 backend capability registry、Studio 不支持能力的 UI affordance fail-closed，以及 attachment/file ingest 的宿主能力接线准备；下一批进入真实 attachment/file ingest 与宿主命令补齐。
+当前推进顺序：retry/fork、cleanup、search、Session 键盘可达性、批量操作、attachment/file ingest 已完成；本批继续把图片从“文件路径附件”升级为 Studio-native multimodal ContentBlock，并打通 OpenAI-compatible `image_url` wire format。
 
 1. **Session retry + fork** — P0 / 已实现
    - `/api/sessions/turns/retry` → `retry_session_turn`
@@ -49,7 +49,8 @@
 - `/api/preferences/models`：GET 读取 Studio `get_llm_config` 的当前 provider/model 作为 utility fallback；utility_large / vision / vision_enabled / search provider 已有受校验的本地 overlay 持久化，刷新后可恢复；secret API key 仍不落 localStorage。
 - provider model metadata：`/api/providers/:provider/models/:model` 的 PUT/PATCH/DELETE 已从 soft-ack 改为真实 local overlay 写入/删除，并在 provider config、discovered-models 两条读取链路回显。
 - `/api/session-thinking-level`：已从固定 `off` 改为显式 `medium + locked + capability_unavailable`，避免 UI 误以为 Studio 支持切换；宿主补真实 session thinking 原语后再接。
-- `/api/upload-blob`：Studio 已补真实 `upload_blob` 宿主命令；base64 bytes 由 Tauri host 落到 `session-files/<sessionId>`（无 session 时进入隔离的 `pending` namespace），20 MiB 上限、session id 校验、文件名净化；adapter 只把本次上传返回的 `fileId → dest` 作为可信附件路径注入 prompt。图片仍以文件路径方式交给 agent，原生 multimodal content block 尚未接入。
+- `/api/upload-blob`：Studio 已补真实 `upload_blob` 宿主命令；base64 bytes 由 Tauri host 落到 `session-files/<sessionId>`（无 session 时进入隔离的 `pending` namespace），20 MiB 上限、session id 校验、文件名净化；普通附件继续以可信 `fileId → dest` 路径上下文交给 agent。
+- Native image path：桌面提交的 `images[]` 不再只停留在 WebSocket payload；Studio 新增 `send_message_with_images`，把图片转成持久化的 `ContentBlock::Image { url: data:, detail }`，OpenAI-compatible adapter 映射为原生 `image_url` content block。session JSONL 自包含图片数据，避免依赖本机临时路径。
 - `/api/capabilities`：UI 可读取真实 `uploadBlob` / `thinkingLevel` 等 capability；Studio host 更新后 uploadBlob 会开放，旧/缺少 Tauri bridge 的环境继续 fail closed。
 - InputControlBar：backend 明确不支持 blob ingest 时禁用附件按钮、隐藏录音入口；thinking-level control 在 Studio 不支持时直接锁定并提供可访问说明。
 - `/api/models/auxiliary-vision`：现在从 provider model metadata 的 `image` / `input` 投影 capability；没有任何模型声明 image 能力时仍 `capability_unavailable`，声明后立即回显可用模型。

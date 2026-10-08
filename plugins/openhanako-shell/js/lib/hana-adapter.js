@@ -2633,6 +2633,17 @@ return (function () {
       const shown = msg.displayMessage && typeof msg.displayMessage.text === 'string'
         ? msg.displayMessage.text
         : text;
+      const nativeImages = Array.isArray(msg.images)
+        ? msg.images
+          .filter((image) => image && typeof image.data === 'string' && image.data.length > 0)
+          .filter((image) => typeof image.mimeType === 'string' && /^image\/(png|jpeg|gif|webp)$/i.test(image.mimeType))
+          .slice(0, 10)
+          .map((image) => ({
+            data: image.data,
+            mimeType: image.mimeType.trim().toLowerCase(),
+            detail: 'auto',
+          }))
+        : [];
       const trustedAttachmentPaths = Array.isArray(msg.sessionFileRefs)
         ? msg.sessionFileRefs
           .map((ref) => ref && studioUploadedFiles.get(String(ref.fileId || '')))
@@ -2749,7 +2760,7 @@ return (function () {
                 ...(progress.details ? { details: progress.details } : {}),
               });
             }
-          });
+          }, nativeImages.length > 0 ? { images: nativeImages } : undefined);
         }
       } catch (err) {
         push({

@@ -57,6 +57,31 @@ try { await tauri.invoke('list_sessions'); } catch (err) { invokeError = err; }
 check('invoke rejects with a clear error when Tauri is missing',
   invokeError && /Tauri invoke is not available/.test(invokeError.message));
 check('api mode is mock without invoke', api.mode() === 'mock');
+{
+  const calls = [];
+  studio.hostAction = async (action) => {
+    calls.push(action);
+    if (action.command === 'transcript') return [];
+    if (action.command === 'chat_partial') return null;
+    if (action.command === 'send_message_with_images') return true;
+    throw new Error(`unexpected host command: ${action.command}`);
+  };
+  const progress = [];
+  await api.sendWithProgress(
+    'image-session',
+    'describe this',
+    'image-message',
+    (event) => progress.push(event),
+    { images: [{ data: 'aGVsbG8=', mimeType: 'image/png', detail: 'auto' }] },
+  );
+  const send = calls.find((action) => action.command === 'send_message_with_images');
+  check('native image send uses the Studio image command', !!send);
+  check('native image payload crosses the bridge unchanged',
+    send?.args?.images?.[0]?.data === 'aGVsbG8=' && send?.args?.images?.[0]?.mimeType === 'image/png');
+  check('native image send still completes the incremental API path',
+    progress.some((event) => event.kind === 'assistant_snapshot'));
+  studio.hostAction = null;
+}
 
 const health = await adapter.http('GET', '/api/health');
 check('mock health is labeled', health.studioBridge === 'mock' && health.status === 'ok');
