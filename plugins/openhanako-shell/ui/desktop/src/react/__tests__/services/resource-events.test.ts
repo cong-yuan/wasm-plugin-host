@@ -39,9 +39,11 @@ describe('resource-events', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(hanaFetch).toHaveBeenCalledWith('/api/resource-io/subscriptions/sub-1', expect.objectContaining({
-      method: 'DELETE',
-    }));
+    await vi.waitFor(() => {
+      expect(hanaFetch).toHaveBeenCalledWith('/api/resource-io/subscriptions/sub-1', expect.objectContaining({
+        method: 'DELETE',
+      }));
+    });
   });
 
   it('dedupes mount ResourceRefs without materializing native paths in the renderer', async () => {
@@ -139,6 +141,179 @@ describe('resource-events', () => {
     await expect(client.catchUpAfterReconnect()).rejects.toThrow('invalid event batch');
     client.handleEvent({ type: 'resource.changed', sequence: Number.MAX_SAFE_INTEGER + 1 });
     expect(client.lastSeenSequence()).toBe(8);
+  });
+
+  it('coalesces overlapping catch-ups and applies one batch once', async () => {
+    let release!: (response: any) => void;
+    const fetchImpl = vi.fn(() => new Promise<any>(resolve => { release = resolve; }));
+    const applyEvent = vi.fn();
+    const { createResourceEventClient } = await import('../../services/resource-events');
+    const client = createResourceEventClient({ fetchImpl, applyEvent });
+    client.handleEvent({ type: 'resource.changed', sequence: 4 });
+
+    const first = client.catchUpAfterReconnect();
+    const second = client.catchUpAfterReconnect();
+    expect(first).toBe(second);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    release({
+      ok: true, json: async () => ({
+        stale: false, latestSequence: 6,
+        events: [
+          { type: 'resource.changed', sequence: 5 },
+          { type: 'resource.changed', sequence: 6 },
+        ],
+      }),
+    });
+    await Promise.all([first, second]);
+    expect(applyEvent).toHaveBeenCalledTimes(2);
+    expect(client.lastSeenSequence()).toBe(6);
+  });
+
+  it('validates a whole event batch before applying any events or advancing the cursor', async () => {
+    const applyEvent = vi.fn();
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        stale: false, latestSequence: 7,
+        events: [
+          { type: 'resource.changed', sequence: 5 },
+          { type: 'resource.deleted', sequence: 5 },
+        ],
+      }),
+    }));
+    const { createResourceEventClient } = await import('../../services/resource-events');
+    const client = createResourceEventClient({ fetchImpl, applyEvent });
+    client.handleEvent({ type: 'resource.changed', sequence: 4 });
+
+    await expect(client.catchUpAfterReconnect()).rejects.toThrow('invalid event batch');
+    expect(applyEvent).not.toHaveBeenCalled();
+    expect(client.lastSeenSequence()).toBe(4);
+  });
+
+  it('does not replay old catch-up events over a newer live resource event', async () => {
+    let release!: (response: any) => void;
+    const fetchImpl = vi.fn(() => new Promise<any>(resolve => { release = resolve; }));
+    const applyEvent = vi.fn();
+    const { createResourceEventClient } = await import('../../services/resource-events');
+    const client = createResourceEventClient({ fetchImpl, applyEvent });
+
+    client.handleEvent({ type: 'resource.changed', sequence: 4 });
+    const pending = client.catchUpAfterReconnect();
+    client.handleEvent({ type: 'resource.changed', sequence: 7 });
+    release({
+      ok: true, json: async () => ({
+        stale: false, latestSequence: 7,
+        events: [
+          { type: 'resource.changed', sequence: 5 },
+          { type: 'resource.changed', sequence: 6 },
+          { type: 'resource.changed', sequence: 7 },
+        ],
+      }),
+    });
+    await pending;
+    expect(applyEvent).not.toHaveBeenCalled();
+    expect(client.lastSeenSequence()).toBe(7);
+  });
+
+  it('permits a new catch-up after an HTTP failure', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false, status: 503, json: async () => ({ error: 'unavailable' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true, json: async () => ({ stale: false, latestSequence: 2, events: [] }),
+      });
+    const { createResourceEventClient } = await import('../../services/resource-events');
+    const client = createResourceEventClient({ fetchImpl });
+    await expect(client.catchUpAfterReconnect()).rejects.toThrow('HTTP 503');
+    await expect(client.catchUpAfterReconnect()).resolves.toMatchObject({ latestSequence: 2 });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not acknowledge an event if its application fails', async () => {
+    const applyEvent = vi.fn(() => { throw new Error('projection failed'); });
+    const fetchImpl = vi.fn(async () => ({
+      ok: true, json: async () => ({
+        stale: false, latestSequence: 6,
+        events: [{ type: 'resource.changed', sequence: 6 }],
+      }),
+    }));
+    const { createResourceEventClient } = await import('../../services/resource-events');
+    const client = createResourceEventClient({ fetchImpl, applyEvent });
+    client.handleEvent({ type: 'resource.changed', sequence: 5 });
+    await expect(client.catchUpAfterReconnect()).rejects.toThrow('projection failed');
+    expect(client.lastSeenSequence()).toBe(5);
+  });
+
+  it('adopts the new server sequence after an acknowledged stale-cursor resubscription', async () => {
+    const resubscribeWatches = vi.fn(async () => {});
+    const fetchImpl = vi.fn(async () => ({
+      ok: true, json: async () => ({
+        stale: true, latestSequence: 2, events: [],
+      }),
+    }));
+    const { createResourceEventClient } = await import('../../services/resource-events');
+    const client = createResourceEventClient({ fetchImpl, resubscribeWatches });
+    client.handleEvent({ type: 'resource.changed', sequence: 99 });
+
+    await client.catchUpAfterReconnect();
+    expect(resubscribeWatches).toHaveBeenCalledOnce();
+    expect(client.lastSeenSequence()).toBe(2);
+    await client.catchUpAfterReconnect();
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, '/api/resource-io/events?since=2', expect.anything());
+  });
+
+  it('retains the old cursor if stale watcher resubscription fails', async () => {
+    const resubscribeWatches = vi.fn(async () => { throw new Error('sub failed'); });
+    const fetchImpl = vi.fn(async () => ({
+      ok: true, json: async () => ({ stale: true, latestSequence: 2, events: [] }),
+    }));
+    const { createResourceEventClient } = await import('../../services/resource-events');
+    const client = createResourceEventClient({ fetchImpl, resubscribeWatches });
+    client.handleEvent({ type: 'resource.changed', sequence: 99 });
+    await expect(client.catchUpAfterReconnect()).rejects.toThrow('sub failed');
+    expect(client.lastSeenSequence()).toBe(99);
+  });
+
+  it('does not accept an HTTP failure merely because it contains a subscriptionId', async () => {
+    hanaFetch.mockResolvedValueOnce({
+      ok: false, status: 503,
+      json: async () => ({ ok: true, subscriptionId: 'fake-sub' }),
+    } as any);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { retainLocalFileResourceWatch } = await import('../../services/resource-events');
+      const release = retainLocalFileResourceWatch('/tmp/failed.md');
+      await new Promise(resolve => setTimeout(resolve, 0));
+      release();
+      await Promise.resolve();
+      expect(hanaFetch).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        '[resource-events] watch failed:', expect.objectContaining({ message: 'Resource watch HTTP 503' }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not accept an unacknowledged success-status resource subscription', async () => {
+    hanaFetch.mockResolvedValueOnce({
+      ok: true, json: async () => ({ ok: false, subscriptionId: 'fake-sub' }),
+    } as any);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { retainLocalFileResourceWatch } = await import('../../services/resource-events');
+      const release = retainLocalFileResourceWatch('/tmp/missing-ack.md');
+      await new Promise(resolve => setTimeout(resolve, 0));
+      release();
+      await Promise.resolve();
+      expect(hanaFetch).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        '[resource-events] watch failed:', expect.objectContaining({ message: 'Resource watch was not acknowledged' }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('requests ResourceIO catch-up when the renderer returns to the foreground', async () => {

@@ -1664,6 +1664,45 @@ describe('ws-message-handler turn_end side effects', () => {
     });
   });
 
+  it('ignores incomplete browser running status and preserves active browser state', () => {
+    vi.stubGlobal('window', { platform: {} });
+    useStore.setState({
+      browserBySession: {
+        '/session/a.jsonl': {
+          running: true, url: 'https://active.example', thumbnail: 'CURRENT',
+          thumbnailFresh: true, collapsed: true,
+        },
+      },
+    } as never);
+    handleServerMessage({
+      type: 'browser_status', sessionPath: '/session/a.jsonl', url: 'https://other.example',
+    });
+    expect(useStore.getState().browserBySession['/session/a.jsonl']).toMatchObject({
+      running: true, url: 'https://active.example',
+      thumbnail: 'CURRENT', collapsed: true,
+    });
+  });
+
+  it('preserves URL on incremental running status but rejects another page thumbnail', () => {
+    vi.stubGlobal('window', { platform: {} });
+    useStore.setState({
+      browserBySession: {
+        '/session/a.jsonl': {
+          running: true, url: 'https://active.example', thumbnail: 'CURRENT',
+          thumbnailFresh: true,
+        },
+      },
+    } as never);
+    handleServerMessage({
+      type: 'browser_status', sessionPath: '/session/a.jsonl', running: true,
+      thumbnail: 'UNRELATED', thumbnailUrl: 'https://other.example',
+    });
+    expect(useStore.getState().browserBySession['/session/a.jsonl']).toMatchObject({
+      running: true, url: 'https://active.example',
+      thumbnail: 'CURRENT', thumbnailFresh: false,
+    });
+  });
+
   it('retains the thumbnail only when the same running browser URL is unchanged', () => {
     vi.stubGlobal('window', { platform: {} });
     useStore.setState({

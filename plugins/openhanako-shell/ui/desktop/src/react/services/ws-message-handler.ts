@@ -664,10 +664,18 @@ export function handleServerMessage(msg: any): void {
     case 'browser_status': {
       const bsp = msg.sessionPath;
       if (!bsp) { console.warn('[ws] event missing sessionPath:', msg.type); break; }
-      const bRunning = !!msg.running;
-      const bUrl = msg.url || null;
+      // An incomplete status event is not a stop signal. Ignore it rather
+      // than wiping a running session after websocket reconnection.
+      if (typeof msg.running !== 'boolean') break;
+      const bRunning = msg.running;
       const prev = browserStateForPath(state, bsp);
-      const hasFreshThumbnail = bRunning && typeof msg.thumbnail === 'string' && msg.thumbnail.length > 0;
+      // Some incremental status updates omit URL: preserve it only for the
+      // same running lifecycle, never inherit a stopped browser's old page.
+      const bUrl = bRunning
+        ? (typeof msg.url === 'string' ? (msg.url || null) : (prev.running ? prev.url : null))
+        : null;
+      const hasFreshThumbnail = bRunning && typeof msg.thumbnail === 'string' && msg.thumbnail.length > 0
+        && (typeof msg.thumbnailUrl !== 'string' || msg.thumbnailUrl === bUrl);
       // Navigation or a new browser lifecycle invalidates the previous page's
       // thumbnail. A missing screenshot for a different URL is not a cached hit.
       const samePage = prev?.running === true && prev.url === bUrl;

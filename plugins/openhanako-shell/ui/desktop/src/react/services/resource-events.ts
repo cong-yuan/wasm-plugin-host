@@ -46,6 +46,7 @@ export function createResourceEventClient({
   resubscribeWatches,
 }: ResourceEventClientOptions = {}) {
   let lastSeenSequence = 0;
+  let catchUpInFlight: Promise<any> | null = null;
 
   const handleEvent = (event: ResourceEvent | null | undefined): void => {
     if (!isResourceEvent(event)) return;
@@ -54,37 +55,70 @@ export function createResourceEventClient({
     }
   };
 
-  const catchUpAfterReconnect = async (options: { applyEvent?: (event: ResourceEvent) => void } = {}) => {
-    const res = await fetchImpl(`/api/resource-io/events?since=${lastSeenSequence}`, {
-      method: 'GET',
-      throwOnHttpError: false,
-    });
-    if (res.ok === false) {
-      throw new Error(`Resource catch-up failed (HTTP ${res.status || 'unknown'})`);
-    }
-    const data = await res.json();
-    if (!data || typeof data.stale !== 'boolean'
-      || !Number.isSafeInteger(data.latestSequence) || data.latestSequence < 0
-      || !Array.isArray(data.events)) {
-      throw new Error('Resource catch-up returned an invalid event batch');
-    }
-    if (data.stale) {
-      await resubscribeWatches?.();
+  const catchUpAfterReconnect = (options: { applyEvent?: (event: ResourceEvent) => void } = {}) => {
+    // Focus, visibility and websocket recovery can overlap. Share one request
+    // and dispatch its events only once; a failure must still permit a retry.
+    if (catchUpInFlight) return catchUpInFlight;
+    const pending = (async () => {
+      const cursorAtStart = lastSeenSequence;
+      const res = await fetchImpl(`/api/resource-io/events?since=${lastSeenSequence}`, {
+        method: 'GET',
+        throwOnHttpError: false,
+      });
+      if (res.ok === false) {
+        throw new Error(`Resource catch-up failed (HTTP ${res.status || 'unknown'})`);
+      }
+      const data = await res.json();
+      if (!data || typeof data.stale !== 'boolean'
+        || !Number.isSafeInteger(data.latestSequence) || data.latestSequence < 0
+        || !Array.isArray(data.events)) {
+        throw new Error('Resource catch-up returned an invalid event batch');
+      }
+      if (!data.stale && data.latestSequence < cursorAtStart) {
+        throw new Error('Resource catch-up returned an older event sequence');
+      }
+      if (data.stale) {
+        await resubscribeWatches?.();
+        // Server restart may reset its event sequence to a smaller value.
+        // Once watches are reattached, adopt that new epoch rather than
+        // requesting the permanently stale old cursor on every reconnect.
+        if (lastSeenSequence === cursorAtStart || data.latestSequence >= lastSeenSequence) {
+          lastSeenSequence = data.latestSequence;
+        }
+        return data;
+      }
+
+      // Validate the entire response before dispatching anything. A malformed
+      // or out-of-order batch must not partially mutate editor state.
+      let prior = cursorAtStart;
+      for (const event of data.events) {
+        if (!isResourceEvent(event)
+          || !Number.isSafeInteger(event.sequence)
+          || event.sequence! <= prior
+          || event.sequence! > data.latestSequence) {
+          throw new Error('Resource catch-up returned an invalid event batch');
+        }
+        prior = event.sequence!;
+      }
+      const handler = options.applyEvent || applyEvent;
+      for (const event of data.events) {
+        // Newer live events may have arrived while catch-up was in flight.
+        // Never replay an older event on top of a newer editor projection.
+        if (event.sequence! <= lastSeenSequence) continue;
+        handler?.(event);
+        handleEvent(event);
+      }
       if (data.latestSequence > lastSeenSequence) {
         lastSeenSequence = data.latestSequence;
       }
       return data;
-    }
-
-    const handler = options.applyEvent || applyEvent;
-    for (const event of data.events) {
-      handleEvent(event);
-      handler?.(event);
-    }
-    if (data.latestSequence > lastSeenSequence) {
-      lastSeenSequence = data.latestSequence;
-    }
-    return data;
+    })();
+    catchUpInFlight = pending;
+    void pending.then(
+      () => { if (catchUpInFlight === pending) catchUpInFlight = null; },
+      () => { if (catchUpInFlight === pending) catchUpInFlight = null; },
+    );
+    return pending;
   };
 
   return {
@@ -149,10 +183,13 @@ function subscribeEntry(entry: WatchEntry): Promise<void> {
     body: JSON.stringify({ purpose: 'resource-watch', resources: [entry.ref] }),
     throwOnHttpError: false,
   })
-    .then(res => res.json())
-    .then((data) => {
-      if (typeof data?.subscriptionId === 'string') entry.subscriptionId = data.subscriptionId;
-      else console.warn('[resource-events] watch failed:', data?.error || entry.ref);
+    .then(async res => {
+      if (res.ok === false) throw new Error(`Resource watch HTTP ${res.status ?? 'unknown'}`);
+      const data = await res.json();
+      if (data?.ok !== true || typeof data.subscriptionId !== 'string' || !data.subscriptionId) {
+        throw new Error('Resource watch was not acknowledged');
+      }
+      entry.subscriptionId = data.subscriptionId;
       if (entry.disposed) releaseEntry(entry);
     })
     .catch((err) => {
@@ -202,6 +239,11 @@ async function resubscribeActiveWatches(): Promise<void> {
     }
     if (!entry.disposed) entry.ready = subscribeEntry(entry);
     await entry.ready;
+    // subscribeEntry logs a failure for ordinary mounting; reconnect
+    // must additionally fail closed rather than pretending watches exist.
+    if (!entry.disposed && !entry.subscriptionId) {
+      throw new Error('Resource watch resubscription was not acknowledged');
+    }
   }));
 }
 
