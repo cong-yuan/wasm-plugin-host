@@ -268,6 +268,57 @@ describe("LocalFsProvider", () => {
     expect(fs.existsSync(lock)).toBe(false);
   });
 
+  it("records CAS lock ownership and refuses to recover a live lock", async () => {
+    const { cwd, provider } = makeProvider();
+    const lock = path.join(cwd, ".shared.md.openhanako-cas-lock");
+    const ref = { kind: "local-file", path: "shared.md" };
+    expect(provider.inspectExpectedVersionLock(ref)).toEqual({ locked: false, owner: null });
+    fs.mkdirSync(lock);
+    const owner = {
+      version: 1,
+      nonce: "a".repeat(32),
+      pid: process.pid,
+      hostname: (await import("os")).hostname(),
+      createdAt: Date.now() - 120_000,
+    };
+    fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify(owner));
+    expect(provider.inspectExpectedVersionLock(ref)).toEqual({ locked: true, owner });
+    expect(provider.recoverOrphanedExpectedVersionLock(ref, owner.nonce)).toBe(false);
+    expect(fs.existsSync(lock)).toBe(true);
+  });
+
+  it("requires a matching nonce and a verified dead local process to recover an orphaned lock", async () => {
+    const { cwd, provider } = makeProvider();
+    const lock = path.join(cwd, ".shared.md.openhanako-cas-lock");
+    const ref = { kind: "local-file", path: "shared.md" };
+    fs.writeFileSync(path.join(cwd, "shared.md"), "original");
+    fs.mkdirSync(lock);
+    const owner = {
+      version: 1,
+      nonce: "b".repeat(32),
+      pid: 999999999,
+      hostname: (await import("os")).hostname(),
+      createdAt: Date.now() - 120_000,
+    };
+    fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify(owner));
+
+    expect(provider.recoverOrphanedExpectedVersionLock(ref, "wrong")).toBe(false);
+    expect(fs.existsSync(lock)).toBe(true);
+    expect(provider.recoverOrphanedExpectedVersionLock(ref, owner.nonce)).toBe(true);
+    expect(provider.inspectExpectedVersionLock(ref)).toEqual({ locked: false, owner: null });
+    expect(fs.readFileSync(path.join(cwd, "shared.md"), "utf-8")).toBe("original");
+  });
+
+  it("fails closed for ownerless and untrusted CAS locks", async () => {
+    const { cwd, provider } = makeProvider();
+    const lock = path.join(cwd, ".shared.md.openhanako-cas-lock");
+    const ref = { kind: "local-file", path: "shared.md" };
+    fs.mkdirSync(lock);
+    expect(provider.inspectExpectedVersionLock(ref)).toEqual({ locked: true, owner: null });
+    expect(provider.recoverOrphanedExpectedVersionLock(ref, "a".repeat(32))).toBe(false);
+    expect(fs.existsSync(lock)).toBe(true);
+  });
+
   it("leaves original bytes and no CAS artifacts when atomic replacement fails", async () => {
     const { cwd, provider } = makeProvider();
     const filePath = path.join(cwd, "draft.md");

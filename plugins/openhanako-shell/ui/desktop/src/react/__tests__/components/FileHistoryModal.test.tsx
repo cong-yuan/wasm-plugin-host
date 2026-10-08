@@ -33,7 +33,10 @@ beforeEach(() => {
   useStore.setState({
     fileHistoryModal: { open: true, preselectRelPath: null },
     currentAgentId: 'hana',
+    deskWorkspaceNativeRoot: '',
+    deskBasePath: '',
   } as never);
+  window.platform = {} as typeof window.platform;
 });
 
 afterEach(() => {
@@ -156,6 +159,46 @@ describe('FileHistoryModal', () => {
     expect(refreshMocks.refreshOpenPreviewDocumentsForFilePath).toHaveBeenCalledWith('/tmp/workspace/notes/a.md');
   });
 
+  it('sends observed file versions and blocks duplicate restores or selection during write', async () => {
+    useStore.setState({ deskWorkspaceNativeRoot: '/tmp/workspace' } as never);
+    window.platform = {
+      readFileSnapshot: vi.fn(async () => ({
+        content: 'current', version: { mtimeMs: 12, size: 7, sha256: 'a'.repeat(64) },
+      })),
+    } as unknown as typeof window.platform;
+    let finish!: (result: any) => void;
+    mocks.restoreHistorySnapshot.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    render(<FileHistoryModal />);
+    fireEvent.click(await screen.findByText('notes/a.md'));
+    await waitFor(() => expect(screen.getByTestId('fh-restore')).not.toBeDisabled());
+
+    fireEvent.click(screen.getByTestId('fh-restore'));
+    expect(mocks.restoreHistorySnapshot).toHaveBeenCalledWith('hana', 7, {
+      mtimeMs: 12, size: 7, sha256: 'a'.repeat(64),
+    });
+    expect(screen.getByTestId('fh-restore')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'gone.md' })).toBeDisabled();
+    expect(screen.getByTestId('fh-version-7')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('fh-restore'));
+    expect(mocks.restoreHistorySnapshot).toHaveBeenCalledTimes(1);
+
+    await act(async () => { finish({ ok: true, relPath: 'notes/a.md' }); });
+    expect(screen.getByText('fileHistory.restoreDone')).toBeInTheDocument();
+  });
+
+  it('ignores completion from a restore whose agent changed while writing', async () => {
+    let finish!: (result: any) => void;
+    mocks.restoreHistorySnapshot.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    render(<FileHistoryModal />);
+    fireEvent.click(await screen.findByText('notes/a.md'));
+    await waitFor(() => expect(screen.getByTestId('fh-restore')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('fh-restore'));
+    act(() => { useStore.setState({ currentAgentId: 'other' }); });
+
+    await act(async () => { finish({ ok: true, relPath: 'notes/a.md' }); });
+    expect(screen.queryByText('fileHistory.restoreDone')).not.toBeInTheDocument();
+  });
+
   it('loads versions when a file is selected and restores on confirm', async () => {
     render(<FileHistoryModal />);
     await waitFor(() => expect(screen.getByText('notes/a.md')).toBeTruthy());
@@ -166,7 +209,7 @@ describe('FileHistoryModal', () => {
     await waitFor(() => expect(mocks.fetchHistorySnapshot).toHaveBeenCalledWith('hana', 7));
     await waitFor(() => expect(screen.getByTestId('fh-restore')).not.toBeDisabled());
     fireEvent.click(screen.getByTestId('fh-restore'));
-    await waitFor(() => expect(mocks.restoreHistorySnapshot).toHaveBeenCalledWith('hana', 7));
+    await waitFor(() => expect(mocks.restoreHistorySnapshot).toHaveBeenCalledWith('hana', 7, undefined));
     expect(confirm).toHaveBeenCalledWith('fileHistory.restoreConfirm');
   });
 });

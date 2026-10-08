@@ -6,13 +6,13 @@
  * removed 行是将被替换的当前内容。当前内容读不到（已删除/远端 mount）时降级为与上一版本
  * 比对，再不行展示快照全文（不做假 diff）。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Overlay } from '../../ui';
 import { useI18n } from '../../hooks/use-i18n';
 import { useStore } from '../../stores';
 import {
   fetchHistoryFiles, fetchHistoryVersions, fetchHistorySnapshot, restoreHistorySnapshot,
-  type FileHistoryFileEntry, type FileHistoryVersionEntry,
+  type FileHistoryFileEntry, type FileHistoryVersionEntry, type FileHistoryExpectedVersion,
 } from '../../utils/file-history-api';
 import { diffLines, type DiffLine } from '../../utils/line-diff';
 import { refreshOpenPreviewDocumentsForFilePath } from '../../utils/preview-document-refresh';
@@ -32,6 +32,11 @@ export function FileHistoryModal() {
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const [snapshotText, setSnapshotText] = useState<string | null>(null);
   const [currentText, setCurrentText] = useState<string | null>(null);
+  const [currentVersion, setCurrentVersion] = useState<FileHistoryExpectedVersion | null>(null);
+  const restoreInFlight = useRef(false);
+  const restoreEpoch = useRef(0);
+  useEffect(() => () => { restoreEpoch.current += 1; }, [modal.open, agentId, selectedPath]);
+
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'loading' | 'restoring' | 'restored' | 'error'>('idle');
 
@@ -44,6 +49,7 @@ export function FileHistoryModal() {
     setSelectedVersion(null);
     setSnapshotText(null);
     setCurrentText(null);
+    setCurrentVersion(null);
     if (!modal.open || !agentId) return;
     setStatus('loading');
     fetchHistoryFiles(agentId)
@@ -65,6 +71,7 @@ export function FileHistoryModal() {
     setSelectedVersion(null);
     setSnapshotText(null);
     setCurrentText(null);
+    setCurrentVersion(null);
     if (!modal.open || !agentId || !selectedPath) return;
     fetchHistoryVersions(agentId, selectedPath)
       .then(list => {
@@ -81,6 +88,7 @@ export function FileHistoryModal() {
     let cancelled = false;
     setSnapshotText(null);
     setCurrentText(null);
+    setCurrentVersion(null);
     setSnapshotLoading(false);
     if (!modal.open || !agentId || !selectedPath || selectedVersion == null) return;
     setSnapshotLoading(true);
@@ -97,6 +105,11 @@ export function FileHistoryModal() {
           const abs = `${nativeRoot.replace(/\/+$/, '')}/${selectedPath}`;
           const snap = await window.platform?.readFileSnapshot?.(abs).catch(() => null);
           current = snap?.content ?? null;
+          const version = snap?.version;
+          if (!cancelled && version && typeof version === 'object'
+            && ('mtimeMs' in version || 'sha256' in version)) {
+            setCurrentVersion(version as FileHistoryExpectedVersion);
+          }
         }
         if (current == null) {
           const idx = versions.findIndex(v => v.id === selectedVersion);
@@ -123,12 +136,19 @@ export function FileHistoryModal() {
   }, [snapshotText, currentText]);
 
   const handleRestore = useCallback(async () => {
-    if (!agentId || selectedVersion == null || !selectedPath || snapshotLoading || snapshotText == null || status === 'restoring') return;
+    if (!modal.open || !agentId || selectedVersion == null || !selectedPath
+      || snapshotLoading || snapshotText == null || status === 'restoring' || restoreInFlight.current) return;
     if (!window.confirm(t('fileHistory.restoreConfirm'))) return;
+    restoreInFlight.current = true;
+    const epoch = restoreEpoch.current;
+    const isCurrent = () => epoch === restoreEpoch.current
+      && useStore.getState().fileHistoryModal.open
+      && useStore.getState().currentAgentId === agentId;
     setStatus('restoring');
     try {
-      const result = await restoreHistorySnapshot(agentId, selectedVersion);
+      const result = await restoreHistorySnapshot(agentId, selectedVersion, currentVersion ?? undefined);
       if (result.relPath !== selectedPath) throw new Error('Unexpected restored file path');
+      if (!isCurrent()) return;
       setStatus('restored');
       // The just-restored file is now the selected snapshot. Clear the obsolete
       // before-restore diff and refresh open previews using the existing
@@ -143,14 +163,16 @@ export function FileHistoryModal() {
       // Failure to refresh the timeline must not misreport a successful file write.
       try {
         const list = await fetchHistoryVersions(agentId, selectedPath);
-        setVersions(list);
+        if (isCurrent()) setVersions(list);
       } catch (err) {
         console.warn('[FileHistory] post-restore history refresh failed:', err);
       }
     } catch {
-      setStatus('error');
+      if (isCurrent()) setStatus('error');
+    } finally {
+      restoreInFlight.current = false;
     }
-  }, [agentId, selectedVersion, selectedPath, snapshotLoading, snapshotText, status, t, nativeRoot]);
+  }, [modal.open, agentId, selectedVersion, selectedPath, snapshotLoading, snapshotText, status, t, nativeRoot, currentVersion]);
 
   const visibleFiles = files.filter(f => !filter || f.relPath.includes(filter));
   const activeFiles = visibleFiles.filter(f => f.deletedAt == null);
@@ -173,6 +195,7 @@ export function FileHistoryModal() {
           {activeFiles.map(f => (
             <button key={f.relPath} type="button"
               className={`${styles.fileRow}${selectedPath === f.relPath ? ` ${styles.fileRowActive}` : ''}`}
+              disabled={status === 'restoring'}
               onClick={() => { setSelectedPath(f.relPath); setStatus('idle'); }}>
               {f.relPath}
             </button>
@@ -183,7 +206,8 @@ export function FileHistoryModal() {
               {deletedFiles.map(f => (
                 <button key={f.relPath} type="button"
                   className={`${styles.fileRow} ${styles.fileRowDeleted}${selectedPath === f.relPath ? ` ${styles.fileRowActive}` : ''}`}
-                  onClick={() => { setSelectedPath(f.relPath); setStatus('idle'); }}>
+                  disabled={status === 'restoring'}
+              onClick={() => { setSelectedPath(f.relPath); setStatus('idle'); }}>
                   {f.relPath}
                 </button>
               ))}
@@ -197,6 +221,7 @@ export function FileHistoryModal() {
           {versions.map(v => (
             <button key={v.id} type="button" data-testid={`fh-version-${v.id}`}
               className={`${styles.versionRow}${selectedVersion === v.id ? ` ${styles.versionRowActive}` : ''}`}
+              disabled={status === 'restoring'}
               onClick={() => { setSelectedVersion(v.id); setStatus('idle'); }}>
               <span className={styles.versionTime}>{new Date(v.capturedAt).toLocaleString()}</span>
               <span className={styles.versionOrigin}>{t(`fileHistory.origin.${v.origin}`)}</span>

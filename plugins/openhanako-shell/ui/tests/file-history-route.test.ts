@@ -14,6 +14,7 @@ function makeApp() {
   };
   const resourceIO = {
     write: vi.fn(async (_ref: unknown, _content: unknown, _context: unknown) => ({})),
+    writeExpectedVersion: vi.fn(async (_ref: unknown, _content: unknown, _expected: unknown, _context: unknown) => ({})),
   };
   const engine = {
     getFileHistoryService: () => service,
@@ -86,6 +87,59 @@ describe("file-history route", () => {
 
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: "Resource write failed" });
+    expect(service.captureNow).not.toHaveBeenCalled();
+  });
+
+  it("uses versioned ResourceIO restore when the editor supplied an observed version", async () => {
+    const { app, service, resourceIO, root } = makeApp();
+    const expectedVersion = { sha256: "a".repeat(64), mtimeMs: 1234, size: 5 };
+
+    const res = await app.request("/api/file-history/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId: "hana", snapshotId: 7, expectedVersion }),
+    });
+    expect(res.status).toBe(200);
+    expect(resourceIO.write).not.toHaveBeenCalled();
+    expect(resourceIO.writeExpectedVersion).toHaveBeenCalledWith(
+      { kind: "local-file", path: path.join(root, "a.md") },
+      Buffer.from("hello"),
+      expectedVersion,
+      {},
+    );
+    expect(service.captureNow).toHaveBeenCalledOnce();
+  });
+
+  it("returns a version conflict rather than overwriting a changed editor file", async () => {
+    const { app, service, resourceIO } = makeApp();
+    resourceIO.writeExpectedVersion.mockResolvedValueOnce({
+      ok: false, conflict: true, safeMessage: "File was changed after preview",
+    });
+    const res = await app.request("/api/file-history/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "hana", snapshotId: 7, expectedVersion: { sha256: "b".repeat(64) },
+      }),
+    });
+    expect(res.status).toBe(409);
+    expect((await res.json()).conflict).toBe(true);
+    expect(resourceIO.write).not.toHaveBeenCalled();
+    expect(service.captureNow).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed restore version tokens without issuing writes", async () => {
+    const { app, service, resourceIO } = makeApp();
+    for (const expectedVersion of [{}, { sha256: "not-a-hash" }, { mtimeMs: -1 }, { size: 10 }]) {
+      const res = await app.request("/api/file-history/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentId: "hana", snapshotId: 7, expectedVersion }),
+      });
+      expect(res.status).toBe(400);
+    }
+    expect(resourceIO.write).not.toHaveBeenCalled();
+    expect(resourceIO.writeExpectedVersion).not.toHaveBeenCalled();
     expect(service.captureNow).not.toHaveBeenCalled();
   });
 

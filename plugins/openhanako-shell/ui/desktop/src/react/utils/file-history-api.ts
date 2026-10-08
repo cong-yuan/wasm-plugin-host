@@ -33,6 +33,12 @@ export interface FileHistorySnapshotContent {
   content: string;
 }
 
+export interface FileHistoryExpectedVersion {
+  mtimeMs?: number;
+  size?: number | null;
+  sha256?: string;
+}
+
 export interface FileHistoryRestoreResult {
   ok: boolean;
   relPath: string;
@@ -68,11 +74,12 @@ export async function fetchHistorySnapshot(
 export async function restoreHistorySnapshot(
   agentId: string,
   snapshotId: number,
+  expectedVersion?: FileHistoryExpectedVersion,
 ): Promise<FileHistoryRestoreResult> {
   const res = await hanaFetch('/api/file-history/restore', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agentId, snapshotId }),
+    body: JSON.stringify({ agentId, snapshotId, ...(expectedVersion ? { expectedVersion } : {}) }),
   });
   const result = await res.json();
   if (!res.ok || result?.ok !== true || typeof result.relPath !== 'string' || !result.relPath) {

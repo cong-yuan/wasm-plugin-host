@@ -23,6 +23,17 @@ describe('file-history restore API', () => {
     });
   });
 
+  it('includes the observed editor version when issuing a guarded restore', async () => {
+    mocks.hanaFetch.mockResolvedValue(new Response(
+      JSON.stringify({ ok: true, relPath: 'notes/a.md' }), { status: 200 },
+    ));
+    const expectedVersion = { mtimeMs: 123, size: 3, sha256: 'a'.repeat(64) };
+    await restoreHistorySnapshot('hana', 7, expectedVersion);
+    expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/file-history/restore', expect.objectContaining({
+      body: JSON.stringify({ agentId: 'hana', snapshotId: 7, expectedVersion }),
+    }));
+  });
+
   it('rejects a success-status response when restore was not acknowledged', async () => {
     mocks.hanaFetch.mockResolvedValue(new Response(
       JSON.stringify({ ok: false, error: 'Resource write failed' }),

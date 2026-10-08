@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import os from "os";
 import { ResourceIOError, resourceAccessDenied, resourceNotFound, targetAlreadyExists } from "../errors.ts";
 import { normalizeResourceRef, resourceKeyForRef } from "../resource-refs.ts";
 import type {
@@ -39,6 +40,47 @@ type LocalFsProviderOptions = {
 };
 
 const SEARCH_SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage"]);
+
+type CasLockOwner = {
+  version: 1;
+  nonce: string;
+  pid: number;
+  hostname: string;
+  createdAt: number;
+};
+
+const CAS_LOCK_RECOVERY_MIN_AGE_MS = 60_000;
+
+function casLockDir(filePath: string): string {
+  return path.join(path.dirname(filePath), `.${path.basename(filePath)}.openhanako-cas-lock`);
+}
+
+function readCasLockOwner(lockDir: string): CasLockOwner | null {
+  try {
+    if (!fs.lstatSync(lockDir).isDirectory()) return null;
+    const ownerPath = path.join(lockDir, "owner.json");
+    if (!fs.lstatSync(ownerPath).isFile()) return null;
+    const raw = fs.readFileSync(ownerPath, "utf-8");
+    const value = JSON.parse(raw);
+    if (value?.version !== 1 || !/^[a-f0-9]{32}$/.test(value.nonce)
+      || !Number.isSafeInteger(value.pid) || value.pid <= 0
+      || typeof value.hostname !== "string" || !value.hostname
+      || !Number.isSafeInteger(value.createdAt) || value.createdAt <= 0) return null;
+    return value as CasLockOwner;
+  } catch {
+    return null;
+  }
+}
+
+function isDeadLocalProcess(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err: any) {
+    // EPERM means the process still exists. Unknown errors are fail-closed.
+    return err?.code === "ESRCH";
+  }
+}
 
 export class LocalFsProvider {
   readonly id = "local_fs" as const;
@@ -132,7 +174,7 @@ export class LocalFsProvider {
     // An existing lock fails closed; it must not be stolen while another process
     // may still own it. External programs which ignore this protocol can still
     // race, so recheck immediately before replacement as well.
-    const lockDir = path.join(path.dirname(filePath), `.${path.basename(filePath)}.openhanako-cas-lock`);
+    const lockDir = casLockDir(filePath);
     const conflict = (): ResourceWriteExpectedVersionResult => {
       const version = statFileVersionOrNull(filePath, Boolean(expectedVersion?.sha256));
       return {
@@ -151,8 +193,19 @@ export class LocalFsProvider {
       throw err;
     }
 
+    const ownerPath = path.join(lockDir, "owner.json");
     let tempPath: string | null = null;
+    let ownerWritten = false;
     try {
+      const owner: CasLockOwner = {
+        version: 1,
+        nonce: crypto.randomBytes(16).toString("hex"),
+        pid: process.pid,
+        hostname: os.hostname(),
+        createdAt: Date.now(),
+      };
+      fs.writeFileSync(ownerPath, JSON.stringify(owner), { encoding: "utf-8", flag: "wx", mode: 0o600 });
+      ownerWritten = true;
       const currentVersion = statFileVersionOrNull(filePath, Boolean(expectedVersion?.sha256));
       if (!currentVersion || !fileVersionsMatch(currentVersion, expectedVersion)) return conflict();
 
@@ -180,8 +233,62 @@ export class LocalFsProvider {
           if (err?.code !== "ENOENT") throw err;
         }
       }
+      // Release only the lock we acquired, without recursively deleting
+      // unexpected files placed inside the directory by another actor.
+      if (ownerWritten) {
+        try { fs.unlinkSync(ownerPath); } catch (err: any) {
+          if (err?.code !== "ENOENT") throw err;
+        }
+      }
       fs.rmdirSync(lockDir);
     }
+  }
+
+  /**
+   * Explicit operator recovery for a crashed CAS writer. Never auto-reclaim
+   * unknown/young/remote/live locks. Callers must first inspect the owner and
+   * supply its exact unpredictable nonce; the guard still authorizes the path.
+   */
+  inspectExpectedVersionLock(ref: ResourceRef | unknown): { locked: boolean; owner: CasLockOwner | null } {
+    const filePath = this.resolvePath(ref);
+    this.assertAllowed(filePath, "write");
+    const lockDir = casLockDir(filePath);
+    try {
+      fs.lstatSync(lockDir);
+      return { locked: true, owner: readCasLockOwner(lockDir) };
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return { locked: false, owner: null };
+      throw err;
+    }
+  }
+
+  recoverOrphanedExpectedVersionLock(ref: ResourceRef | unknown, nonce: string): boolean {
+    const filePath = this.resolvePath(ref);
+    this.assertAllowed(filePath, "write");
+    const lockDir = casLockDir(filePath);
+    const owner = readCasLockOwner(lockDir);
+    if (!owner || owner.nonce !== nonce
+      || owner.hostname !== os.hostname()
+      || Date.now() - owner.createdAt < CAS_LOCK_RECOVERY_MIN_AGE_MS
+      || !isDeadLocalProcess(owner.pid)) return false;
+
+    // Move the exact observed lock out of the active path atomically. Verify
+    // the nonce again after moving before touching its contents.
+    const quarantine = `${lockDir}.recovery-${crypto.randomBytes(8).toString("hex")}`;
+    try {
+      fs.renameSync(lockDir, quarantine);
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return false;
+      throw err;
+    }
+    if (readCasLockOwner(quarantine)?.nonce !== nonce) {
+      // Concurrent replacement of the observed lock: preserve its contents.
+      if (!fs.existsSync(lockDir)) fs.renameSync(quarantine, lockDir);
+      return false;
+    }
+    fs.unlinkSync(path.join(quarantine, "owner.json"));
+    fs.rmdirSync(quarantine);
+    return true;
   }
 
   async edit(ref: ResourceRef | unknown, edits: ResourceEdit[]): Promise<ResourceMutationResult> {

@@ -83,12 +83,28 @@ export function createFileHistoryRoute(engine: any) {
       if (!relPath) return c.json({ error: "corrupt snapshot path" }, 500);
       const absPath = path.join(root, ...relPath.split("/"));
 
+      // Native preview can pass the version of the bytes shown in the diff.
+      // Enforce optimistic concurrency for that case rather than overwriting
+      // work changed while the History window was open.
+      const expectedVersion = body.expectedVersion;
+      if (expectedVersion !== undefined) {
+        const v = expectedVersion;
+        const valid = v && typeof v === "object" && !Array.isArray(v)
+          && (v.mtimeMs !== undefined || v.sha256 !== undefined)
+          && (v.mtimeMs === undefined || (Number.isFinite(v.mtimeMs) && v.mtimeMs >= 0))
+          && (v.size === undefined || v.size === null || (Number.isSafeInteger(v.size) && v.size >= 0))
+          && (v.sha256 === undefined || (typeof v.sha256 === "string" && /^[a-f0-9]{64}$/.test(v.sha256)));
+        if (!valid) return c.json({ error: "invalid expectedVersion" }, 400);
+      }
       // 还原走 ResourceIO：工作区树/编辑器沿既有事件链路刷新，还原动作本身也进历史（可反悔）
-      const writeResult = await engine.getResourceIO().write(
-        { kind: "local-file", path: absPath },
-        snapshot.content,
-        {},
-      );
+      const resourceIO = engine.getResourceIO();
+      if (expectedVersion !== undefined && typeof resourceIO.writeExpectedVersion !== "function") {
+        return c.json({ error: "versioned restore unavailable" }, 501);
+      }
+      const target = { kind: "local-file", path: absPath };
+      const writeResult = expectedVersion !== undefined
+        ? await resourceIO.writeExpectedVersion(target, snapshot.content, expectedVersion, {})
+        : await resourceIO.write(target, snapshot.content, {});
       // ResourceIO may report a version conflict as a result rather than throwing.
       // Never capture a "restore" snapshot, or acknowledge success, if the write failed.
       if (writeResult?.ok === false) {
