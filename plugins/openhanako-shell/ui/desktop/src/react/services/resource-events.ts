@@ -8,6 +8,7 @@ type WatchEntry = {
   ref: ResourceRef;
   refCount: number;
   subscriptionId: string | null;
+  subscriptionGeneration: number;
   disposed: boolean;
   released: boolean;
   ready: Promise<void>;
@@ -166,6 +167,7 @@ export function retainResourceWatch(ref: ResourceRef): () => void {
     ref: normalizedRef,
     refCount: 1,
     subscriptionId: null,
+    subscriptionGeneration: 0,
     disposed: false,
     released: false,
     ready: Promise.resolve(),
@@ -176,6 +178,7 @@ export function retainResourceWatch(ref: ResourceRef): () => void {
 }
 
 function subscribeEntry(entry: WatchEntry): Promise<void> {
+  const generation = ++entry.subscriptionGeneration;
   entry.released = false;
   return hanaFetch('/api/resource-io/subscribe', {
     method: 'POST',
@@ -189,8 +192,13 @@ function subscribeEntry(entry: WatchEntry): Promise<void> {
       if (data?.ok !== true || typeof data.subscriptionId !== 'string' || !data.subscriptionId) {
         throw new Error('Resource watch was not acknowledged');
       }
+      if (entry.disposed || generation !== entry.subscriptionGeneration) {
+        // A late acknowledgement belongs to an obsolete request. Do not
+        // overwrite the current subscription or leak the superseded lease.
+        releaseSubscriptionId(data.subscriptionId);
+        return;
+      }
       entry.subscriptionId = data.subscriptionId;
-      if (entry.disposed) releaseEntry(entry);
     })
     .catch((err) => {
       if (!entry.disposed) console.warn('[resource-events] watch failed:', err);
@@ -213,29 +221,38 @@ function releaseResourceWatch(key: string): void {
   void entry.ready.then(() => releaseEntry(entry));
 }
 
-function releaseEntry(entry: WatchEntry): void {
-  if (entry.released || !entry.subscriptionId) return;
-  entry.released = true;
-  void hanaFetch(`/api/resource-io/subscriptions/${encodeURIComponent(entry.subscriptionId)}`, {
+function releaseSubscriptionId(subscriptionId: string): void {
+  void hanaFetch(`/api/resource-io/subscriptions/${encodeURIComponent(subscriptionId)}`, {
     method: 'DELETE',
     throwOnHttpError: false,
+  }).then((response) => {
+    if (response.ok === false) {
+      console.warn('[resource-events] unwatch failed:', `HTTP ${response.status ?? 'unknown'}`);
+    }
   }).catch((err) => {
     console.warn('[resource-events] unwatch failed:', err);
   });
 }
 
+function releaseEntry(entry: WatchEntry): void {
+  if (entry.released || !entry.subscriptionId) return;
+  entry.released = true;
+  const id = entry.subscriptionId;
+  entry.subscriptionId = null;
+  releaseSubscriptionId(id);
+}
+
 async function resubscribeActiveWatches(): Promise<void> {
   const entries = [...watches.values()].filter(entry => !entry.disposed);
   await Promise.all(entries.map(async (entry) => {
+    // Invalidate outstanding subscribe acknowledgements BEFORE awaiting any
+    // transport operation. This prevents the old response from overwriting
+    // a newer subscription while the reconnect cleanup is in progress.
+    ++entry.subscriptionGeneration;
     const previousSubscriptionId = entry.subscriptionId;
     entry.subscriptionId = null;
     if (previousSubscriptionId) {
-      await hanaFetch(`/api/resource-io/subscriptions/${encodeURIComponent(previousSubscriptionId)}`, {
-        method: 'DELETE',
-        throwOnHttpError: false,
-      }).catch((err) => {
-        console.warn('[resource-events] stale unwatch failed:', err);
-      });
+      releaseSubscriptionId(previousSubscriptionId);
     }
     if (!entry.disposed) entry.ready = subscribeEntry(entry);
     await entry.ready;
@@ -279,8 +296,11 @@ export function bindResourceEventForegroundCatchUp(
     if (inFlight || (lastStartedAt && startedAt - lastStartedAt < minIntervalMs)) return;
     inFlight = true;
     lastStartedAt = startedAt;
-    Promise.resolve(catchUp())
+    Promise.resolve().then(() => catchUp())
       .catch((err) => {
+        // A failed catch-up must not hold the foreground throttle until the
+        // next interval; allow the user to retry immediately on focus.
+        lastStartedAt = 0;
         console.warn('[resource-events] foreground catch-up failed:', err);
       })
       .finally(() => {

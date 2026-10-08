@@ -709,8 +709,10 @@ export function handleServerMessage(msg: any): void {
     case 'browser_bg_status': {
       const bgSp = msg.sessionPath;
       if (!bgSp) { console.warn('[ws] event missing sessionPath:', msg.type); break; }
+      // A reconnect's incomplete delta is not an authoritative stop.
+      if (typeof msg.running !== 'boolean') break;
       const prev = browserStateForPath(useStore.getState(), bgSp);
-      const nextRunning = msg.running === true;
+      const nextRunning = msg.running;
       if (!nextRunning) {
         // Background stop is a lifecycle transition, not a thumbnail update.
         // Preserve only the user's collapsed preference, never the stopped

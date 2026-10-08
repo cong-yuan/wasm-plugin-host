@@ -12,7 +12,10 @@ vi.mock('../../hooks/use-hana-fetch', () => ({ hanaFetch }));
 describe('resource-events', () => {
   afterEach(() => {
     vi.resetModules();
-    hanaFetch.mockClear();
+    hanaFetch.mockReset();
+    hanaFetch.mockImplementation(async (path: string) => ({
+      json: async () => (path.endsWith('/subscribe') ? { ok: true, subscriptionId: 'sub-1' } : { ok: true }),
+    }));
   });
 
   it('shares one backend resource subscription per local file and releases it after the last subscriber leaves', async () => {
@@ -64,6 +67,57 @@ describe('resource-events', () => {
 
     releaseFirst();
     releaseSecond();
+  });
+
+  it('releases superseded subscriptions when a pending subscribe completes after reconnect', async () => {
+    let acknowledgeInitial!: (response: any) => void;
+    let subscribeCalls = 0;
+    hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/resource-io/subscribe') {
+        subscribeCalls += 1;
+        if (subscribeCalls === 1) {
+          return new Promise(resolve => { acknowledgeInitial = resolve; });
+        }
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, subscriptionId: 'sub-current' }) });
+      }
+      if (path.startsWith('/api/resource-io/events?')) {
+        return Promise.resolve({ ok: true, json: async () => ({ stale: true, latestSequence: 1, events: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    });
+    const { retainLocalFileResourceWatch, catchUpResourceEventsAfterReconnect } = await import('../../services/resource-events');
+    const release = retainLocalFileResourceWatch('/tmp/reconnect.md');
+
+    await catchUpResourceEventsAfterReconnect();
+    expect(subscribeCalls).toBe(2);
+    expect(hanaFetch).not.toHaveBeenCalledWith('/api/resource-io/subscriptions/sub-current', expect.anything());
+
+    acknowledgeInitial({ ok: true, json: async () => ({ ok: true, subscriptionId: 'sub-late' }) });
+    await vi.waitFor(() => {
+      expect(hanaFetch).toHaveBeenCalledWith('/api/resource-io/subscriptions/sub-late', expect.objectContaining({ method: 'DELETE' }));
+    });
+    expect(hanaFetch).not.toHaveBeenCalledWith('/api/resource-io/subscriptions/sub-current', expect.anything());
+    release();
+    await vi.waitFor(() => {
+      expect(hanaFetch).toHaveBeenCalledWith('/api/resource-io/subscriptions/sub-current', expect.objectContaining({ method: 'DELETE' }));
+    });
+  });
+
+  it('releases a late subscription acknowledgement after the last watcher is disposed', async () => {
+    let acknowledge!: (response: any) => void;
+    hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/resource-io/subscribe') {
+        return new Promise(resolve => { acknowledge = resolve; });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    });
+    const { retainLocalFileResourceWatch } = await import('../../services/resource-events');
+    const release = retainLocalFileResourceWatch('/tmp/disposed.md');
+    release();
+    acknowledge({ ok: true, json: async () => ({ ok: true, subscriptionId: 'sub-disposed' }) });
+    await vi.waitFor(() => {
+      expect(hanaFetch).toHaveBeenCalledWith('/api/resource-io/subscriptions/sub-disposed', expect.objectContaining({ method: 'DELETE' }));
+    });
   });
 
   it('requests catch-up after reconnect with the last seen resource event sequence', async () => {
@@ -311,6 +365,43 @@ describe('resource-events', () => {
       expect(warn).toHaveBeenCalledWith(
         '[resource-events] watch failed:', expect.objectContaining({ message: 'Resource watch was not acknowledged' }),
       );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('retries foreground catch-up immediately after a failed attempt even within the throttle window', async () => {
+    const listeners = new Map<string, () => void>();
+    const windowObj = {
+      addEventListener: vi.fn((type: string, listener: () => void) => listeners.set(type, listener)),
+      removeEventListener: vi.fn(),
+    };
+    const documentObj = {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      visibilityState: 'visible',
+    };
+    const catchUp = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('transport unavailable'); })
+      .mockResolvedValueOnce(undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { bindResourceEventForegroundCatchUp } = await import('../../services/resource-events');
+      const dispose = bindResourceEventForegroundCatchUp(undefined, {
+        windowObj: windowObj as never,
+        documentObj: documentObj as never,
+        catchUp,
+        minIntervalMs: 10_000,
+        now: () => 1000,
+      });
+
+      listeners.get('focus')?.();
+      await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(
+        '[resource-events] foreground catch-up failed:', expect.objectContaining({ message: 'transport unavailable' }),
+      ));
+      listeners.get('focus')?.();
+      await vi.waitFor(() => expect(catchUp).toHaveBeenCalledTimes(2));
+      dispose();
     } finally {
       warn.mockRestore();
     }

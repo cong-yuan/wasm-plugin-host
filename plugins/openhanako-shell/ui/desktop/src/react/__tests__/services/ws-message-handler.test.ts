@@ -1750,6 +1750,23 @@ describe('ws-message-handler turn_end side effects', () => {
     });
   });
 
+  it('ignores background browser updates without an explicit running flag', () => {
+    vi.stubGlobal('window', { platform: {} });
+    useStore.setState({
+      browserBySession: {
+        '/session/a.jsonl': {
+          running: true, url: 'https://active.example', thumbnail: 'STILL_ACTIVE',
+          thumbnailFresh: true, collapsed: true,
+        },
+      },
+    } as never);
+    handleServerMessage({ type: 'browser_bg_status', sessionPath: '/session/a.jsonl' });
+    expect(useStore.getState().browserBySession['/session/a.jsonl']).toMatchObject({
+      running: true, url: 'https://active.example', thumbnail: 'STILL_ACTIVE',
+      thumbnailFresh: true, collapsed: true,
+    });
+  });
+
   it('clears stale browser media on background stop and resets collapse on restart', () => {
     vi.stubGlobal('window', { platform: {} });
     useStore.setState({
