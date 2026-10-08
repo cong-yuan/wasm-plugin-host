@@ -377,6 +377,12 @@ check('iframe bridge intercepts quick chat preference requests',
   iframeBridgeSource.includes("pathname === '/api/preferences/quick-chat'"));
 check('iframe bridge intercepts notification preference requests',
   iframeBridgeSource.includes("pathname === '/api/preferences/notifications'"));
+check('iframe bridge intercepts session search requests',
+  iframeBridgeSource.includes("pathname === '/api/sessions/search'"));
+check('iframe bridge intercepts session summary requests',
+  iframeBridgeSource.includes("pathname === '/api/sessions/summary'"));
+check('iframe bridge intercepts authorized-folder requests',
+  iframeBridgeSource.includes("pathname === '/api/sessions/authorized-folders'"));
 
 // Pin / unpin persists locally and is reflected in GET /api/sessions
 {
@@ -1198,6 +1204,13 @@ check('host bridge correlates requestId',
       row.sessionId === 'agent-1'
       && row.matchKind === 'content'
       && /done/i.test(row.snippet || '')));
+
+  const summaryUnsupported = await adapter.http('GET', '/api/sessions/summary?path=' + encodeURIComponent('studio://agent-1'));
+  check('session summary fails closed without Studio summary persistence',
+    summaryUnsupported?.hasSummary === false && summaryUnsupported?.code === 'capability_unavailable');
+  const foldersUnsupported = await adapter.http('GET', '/api/sessions/authorized-folders?path=' + encodeURIComponent('studio://agent-1'));
+  check('authorized folders fail closed without Studio folder persistence',
+    foldersUnsupported?.ok === false && foldersUnsupported?.code === 'capability_unavailable');
 
   await adapter.http('POST', '/api/sessions/rename', { sessionId: 'agent-1', title: 'Disposable title' });
   await adapter.http('POST', '/api/sessions/pin', { sessionId: 'agent-1', pinned: true });

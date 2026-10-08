@@ -35,11 +35,11 @@
    - `/api/sessions/fresh-compact`：Studio 当前没有会话摘要/压缩原语，已从 soft-success 改为 `capability_unavailable`，等待宿主命令。
    - `/api/sessions/todos/complete`：Studio 当前没有持久化 todo mutation 原语，已从 soft-success 改为 `capability_unavailable`；UI 只有后端真实成功才清本地 todo，避免刷新后复活。
 
-3. **Search / summary / authorized folders / continue-deleted-agent** — P1
-   - `/api/sessions/search`
-   - `/api/sessions/summary`
-   - `/api/sessions/authorized-folders`
-   - `/api/sessions/continue-deleted-agent`
+3. **Search / summary / authorized folders / continue-deleted-agent** — P1 / 部分完成
+   - `/api/sessions/search`：已纳入 Studio iframe bridge；adapter 复用稳定的 title/content 两阶段搜索、transcript cache、limit 上限和已删除/归档过滤。
+   - `/api/sessions/summary`：Studio 当前没有持久化 summary 原语，已纳入 bridge 并返回 `capability_unavailable`，不再掉回 Hana Server 产生错误或假数据。
+   - `/api/sessions/authorized-folders`：Studio 当前没有 session folder-scope 持久化原语，已纳入 bridge 并对 GET/PATCH fail closed；不能把“显示的授权目录”伪装成真正的工具访问控制。
+   - `/api/sessions/continue-deleted-agent`：OpenHanako 需要“删除 Agent → 用 primary Agent 新建会话 → 迁移 transcript → 可选 compact”的专用生命周期语义；Studio 目前没有 deleted-agent/agent replacement 原语，继续保持 fail closed。
 
 ## Phase 2 — Model & Input
 

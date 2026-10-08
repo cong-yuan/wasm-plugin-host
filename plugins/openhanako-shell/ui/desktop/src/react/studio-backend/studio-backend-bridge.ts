@@ -244,6 +244,9 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/providers/fetch-models') return true;
   if (pathname === '/api/upload-blob') return true;
   if (pathname === '/api/sessions') return true;
+  if (pathname === '/api/sessions/search') return true;
+  if (pathname === '/api/sessions/summary') return true;
+  if (pathname === '/api/sessions/authorized-folders') return true;
   if (pathname === '/api/sessions/messages') return true;
   if (pathname === '/api/sessions/switch') return true;
   if (pathname === '/api/sessions/new') return true;

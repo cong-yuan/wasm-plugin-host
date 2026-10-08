@@ -1866,6 +1866,25 @@ return (function () {
       return { query: rawQuery, phase, results };
     }
 
+    if (pathname === '/api/sessions/summary' && verb === 'GET') {
+      return {
+        hasSummary: false,
+        summary: null,
+        createdAt: null,
+        updatedAt: null,
+        code: 'capability_unavailable',
+        error: 'studio backend does not expose persisted session summaries yet',
+      };
+    }
+
+    if (pathname === '/api/sessions/authorized-folders' && (verb === 'GET' || verb === 'PATCH')) {
+      return {
+        ok: false,
+        code: 'capability_unavailable',
+        error: 'studio backend does not expose session authorized-folder persistence yet',
+      };
+    }
+
     if (pathname === '/api/sessions/archived' && verb === 'GET') {
       const archived = loadArchived();
       return Object.values(archived)
