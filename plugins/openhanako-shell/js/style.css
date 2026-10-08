@@ -8870,6 +8870,23 @@ html[data-platform="linux"] .onboarding {
 }
 .attach-btn:disabled:hover,
 .plan-mode-btn:disabled:hover,
+/* Attached local file staging is user-controlled until transport confirms send. */
+.nativeAttachmentChooser { display: none; }
+.nativeAttachmentList { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 5px; }
+.nativeAttachmentList:empty { display: none; }
+.nativeAttachmentChip {
+    display: inline-flex; align-items: center; gap: 5px;
+    max-width: 100%; padding: 3px 7px; border-radius: 8px;
+    color: var(--text-primary); background: rgba(0,0,0,0.055);
+    font-size: 11px; overflow-wrap: anywhere;
+}
+.nativeAttachmentRemove {
+    border: none; background: none; color: inherit;
+    cursor: pointer; font: inherit; font-size: 15px;
+}
+.nativeAttachmentRemove:disabled { cursor: not-allowed; opacity: 0.5; }
+.nativeAttachmentError { color: #a64238; font-size: 11px; }
+
 /* Native session-scoped authorized directory editor. */
 .sessionFolderScopePanel {
     display: flex;

@@ -2027,6 +2027,176 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.transcript = originalTranscript;
 }
 
+// File staging is local until a real Studio upload succeeds. Image bytes are
+// forwarded only when the native multimodal command is available.
+{
+  const conversation = studio.require('panels/conversation');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const oldUploadCapability = api.uploadBlobAvailable;
+  const oldImageCapability = api.sendImagesAvailable;
+  const oldSend = api.sendWithProgress;
+  const oldTranscript = api.transcript;
+  const calls = [];
+  const sent = [];
+  let rejectUpload = false;
+  let rejectUploadName = '';
+  let malformedUpload = false;
+  let delayedUploadResolve = null;
+  api.uploadBlobAvailable = () => true;
+  api.sendImagesAvailable = () => true;
+  api.transcript = async () => [];
+  api.sendWithProgress = async (_sessionId, text, _msgId, onProgress, options) => {
+    sent.push({ text, options });
+    onProgress({ kind: 'text_delta', delta: 'File processed' });
+    return true;
+  };
+  adapter.http = async (method, path, body) => {
+    if (method === 'GET' && path.startsWith('/api/models')) return { models: [] };
+    if (method === 'POST' && path === '/api/upload-blob') {
+      calls.push(body);
+      if (rejectUpload || body.name === rejectUploadName) return { ok: false, error: 'Native file upload denied' };
+      if (malformedUpload) return { ok: true, uploads: [{ fileId: 3, dest: {} }] };
+      if (body.name === 'delayed.txt') return new Promise((resolve) => { delayedUploadResolve = resolve; });
+      return { ok: true, uploads: [{ fileId: `blob-${calls.length}`, dest: `/native/files/${body.name}` }] };
+    }
+    return oldHttp(method, path, body);
+  };
+  const makeFile = (name, data, type = 'text/plain') => ({
+    name, type, size: Buffer.byteLength(data),
+    async arrayBuffer() {
+      const bytes = new TextEncoder().encode(data);
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    },
+  });
+  const panel = conversation.render({ onChanged() {}, onOpened() {}, onCreated() {} });
+  const chooser = panel.root.querySelector('.nativeAttachmentChooser');
+  const attachBtn = panel.root.querySelectorAll('.attach-btn')[0];
+  const chips = () => panel.root.querySelectorAll('.nativeAttachmentChip');
+  check('native upload capability enables file attachment picker', attachBtn.disabled === false);
+  chooser.files = [makeFile('note.txt', 'hello'), makeFile('photo.png', 'image bytes', 'image/png')];
+  chooser.fire('change');
+  check('selected file and image appear as removable chips before upload',
+    chips().length === 2 && calls.length === 0);
+  chips()[0]?.querySelector('.nativeAttachmentRemove')?.fire('click');
+  check('user can remove a selected file before upload', chips().length === 1 && calls.length === 0);
+  chooser.files = [{ name: 'huge.bin', size: 11 * 1024 * 1024, type: 'application/octet-stream',
+    arrayBuffer: async () => new ArrayBuffer(0) }];
+  chooser.fire('change');
+  check('oversized files are rejected and existing selection preserved',
+    chips().length === 1 && /10 MiB/.test(panel.root.querySelector('.nativeAttachmentList')?.textContent || ''));
+  chooser.files = [makeFile('note.txt', 'hello')];
+  chooser.fire('change');
+  await panel.open({ id: 'attachment-session', live: true });
+  // Opening another session intentionally resets pending files; reselect.
+  chooser.files = [makeFile('note.txt', 'hello'), makeFile('photo.png', 'image bytes', 'image/png')];
+  chooser.fire('change');
+  panel.root.querySelector('.input-box').textContent = 'Check attachments';
+  panel.root.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  check('native file uploads have owning session and verified destinations',
+    calls.length === 2 && calls.every((call) => call.sessionId === 'attachment-session')
+    && /\/native\/files\/note.txt/.test(sent[0]?.text || '')
+    && /\/native\/files\/photo.png/.test(sent[0]?.text || ''));
+  check('image attachments use native multimodal transport when supported',
+    sent[0]?.options?.images?.length === 1
+    && sent[0].options.images[0].mimeType === 'image/png'
+    && sent[0].options.images[0].data === btoa('image bytes'));
+  check('staged attachment chips clear after successful message send', chips().length === 0);
+  rejectUpload = true;
+  chooser.files = [makeFile('denied.txt', 'secret')];
+  chooser.fire('change');
+  panel.root.querySelector('.input-box').textContent = 'Upload denied';
+  panel.root.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  check('rejected upload never sends message and preserves file for retry',
+    calls.length === 3 && sent.length === 1 && chips().length === 1
+    && /Native file upload denied/.test(panel.root.querySelector('.nativeAttachmentList')?.textContent || ''));
+  rejectUpload = false;
+  chips()[0]?.querySelector('.nativeAttachmentRemove')?.fire('click');
+  const reusedFile = makeFile('reused.txt', 'one');
+  const retriedFile = makeFile('retried.txt', 'two');
+  chooser.files = [reusedFile, retriedFile];
+  chooser.fire('change');
+  rejectUploadName = 'retried.txt';
+  panel.root.querySelector('.input-box').textContent = 'First attempt';
+  panel.root.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  check('partial upload failure retains both chips and blocks sending',
+    calls.length === 5 && sent.length === 1 && chips().length === 2);
+  rejectUploadName = '';
+  panel.root.querySelector('.input-box').textContent = 'Retry attempt';
+  panel.root.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  check('retry reuses acknowledged local file instead of uploading it twice',
+    calls.length === 6 && calls.filter((call) => call.name === 'reused.txt').length === 1
+    && calls.filter((call) => call.name === 'retried.txt').length === 2
+    && sent.length === 2 && chips().length === 0);
+  malformedUpload = true;
+  chooser.files = [makeFile('bad-ack.txt', 'text')];
+  chooser.fire('change');
+  panel.root.querySelector('.input-box').textContent = 'Invalid acknowledgement';
+  panel.root.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  check('malformed success cannot turn non-path upload metadata into a message',
+    calls.length === 7 && sent.length === 2 && chips().length === 1);
+  malformedUpload = false;
+  panel.reset();
+  const oldProvider = api.pickProvider;
+  const oldCreate = api.create;
+  api.pickProvider = async () => 'mock';
+  api.create = async () => 'created-file-session';
+  const newPanel = conversation.render({ onChanged() {}, onOpened() {}, onCreated() {} });
+  const newChooser = newPanel.root.querySelector('.nativeAttachmentChooser');
+  newChooser.files = [makeFile('created.txt', 'fresh')];
+  newChooser.fire('change');
+  newPanel.root.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  check('first message creates a real session before sending file to native host',
+    calls.length === 8 && calls.at(-1)?.sessionId === 'created-file-session'
+    && sent.length === 3 && /created.txt/.test(sent.at(-1).text));
+  newPanel.reset();
+  await newPanel.open({ id: 'delayed-file-session', live: true });
+  newChooser.files = [makeFile('delayed.txt', 'pending')];
+  newChooser.fire('change');
+  newPanel.root.querySelector('.input-box').textContent = 'Old session attachment';
+  newPanel.root.querySelector('.send-btn').fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('file send can be paused during native upload', typeof delayedUploadResolve === 'function');
+  newPanel.reset();
+  delayedUploadResolve?.({ ok: true, uploads: [{ fileId: 'late-file', dest: '/native/files/delayed.txt' }] });
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  check('reset while upload is pending ignores late upload and never sends stale turn',
+    sent.length === 3 && newPanel.root.querySelectorAll('.nativeAttachmentChip').length === 0);
+  const oldCancel = api.cancel;
+  let stoppedUploads = 0;
+  api.cancel = async () => { stoppedUploads += 1; };
+  await newPanel.open({ id: 'cancel-file-session', live: true });
+  newChooser.files = [makeFile('delayed.txt', 'pending again')];
+  newChooser.fire('change');
+  newPanel.root.querySelector('.input-box').textContent = 'Cancel during upload';
+  const sendControl = newPanel.root.querySelector('.send-btn');
+  sendControl.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  sendControl.fire('click');
+  delayedUploadResolve?.({ ok: true, uploads: [{ fileId: 'stop-file', dest: '/native/files/delayed.txt' }] });
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  check('Stop during upload prevents subsequent message send and retains retryable file',
+    stoppedUploads === 1 && sent.length === 3
+    && newPanel.root.querySelectorAll('.nativeAttachmentChip').length === 1);
+  api.cancel = oldCancel;
+  newPanel.reset();
+
+  api.pickProvider = oldProvider;
+  api.create = oldCreate;
+  check('reset clears staged files from previous conversation', chips().length === 0);
+  adapter.http = oldHttp;
+  api.uploadBlobAvailable = oldUploadCapability;
+  api.sendImagesAvailable = oldImageCapability;
+  api.sendWithProgress = oldSend;
+  api.transcript = oldTranscript;
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));

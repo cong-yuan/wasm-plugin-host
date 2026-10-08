@@ -821,6 +821,7 @@ return (function () {
 
     // Browser attachments cross the Studio bridge as base64 JSON; the host owns the destination.
     uploadBlobAvailable: () => nativeCommandAvailable('upload_blob'),
+    sendImagesAvailable: () => nativeCommandAvailable('send_message_with_images'),
     uploadBlob: async ({ sessionId, name, base64Data, mimeType } = {}) => {
       if (!tauri.available()) return null;
       return invokeNative('upload_blob', {

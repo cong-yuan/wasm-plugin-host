@@ -100,7 +100,8 @@ return (function () {
     const scopeBtn = h('button', { class: 'attach-btn sessionFolderScopeBtn', type: 'button', title: 'Session authorized folders', 'aria-expanded': 'false' }, svg(FOLDER));
     const slash = h('button', { class: 'attach-btn', type: 'button', title: t('input.commandMenu') }, svg(SLASH));
     const plan = h('button', { class: 'plan-mode-btn plan-mode-default', type: 'button' }, svg(PLAN));
-    markUnsupported(attach, 'File attachments are not available in the standalone Studio bridge yet.');
+    const uploadAvailable = typeof api.uploadBlobAvailable === 'function' && api.uploadBlobAvailable();
+    if (!uploadAvailable) markUnsupported(attach, 'Studio does not support native file uploads in this window.');
     const scopeAvailable = typeof api.sessionFolderScopeAvailable === 'function' && api.sessionFolderScopeAvailable();
     if (!scopeAvailable) {
       markUnsupported(scopeBtn, 'Studio does not expose authorized folder controls in this window.');
@@ -108,6 +109,60 @@ return (function () {
     }
     markUnsupported(slash, 'Slash commands require the server command dispatcher and are not available here yet.');
     markUnsupported(plan, 'Permission modes are unavailable until the Studio bridge can enforce them.');
+    const attachmentChooser = h('input', {
+      class: 'nativeAttachmentChooser', type: 'file', multiple: 'multiple',
+      'aria-label': 'Choose files to attach',
+    });
+    attachmentChooser.style.display = 'none';
+    const attachmentList = h('div', { class: 'nativeAttachmentList', 'aria-live': 'polite' });
+    let stagedFiles = [];
+    const uploadedRefs = new WeakMap();
+    const maxAttachmentBytes = 10 * 1024 * 1024;
+    const maxAttachmentCount = 5;
+    const renderAttachments = (message = '') => {
+      clear(attachmentList);
+      for (const item of stagedFiles) {
+        const remove = h('button', {
+          class: 'nativeAttachmentRemove', type: 'button',
+          'aria-label': `Remove attachment ${item.name}`,
+        }, '×');
+        remove.disabled = state.busy || state.opening;
+        remove.onclick = () => {
+          if (state.busy || state.opening) return;
+          stagedFiles = stagedFiles.filter((entry) => entry !== item);
+          renderAttachments();
+        };
+        attachmentList.appendChild(h('span', { class: 'nativeAttachmentChip' },
+          h('span', {}, item.name), remove));
+      }
+      if (message) attachmentList.appendChild(h('span', { class: 'nativeAttachmentError' }, message));
+    };
+    attachmentChooser.onchange = () => {
+      if (!uploadAvailable || state.busy || state.opening) return;
+      const incoming = Array.from(attachmentChooser.files || []);
+      attachmentChooser.value = '';
+      const error = incoming.some((file) => !file || typeof file.arrayBuffer !== 'function'
+        || !Number.isFinite(file.size) || file.size <= 0 || file.size > maxAttachmentBytes)
+        ? 'Each attachment must be a nonempty file of 10 MiB or less'
+        : stagedFiles.length + incoming.length > maxAttachmentCount
+          ? 'Choose at most five attachments per message' : '';
+      if (error) return renderAttachments(error);
+      stagedFiles = [...stagedFiles, ...incoming];
+      renderAttachments();
+    };
+    attach.onclick = () => {
+      if (!uploadAvailable || state.busy || state.opening) return;
+      attachmentChooser.click?.();
+    };
+    const base64FromFile = async (file) => {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (!bytes.length || bytes.length > maxAttachmentBytes) throw new Error('Attachment exceeds upload limit');
+      let binary = '';
+      for (let index = 0; index < bytes.length; index += 8192) {
+        binary += String.fromCharCode(...bytes.subarray(index, index + 8192));
+      }
+      return btoa(binary);
+    };
     const trailing = h('span', { class: 'input-trailing-slot hana-slot' });
     slots.mount('openhanako.conversation.input.right', trailing);
 
@@ -144,6 +199,7 @@ return (function () {
         send.appendChild(h('span', { class: 'send-label' },
           svg(SEND_ENTER), h('span', {}, t('chat.send'))));
       }
+      attach.disabled = !uploadAvailable || state.opening || state.busy;
       const modelDisabled = !!state.opening || !!state.busy || !!state.switchingModel;
       modelPill.disabled = modelDisabled;
       modelPill.classList.toggle('model-pill-disabled', modelDisabled);
@@ -156,7 +212,7 @@ return (function () {
 
     const wrapper = h('div', { class: 'input-wrapper' }, input, controlBar);
     const surface = h('div', { class: 'input-surface' },
-      dock, h('div', { class: 'input-stack' }, wrapper));
+      dock, h('div', { class: 'input-stack' }, attachmentChooser, attachmentList, wrapper));
     // The native backend owns authorized-folder persistence and path validation.
     // This editor is available only when the host advertises both commands.
     const scopePath = h('input', {
@@ -559,6 +615,8 @@ return (function () {
 
     async function open(session) {
       const previousId = state.id;
+      stagedFiles = [];
+      renderAttachments();
       const previousTurns = state.turns.slice();
       const wasBusy = state.busy;
       state.epoch += 1;
@@ -633,16 +691,20 @@ return (function () {
     };
 
     async function submit() {
-      const text = input.textContent.trim();
-      if (!text || state.opening || state.busy) return;
+      const rawText = input.textContent.trim();
+      if ((!rawText && !stagedFiles.length) || state.opening || state.busy) return;
+      const filesForTurn = stagedFiles.slice();
+      const text = rawText || 'Please inspect these attached files.';
       state.busy = true;
       const submitEpoch = state.epoch;
       conversationStatus.textContent = '';
       conversationStatus.className = 'conversation-status';
       state.cancelling = false;
       renderSendState();
+      renderAttachments();
       input.textContent = '';
-      state.turns.push({ role: 'user', text });
+      const userTurn = { role: 'user', text };
+      state.turns.push(userTurn);
       draw();
       if (!state.id) {
         try {
@@ -684,9 +746,45 @@ return (function () {
       draw();
       options.onChanged();
       try {
+        const uploaded = [];
+        const images = [];
+        for (const file of filesForTurn) {
+          if (state.epoch !== submitEpoch) return;
+          if (state.cancelling) throw new Error('Attachment send cancelled');
+          let cached = uploadedRefs.get(file);
+          if (!cached || cached.sessionId !== state.id) {
+            renderAttachments(`Uploading ${file.name}…`);
+            const data = await base64FromFile(file);
+            if (state.epoch !== submitEpoch) return;
+            const result = await adapter.http('POST', '/api/upload-blob', {
+              sessionId: state.id, name: file.name, mimeType: file.type || 'application/octet-stream',
+              base64Data: data,
+            });
+            const upload = result?.uploads?.[0];
+            if (result?.ok !== true
+              || typeof upload?.fileId !== 'string' || !upload.fileId.trim()
+              || typeof upload?.dest !== 'string' || !upload.dest.trim()) {
+              throw new Error(result?.error || `Could not upload ${file.name}`);
+            }
+            cached = { sessionId: state.id, upload, data };
+            uploadedRefs.set(file, cached);
+          }
+          uploaded.push({ name: file.name, dest: cached.upload.dest });
+          if (file.type?.startsWith('image/') && api.sendImagesAvailable?.()) {
+            images.push({ data: cached.data, mimeType: file.type, detail: 'auto' });
+          }
+        }
+        if (state.epoch !== submitEpoch) return;
+        if (state.cancelling) throw new Error('Attachment send cancelled');
+        const sendText = uploaded.length
+          ? `${text}\n\nAttached session files:\n${uploaded.map((file) => `- ${file.name}: ${file.dest}`).join('\n')}`
+          : text;
+        userTurn.text = sendText;
+        draw();
+        if (state.cancelling) throw new Error('Attachment send cancelled');
         const sent = await api.sendWithProgress(
           state.id,
-          text,
+          sendText,
           'hana-' + Date.now(),
           (event) => {
             if (!event || typeof event !== 'object') return;
@@ -725,7 +823,12 @@ return (function () {
             draw();
             options.onChanged();
           },
+          images.length ? { images } : {},
         );
+        if (state.epoch === submitEpoch && sent !== false) {
+          stagedFiles = stagedFiles.filter((file) => !filesForTurn.includes(file));
+          renderAttachments();
+        }
         if (state.epoch === submitEpoch
           && !sent
           && !assistant.text
@@ -739,7 +842,7 @@ return (function () {
           const minimumTranscriptLength = state.turns.length;
           const transcript = await api.transcript(state.id);
           if (state.epoch === submitEpoch
-            && transcriptIncludesLatestTurn(transcript, text, minimumTranscriptLength)) {
+            && transcriptIncludesLatestTurn(transcript, sendText, minimumTranscriptLength)) {
             // Preserve precise live ordering only when the backend condensed
             // the current turn into a single assistant row with matching text.
             const lastUserIndex = transcript.map((row) => row?.role).lastIndexOf('user');
@@ -775,6 +878,7 @@ return (function () {
       } catch (err) {
         if (state.epoch === submitEpoch) {
           const errorMessage = (err && err.message) ? err.message : String(err);
+          if (filesForTurn.length) renderAttachments(errorMessage);
           assistant.text = errorMessage;
           if (assistant.streamTimeline.length) appendTimelineText(`\n${errorMessage}`);
           if (!assistant.reasoning && !assistant.tool_calls.length && !assistant.tool_results.length) {
@@ -826,6 +930,8 @@ return (function () {
         const previousId = state.id;
         const wasBusy = state.busy;
         state.epoch += 1;
+        stagedFiles = [];
+        renderAttachments();
         scopeReset();
         state.id = null;
         state.turns = [];
