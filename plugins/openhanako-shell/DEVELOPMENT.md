@@ -43,10 +43,10 @@
 
 ## Phase 2 — Model & Input
 
-- 把 `/api/preferences/models` 从默认模型 soft stub 接到 Studio LLM 配置。
-- 把 `/api/session-thinking-level` 从固定 `off` 接到真实模型/会话能力；底层不支持时显式 locked。
-- 接 `/api/upload-blob`、附件、图片和 vision 路径。
-- `/api/models/auxiliary-vision` 改为真实 capability projection。
+- `/api/preferences/models`：GET 已读取 Studio `get_llm_config` 的当前 provider/model；全局 utility/search/vision 等 OpenHanako 专属配置仍未有等价 Studio 持久化语义，后续需要单独补 capability，而不是把 current model 冒充 utility model。
+- `/api/session-thinking-level`：已从固定 `off` 改为显式 `medium + locked + capability_unavailable`，避免 UI 误以为 Studio 支持切换；宿主补真实 session thinking 原语后再接。
+- 接 `/api/upload-blob`、附件、图片和 vision 路径；当前 Studio 没有 blob/file-ingest command，继续保持 fail closed。
+- `/api/models/auxiliary-vision` 改为真实 capability projection；当前 Studio 模型列表没有输入模态元数据，暂保持 unavailable。
 
 ## Phase 3 — Studio-native Agent
 

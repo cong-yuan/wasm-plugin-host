@@ -1455,8 +1455,26 @@ return (function () {
         current: api.DEFAULT_MODEL,
       };
     }
-    if (pathname === '/api/session-thinking-level' && (verb === 'GET' || verb === 'POST')) {
-      return { level: 'off' };
+    if (pathname === '/api/session-thinking-level' && verb === 'GET') {
+      return {
+        thinkingLevel: 'medium',
+        level: 'medium',
+        locked: true,
+        supportedLevels: ['medium'],
+        code: 'capability_unavailable',
+        error: 'studio backend does not expose a session thinking-level control yet',
+      };
+    }
+    if (pathname === '/api/session-thinking-level' && verb === 'POST') {
+      return {
+        ok: false,
+        thinkingLevel: 'medium',
+        level: 'medium',
+        locked: true,
+        supportedLevels: ['medium'],
+        code: 'capability_unavailable',
+        error: 'studio backend does not expose a session thinking-level control yet',
+      };
     }
     if (pathname === '/api/desk/cron') {
       return handleAutomationHttp(verb, body);

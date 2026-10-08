@@ -340,6 +340,17 @@ await adapter.http('PUT', '/api/preferences/notifications', {
   patrolCompletion: 'never',
 });
 
+const thinkingLevelLocked = await adapter.http('GET', '/api/session-thinking-level');
+check('thinking level is explicitly locked when Studio has no control',
+  thinkingLevelLocked?.thinkingLevel === 'medium'
+  && thinkingLevelLocked?.locked === true
+  && thinkingLevelLocked?.code === 'capability_unavailable');
+const thinkingLevelWriteLocked = await adapter.http('POST', '/api/session-thinking-level', { level: 'high' });
+check('thinking level writes fail closed without Studio control',
+  thinkingLevelWriteLocked?.ok === false
+  && thinkingLevelWriteLocked?.locked === true
+  && thinkingLevelWriteLocked?.code === 'capability_unavailable');
+
 const permissionDefault = await adapter.http('GET', '/api/preferences/session-permission-default');
 check('permission default is explicitly locked to ask without backend support',
   permissionDefault?.permissionMode === 'ask'
