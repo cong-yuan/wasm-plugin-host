@@ -40,7 +40,7 @@
    - Session bulk actions：支持 Ctrl/Cmd-click 多选、Shift range、Ctrl/Cmd+A 全选、Escape 清除；React SessionList 现在始终提供可见 session 的 Select All 入口，选中后才显示归档动作；批量归档通过单独的 `archiveSessions()` 串行提交并只刷新一次 session list，避免逐项归档造成多次 hydrate/race。
    - `/api/sessions/summary`：Studio 当前没有持久化 summary 原语，已纳入 bridge 并返回 `capability_unavailable`，不再掉回 Hana Server 产生错误或假数据。
    - `/api/sessions/authorized-folders`：Studio 当前没有 session folder-scope 持久化原语，已纳入 bridge 并对 GET/PATCH fail closed；不能把“显示的授权目录”伪装成真正的工具访问控制。
-   - `/api/sessions/continue-deleted-agent`：OpenHanako 需要“删除 Agent → 用 primary Agent 新建会话 → 迁移 transcript → 可选 compact”的专用生命周期语义；Studio 目前没有 deleted-agent/agent replacement 原语，继续保持 fail closed。
+   - `/api/sessions/continue-deleted-agent`：已接入 Studio 原生 `continue_deleted_agent_session`；对“不再 live、但 transcript 仍在 Studio persistence 中”的 session 创建新 Agent、迁移 user/assistant/tool-result transcript，再调用原生 fresh compact；永久 `dispose_agent` 仍是 destructive delete，因此真正已删除 JSONL 的来源继续返回 `session_not_found`。
 - Archived Session UI：React ArchivedSessionsModal 在零选择时也提供 Select All；全选后可批量 restore / permanent delete，仍保留一次确认和统一 refresh。
 - Runtime incremental：`/api/runtime-state` 返回稳定 `signature`，带 `?since=<signature>` 且无变化时只返回 `unchanged=true`；legacy sidebar 的 3 秒 runtime refresh 已使用该增量握手，避免重复传输完整 session runtime payload。
 

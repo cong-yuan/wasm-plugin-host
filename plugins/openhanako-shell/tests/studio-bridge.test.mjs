@@ -1309,6 +1309,9 @@ check('host bridge correlates requestId',
     if (cmd === 'fresh_compact_session') {
       return Promise.resolve({ fresh: true, reason: 'manual', tokensBefore: null, tokensAfter: null });
     }
+    if (cmd === 'continue_deleted_agent_session') {
+      return Promise.resolve({ ok: true, path: 'studio://agent-continued', sessionId: 'agent-continued', agentId: 'agent-continued', compacted: true, compactionError: null });
+    }
     return Promise.resolve(undefined);
   };
 
@@ -1495,9 +1498,12 @@ check('host bridge correlates requestId',
     && todosCompleted?.completed?.length === 2
     && calls.some((c) => c.cmd === 'complete_session_todos' && c.args.agentId === 'agent-2'));
 
-  const continueUnsupported = await adapter.http('POST', '/api/sessions/continue-deleted-agent', { path: 'studio://agent-2' });
-  check('deleted-agent continuation fails closed without Studio replacement semantics',
-    continueUnsupported?.ok === false && continueUnsupported?.code === 'capability_unavailable');
+  const deletedContinuation = await adapter.http('POST', '/api/sessions/continue-deleted-agent', { path: 'studio://agent-2' });
+  check('deleted-agent continuation uses the Studio native command',
+    deletedContinuation?.ok === true
+    && deletedContinuation?.path === 'studio://agent-continued'
+    && deletedContinuation?.compacted === true
+    && calls.some((c) => c.cmd === 'continue_deleted_agent_session' && c.args.agentId === 'agent-2'));
 }
 
 // Busy session must refuse a second prompt (send lock).

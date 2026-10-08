@@ -1711,6 +1711,7 @@ return (function () {
           sessionProjects: true,
           runtimeIncremental: true,
           sessionCompaction: typeof api.freshCompactSessionAvailable === 'function' && api.freshCompactSessionAvailable(),
+          deletedAgentContinuation: typeof api.continueDeletedAgentSessionAvailable === 'function' && api.continueDeletedAgentSessionAvailable(),
           sessionTodoMutation: typeof api.completeSessionTodosAvailable === 'function' && api.completeSessionTodosAvailable(),
         },
       };
@@ -1768,11 +1769,38 @@ return (function () {
       return { ok: true, studioBridge: api.mode() };
     }
     if (pathname === '/api/sessions/continue-deleted-agent' && verb === 'POST') {
-      return {
-        ok: false,
-        code: 'capability_unavailable',
-        error: 'studio backend does not expose deleted-agent continuation yet',
-      };
+      if (typeof api.continueDeletedAgentSession !== 'function' || typeof api.continueDeletedAgentSessionAvailable !== 'function' || !api.continueDeletedAgentSessionAvailable()) {
+        return {
+          ok: false,
+          code: 'capability_unavailable',
+          error: 'studio backend does not expose deleted-agent continuation yet',
+        };
+      }
+      const sessionId = sessionIdFromBody(body, null);
+      if (!sessionId) {
+        return { ok: false, code: 'invalid_session', error: 'missing session id' };
+      }
+      try {
+        const result = await api.continueDeletedAgentSession(sessionId);
+        if (!result || result.ok !== true || !result.path) {
+          return {
+            ok: false,
+            code: result?.code || 'continuation_failed',
+            error: result?.error || 'studio deleted-agent continuation failed',
+          };
+        }
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const code = message === 'agent_not_deleted'
+          ? 'agent_not_deleted'
+          : message === 'session_not_found'
+            ? 'session_not_found'
+            : message === 'session_transcript_empty'
+              ? 'session_transcript_empty'
+              : 'continuation_failed';
+        return { ok: false, code, error: message };
+      }
     }
     if (pathname === '/api/sessions/fresh-compact' && verb === 'POST') {
       if (typeof api.freshCompactSession !== 'function' || typeof api.freshCompactSessionAvailable !== 'function' || !api.freshCompactSessionAvailable()) {

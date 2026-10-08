@@ -793,6 +793,11 @@ return (function () {
       if (!tauri.available()) return null;
       return tauri.invoke('fresh_compact_session', { agentId });
     },
+    continueDeletedAgentSessionAvailable: () => tauri.available(),
+    continueDeletedAgentSession: async (agentId) => {
+      if (!tauri.available()) return null;
+      return tauri.invoke('continue_deleted_agent_session', { agentId });
+    },
 
     sendWithProgress,
 
