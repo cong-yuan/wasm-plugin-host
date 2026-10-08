@@ -1776,7 +1776,18 @@ return (function () {
           sessionSummary: typeof api.sessionSummaryAvailable === 'function' && api.sessionSummaryAvailable(),
           authorizedFolders: typeof api.sessionFolderScopeAvailable === 'function' && api.sessionFolderScopeAvailable(),
           sessionTodoMutation: typeof api.completeSessionTodosAvailable === 'function' && api.completeSessionTodosAvailable(),
-          fileWorkbench: false,
+          fileWorkbench: typeof api.workbenchListFilesAvailable === 'function'
+            && typeof api.workbenchReadFileAvailable === 'function'
+            && typeof api.workbenchWriteFileAvailable === 'function'
+            && typeof api.workbenchSearchFilesAvailable === 'function'
+            && api.workbenchListFilesAvailable()
+            && api.workbenchReadFileAvailable()
+            && api.workbenchWriteFileAvailable()
+            && api.workbenchSearchFilesAvailable(),
+          fileWorkbenchList: typeof api.workbenchListFilesAvailable === 'function' && api.workbenchListFilesAvailable(),
+          fileWorkbenchRead: typeof api.workbenchReadFileAvailable === 'function' && api.workbenchReadFileAvailable(),
+          fileWorkbenchWrite: typeof api.workbenchWriteFileAvailable === 'function' && api.workbenchWriteFileAvailable(),
+          fileWorkbenchSearch: typeof api.workbenchSearchFilesAvailable === 'function' && api.workbenchSearchFilesAvailable(),
           fileHistory: false,
           resourceIO: false,
           generatedResourcePreview: false,
@@ -2030,6 +2041,25 @@ return (function () {
     const pathname = parts.pathname;
     const query = queryOf(parts.search);
     const verb = String(method || 'GET').toUpperCase();
+    const workbenchCapabilityUnavailable = (command) => ({
+      ok: false,
+      code: 'capability_unavailable',
+      command,
+      error: 'studio backend does not expose ' + command + ' yet',
+      __httpStatus: 501,
+    });
+
+    const nativeWorkbenchError = (error, fallbackCode) => {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        code: error?.code === 'capability_unavailable' ? 'capability_unavailable' : fallbackCode,
+        ...(error?.command ? { command: error.command } : {}),
+        error: message,
+        __httpStatus: error?.code === 'capability_unavailable' ? 501 : 500,
+      };
+    };
+
 
     if (pathname === '/api/health' && verb === 'GET') {
       const configured = await configuredModelFallback();
@@ -2046,6 +2076,122 @@ return (function () {
         sessionStore: null,
         studioBridge: api.mode(),
       };
+    }
+
+    // Studio-native workbench bridge. These routes intentionally use only
+    // rootId/subdir/name coordinates; the host owns root resolution and must
+    // enforce the authorized workspace scope. Legacy write actions continue to
+    // use Hana until their corresponding native command is added.
+    if (
+      (pathname === '/api/workbench/files' || pathname === '/api/mobile/workbench/files')
+      && verb === 'GET'
+    ) {
+      if (typeof api.workbenchListFiles !== 'function' || typeof api.workbenchListFilesAvailable !== 'function' || !api.workbenchListFilesAvailable()) {
+        return workbenchCapabilityUnavailable('workbench_list_files');
+      }
+      try {
+        const rootId = typeof query.mountId === 'string' && query.mountId.trim()
+          ? query.mountId.trim()
+          : (typeof query.rootId === 'string' && query.rootId.trim() ? query.rootId.trim() : 'default');
+        return await api.workbenchListFiles({ rootId, subdir: query.subdir || '' });
+      } catch (error) {
+        return nativeWorkbenchError(error, 'workbench_list_failed');
+      }
+    }
+
+    if (
+      (pathname === '/api/workbench/search' || pathname === '/api/mobile/workbench/search')
+      && verb === 'GET'
+    ) {
+      if (typeof api.workbenchSearchFiles !== 'function' || typeof api.workbenchSearchFilesAvailable !== 'function' || !api.workbenchSearchFilesAvailable()) {
+        return workbenchCapabilityUnavailable('workbench_search_files');
+      }
+      try {
+        const rootId = typeof query.mountId === 'string' && query.mountId.trim()
+          ? query.mountId.trim()
+          : (typeof query.rootId === 'string' && query.rootId.trim() ? query.rootId.trim() : 'default');
+        return await api.workbenchSearchFiles({ rootId, query: query.q || '' });
+      } catch (error) {
+        return nativeWorkbenchError(error, 'workbench_search_failed');
+      }
+    }
+
+    if (
+      (pathname === '/api/workbench/content' || pathname === '/api/mobile/workbench/content')
+      && (verb === 'GET' || verb === 'HEAD')
+    ) {
+      if (typeof api.workbenchReadFile !== 'function' || typeof api.workbenchReadFileAvailable !== 'function' || !api.workbenchReadFileAvailable()) {
+        return workbenchCapabilityUnavailable('workbench_read_file');
+      }
+      try {
+        const rootId = typeof query.mountId === 'string' && query.mountId.trim()
+          ? query.mountId.trim()
+          : (typeof query.rootId === 'string' && query.rootId.trim() ? query.rootId.trim() : 'default');
+        const result = await api.workbenchReadFile({
+          rootId,
+          subdir: query.subdir || '',
+          name: query.name || '',
+        });
+        if (!result || result.exists === false) {
+          return {
+            ok: false,
+            code: 'file_not_found',
+            error: 'file not found',
+            __httpStatus: 404,
+            __httpHeaders: { 'Cache-Control': 'no-store' },
+          };
+        }
+        const headers = {
+          'Content-Type': result.mimeType || result.mime || 'text/plain; charset=utf-8',
+          'Content-Length': String(Number.isFinite(result.size) ? result.size : Buffer.byteLength(String(result.content || ''), 'utf8')),
+          'Cache-Control': 'private, max-age=0, must-revalidate',
+          ...(result.etag ? { ETag: String(result.etag) } : {}),
+          ...(Number.isFinite(result.mtimeMs) ? { 'X-Hana-File-MtimeMs': String(result.mtimeMs) } : {}),
+          ...(Number.isFinite(result.size) ? { 'X-Hana-File-Size': String(result.size) } : {}),
+          ...(result.filename ? { 'Content-Disposition': 'inline; filename="' + String(result.filename).replace(/["\\\\\\r\\n]/g, '_') + '"' } : {}),
+        };
+        return {
+          __httpStatus: 200,
+          __httpHeaders: headers,
+          __httpBody: verb === 'HEAD' ? '' : String(result.content || ''),
+          __httpBodyEncoding: 'utf8',
+          __httpHeadOnly: verb === 'HEAD',
+        };
+      } catch (error) {
+        return nativeWorkbenchError(error, 'workbench_read_failed');
+      }
+    }
+
+    if (
+      (pathname === '/api/workbench/actions' || pathname === '/api/mobile/workbench/actions')
+      && verb === 'POST'
+    ) {
+      const payload = body && typeof body === 'object' ? body : {};
+      const action = typeof payload.action === 'string' ? payload.action.trim() : '';
+      if (action !== 'create' && action !== 'writeText') return null;
+      if (typeof api.workbenchWriteFile !== 'function' || typeof api.workbenchWriteFileAvailable !== 'function' || !api.workbenchWriteFileAvailable()) {
+        return workbenchCapabilityUnavailable('workbench_write_file');
+      }
+      try {
+        const rootId = typeof payload.mountId === 'string' && payload.mountId.trim()
+          ? payload.mountId.trim()
+          : (typeof payload.rootId === 'string' && payload.rootId.trim() ? payload.rootId.trim() : 'default');
+        const result = await api.workbenchWriteFile({
+          rootId,
+          subdir: typeof payload.subdir === 'string' ? payload.subdir : '',
+          name: typeof payload.name === 'string' ? payload.name : '',
+          content: payload.content == null ? '' : String(payload.content),
+          expectedVersion: payload.expectedVersion,
+          mustNotExist: action === 'create',
+        });
+        return {
+          ...(result && typeof result === 'object' ? result : {}),
+          action,
+          ok: result?.ok !== false,
+        };
+      } catch (error) {
+        return nativeWorkbenchError(error, 'workbench_write_failed');
+      }
     }
 
     {

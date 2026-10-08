@@ -44,7 +44,20 @@ Bootstrap-only (so `initApp` reaches the session list without a Hana API):
 
 Everything else is passed through to `fetch` / the real `WebSocket`.
 
-The checked-in patch copy is intentionally kept byte-for-byte identical to `ui/desktop/src/react/studio-backend/studio-backend-bridge.ts`; `studio-backend-patch-sync.test.mjs` fails if the two drift. File/workbench/preview routes are deliberately not intercepted until Studio exposes native host commands; unsupported direct adapter calls fail closed with `capability_unavailable` / HTTP 501.
+The checked-in patch copy is intentionally kept byte-for-byte identical to `ui/desktop/src/react/studio-backend/studio-backend-bridge.ts`; `studio-backend-patch-sync.test.mjs` fails if the two drift. File history, ResourceIO and generated-resource preview remain on Hana. Workbench `files/search/content` plus the `create/writeText` action are now capability-gated: the parent hello must advertise `workbench_list_files`, `workbench_read_file`, `workbench_write_file`, and/or `workbench_search_files`. A route is intercepted only when its exact native command is advertised, so partial host upgrades do not steal unsupported legacy operations.
+
+### Native workbench command contract
+
+The parent/Studio host owns filesystem authority. The four commands receive only logical workspace coordinates and must enforce the authorized root/mount before touching disk:
+
+- `workbench_list_files({ rootId, subdir })` → `{ rootId, mountId, mount, subdir, files }`
+- `workbench_search_files({ rootId, query })` → `{ rootId, mountId, mount, query, results }`
+- `workbench_read_file({ rootId, subdir, name })` → `{ exists, content, version, etag, mimeType, size, mtimeMs, filename }`
+- `workbench_write_file({ rootId, subdir, name, content, expectedVersion, mustNotExist })` → `{ ok, version, files }`
+
+`workbench_read_file` is text-only in this first native slice; the bridge preserves the response as a raw UTF-8 `Response` body and carries `Content-Type`, `Content-Length`, `ETag`, and file metadata headers. `HEAD` returns the same metadata without a body. Rename/move/delete/upload remain on the existing Hana workbench routes until their native commands are defined.
+
+When the parent hello has no `backendCommands` field, workbench interception stays disabled for backwards compatibility. The hello may provide the list as `backendCommands` or `backend_commands`; `capabilities.backendCommands` and `capabilities.backend_commands` are also accepted.
 
 Inbound WS events are pushed as `{ type: 'event', requestId, event }` while
 `send_message` is in flight (Studio has no token Tauri channel; the parent

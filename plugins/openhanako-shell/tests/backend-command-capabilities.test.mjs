@@ -35,6 +35,10 @@ const requiredNative = [
   'get_session_summary',
   'get_session_folder_scope',
   'patch_session_authorized_folders',
+  'workbench_list_files',
+  'workbench_read_file',
+  'workbench_write_file',
+  'workbench_search_files',
 ];
 const undeclaredNative = requiredNative.filter((command) => !declared.has(command));
 if (undeclaredNative.length) {

@@ -864,6 +864,43 @@ return (function () {
         folders: Array.isArray(folders) ? folders : null,
       });
     },
+    workbenchListFilesAvailable: () => nativeCommandAvailable('workbench_list_files'),
+    workbenchListFiles: async ({ rootId, subdir } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('workbench_list_files', {
+        rootId: rootId || 'default',
+        subdir: subdir || '',
+      });
+    },
+    workbenchReadFileAvailable: () => nativeCommandAvailable('workbench_read_file'),
+    workbenchReadFile: async ({ rootId, subdir, name } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('workbench_read_file', {
+        rootId: rootId || 'default',
+        subdir: subdir || '',
+        name: name || '',
+      });
+    },
+    workbenchWriteFileAvailable: () => nativeCommandAvailable('workbench_write_file'),
+    workbenchWriteFile: async ({ rootId, subdir, name, content, expectedVersion, mustNotExist } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('workbench_write_file', {
+        rootId: rootId || 'default',
+        subdir: subdir || '',
+        name: name || '',
+        content: content == null ? '' : String(content),
+        expectedVersion: expectedVersion == null ? null : String(expectedVersion),
+        mustNotExist: mustNotExist === true,
+      });
+    },
+    workbenchSearchFilesAvailable: () => nativeCommandAvailable('workbench_search_files'),
+    workbenchSearchFiles: async ({ rootId, query } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('workbench_search_files', {
+        rootId: rootId || 'default',
+        query: query || '',
+      });
+    },
 
     sendWithProgress,
 

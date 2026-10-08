@@ -138,6 +138,10 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
         "get_session_summary",
         "get_session_folder_scope",
         "patch_session_authorized_folders",
+        "workbench_list_files",
+        "workbench_read_file",
+        "workbench_write_file",
+        "workbench_search_files",
     ];
 
     let decl = serde_json::json!({

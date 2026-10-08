@@ -55,6 +55,42 @@ let seq = 0;
 const pending = new Map<string, Pending>();
 let bridgeStatus: StudioBridgeStatus = { state: 'pending' };
 const statusListeners = new Set<() => void>();
+const backendCommands = new Set<string>();
+
+function normalizeBackendCommands(value: unknown): string[] {
+  const raw = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object'
+      ? Object.entries(value as Record<string, unknown>)
+        .filter(([, enabled]) => enabled === true)
+        .map(([name]) => name)
+      : [];
+  return raw
+    .filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+    .map(name => name.trim())
+    .filter((name, index, list) => list.indexOf(name) === index)
+    .sort();
+}
+
+function setBackendCommands(data: Record<string, unknown>): void {
+  const raw = data.backendCommands
+    ?? data.backend_commands
+    ?? (data.capabilities && typeof data.capabilities === 'object'
+      ? (data.capabilities as Record<string, unknown>).backendCommands
+        ?? (data.capabilities as Record<string, unknown>).backend_commands
+      : null);
+  backendCommands.clear();
+  normalizeBackendCommands(raw).forEach(command => backendCommands.add(command));
+}
+
+export function getStudioBackendCapabilities(): string[] {
+  return [...backendCommands].sort();
+}
+
+export function hasStudioBackendCommand(command: string): boolean {
+  return backendCommands.has(command);
+}
+
 
 function setBridgeStatus(next: StudioBridgeStatus): void {
   if (
@@ -85,6 +121,7 @@ export function retryStudioBackendBridge(): void {
   mode = 'pending';
   readyPromise = null;
   readyWaiters = [];
+  backendCommands.clear();
   setBridgeStatus({ state: 'pending' });
   probe();
   void whenReady();
@@ -175,6 +212,7 @@ function onParentMessage(ev: MessageEvent): void {
   const data = ev.data;
   if (!data || data.source !== SHELL_SOURCE) return;
   if (data.type === 'studio-backend-hello') {
+    setBackendCommands(data as Record<string, unknown>);
     enable();
     return;
   }
@@ -273,6 +311,38 @@ export function intercepts(pathname: string): boolean {
   if (pathname.startsWith('/api/bridge')) return true;
   if (/^\/api\/agents\/[^/]+\/config$/.test(pathname)) return true;
   return false;
+}
+
+function workbenchCommandFor(pathname: string, method = 'GET', body: unknown = null): string | null {
+  const verb = String(method || 'GET').toUpperCase();
+  if (pathname === '/api/workbench/files' || pathname === '/api/mobile/workbench/files') {
+    return verb === 'GET' ? 'workbench_list_files' : null;
+  }
+  if (pathname === '/api/workbench/search' || pathname === '/api/mobile/workbench/search') {
+    return verb === 'GET' ? 'workbench_search_files' : null;
+  }
+  if (pathname === '/api/workbench/content' || pathname === '/api/mobile/workbench/content') {
+    return verb === 'GET' || verb === 'HEAD' ? 'workbench_read_file' : null;
+  }
+  if (pathname === '/api/workbench/actions' || pathname === '/api/mobile/workbench/actions') {
+    if (verb !== 'POST' || !body || typeof body !== 'object') return null;
+    const action = (body as Record<string, unknown>).action;
+    return action === 'create' || action === 'writeText' ? 'workbench_write_file' : null;
+  }
+  return null;
+}
+
+export function interceptsWithCapabilities(
+  pathname: string,
+  capabilities: Iterable<string> = backendCommands,
+  method = 'GET',
+  body: unknown = null,
+): boolean {
+  if (intercepts(pathname)) return true;
+  const command = workbenchCommandFor(pathname, method, body);
+  if (!command) return false;
+  const available = capabilities instanceof Set ? capabilities : new Set(capabilities);
+  return available.has(command);
 }
 
 function isChatSocket(url: string): boolean {
@@ -421,14 +491,18 @@ function installFetchShim(): void {
   if ((window.fetch as unknown as { __studioBridge?: boolean }).__studioBridge) return;
   const patched = async (input: RequestInfo | URL, init?: RequestInit) => {
     const target = requestUrl(input);
-    const on = intercepts(target.pathname) ? await whenReady() : false;
-    if (!on || !intercepts(target.pathname)) return native(input, init);
+    const method = (init && init.method) || 'GET';
+    const requestBody = readJsonBody(init);
+    const workbenchCommand = workbenchCommandFor(target.pathname, method, requestBody);
+    const shouldProbe = intercepts(target.pathname) || !!workbenchCommand;
+    const on = shouldProbe ? await whenReady() : false;
+    if (!on || !interceptsWithCapabilities(target.pathname, backendCommands, method, requestBody)) return native(input, init);
     const result = await rpc({
       op: 'http',
-      method: (init && init.method) || 'GET',
+      method,
       path: target.pathname,
       search: target.search,
-      body: readJsonBody(init),
+      body: requestBody,
     });
     const envelope = result && typeof result === 'object'
       ? result as { __httpStatus?: unknown; __httpHeaders?: unknown; __httpBody?: unknown }
@@ -437,13 +511,18 @@ function installFetchShim(): void {
     const status = Number.isInteger(rawStatus)
       ? Math.max(100, Math.min(599, Number(rawStatus)))
       : 200;
-    const payload = envelope && Object.prototype.hasOwnProperty.call(envelope, '__httpBody')
-      ? envelope.__httpBody
-      : result;
+    const hasBody = !!(envelope && Object.prototype.hasOwnProperty.call(envelope, '__httpBody'));
+    const payload = hasBody ? envelope.__httpBody : result;
+    const rawBody = envelope?.__httpBodyEncoding === 'utf8';
+    const responseBody = envelope?.__httpHeadOnly
+      ? null
+      : hasBody && rawBody
+        ? String(payload ?? '')
+        : JSON.stringify(payload == null ? null : payload);
     const headers = envelope && envelope.__httpHeaders && typeof envelope.__httpHeaders === 'object'
-      ? { 'Content-Type': 'application/json', ...(envelope.__httpHeaders as Record<string, string>) }
+      ? { 'Content-Type': rawBody ? 'text/plain; charset=utf-8' : 'application/json', ...(envelope.__httpHeaders as Record<string, string>) }
       : { 'Content-Type': 'application/json' };
-    return new Response(JSON.stringify(payload == null ? null : payload), {
+    return new Response(responseBody, {
       status,
       headers,
     });

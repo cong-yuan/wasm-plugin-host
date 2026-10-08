@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { intercepts } from '../studio-backend/studio-backend-bridge';
+import { intercepts, interceptsWithCapabilities } from '../studio-backend/studio-backend-bridge';
 
 describe('Studio backend bridge file/workbench coverage', () => {
   it('keeps file/workbench/preview routes out of Studio until native host commands exist', () => {
@@ -16,6 +16,38 @@ describe('Studio backend bridge file/workbench coverage', () => {
     expect(intercepts('/api/resources/res_sf_report')).toBe(false);
     expect(intercepts('/api/desk/files')).toBe(false);
   });
+  it('enables only the workbench operations advertised by Studio', () => {
+    const read = new Set(['workbench_list_files', 'workbench_read_file']);
+    const full = new Set([
+      'workbench_list_files',
+      'workbench_read_file',
+      'workbench_write_file',
+      'workbench_search_files',
+    ]);
+
+    expect(interceptsWithCapabilities('/api/workbench/files', read, 'GET')).toBe(true);
+    expect(interceptsWithCapabilities('/api/workbench/content', read, 'HEAD')).toBe(true);
+    expect(interceptsWithCapabilities('/api/workbench/search', read, 'GET')).toBe(false);
+    expect(interceptsWithCapabilities('/api/workbench/actions', read, 'POST', {
+      action: 'writeText',
+      name: 'x.txt',
+      content: 'x',
+    })).toBe(false);
+
+    expect(interceptsWithCapabilities('/api/workbench/search', full, 'GET')).toBe(true);
+    expect(interceptsWithCapabilities('/api/workbench/actions', full, 'POST', {
+      action: 'writeText',
+      name: 'x.txt',
+      content: 'x',
+    })).toBe(true);
+    expect(interceptsWithCapabilities('/api/workbench/actions', full, 'POST', {
+      action: 'rename',
+      oldName: 'x.txt',
+      newName: 'y.txt',
+    })).toBe(false);
+    expect(interceptsWithCapabilities('/api/desk/files', full, 'GET')).toBe(false);
+  });
+
 
   it('keeps legacy Desk file operations on Hana until Studio exposes host commands', () => {
     expect(intercepts('/api/desk/files')).toBe(false);

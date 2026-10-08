@@ -548,6 +548,93 @@ check('blob upload reports missing Studio capability explicitly',
   check('mixed host capability cache disables deleted-agent continuation after first failure', mixedCapabilities?.capabilities?.deletedAgentContinuation === false);
   check('mixed host capability cache disables summary after first failure', mixedCapabilities?.capabilities?.sessionSummary === false);
   check('mixed host capability cache disables authorized folders after first failure', mixedCapabilities?.capabilities?.authorizedFolders === false);
+  studio.hostAction = async (action) => {
+    if (action.command === 'list_sessions') {
+      return [{ id: 'workbench-session', title: 'Workbench', busy: false, live: true, status: 'idle' }];
+    }
+    if (action.command === 'workbench_list_files') {
+      return {
+        rootId: action.args.rootId,
+        mountId: action.args.rootId,
+        subdir: action.args.subdir,
+        files: [{ name: 'hello.txt', isDir: false, size: 5 }],
+      };
+    }
+    if (action.command === 'workbench_search_files') {
+      return {
+        rootId: action.args.rootId,
+        mountId: action.args.rootId,
+        query: action.args.query,
+        results: [{ name: 'hello.txt', relativePath: 'hello.txt', isDir: false }],
+      };
+    }
+    if (action.command === 'workbench_read_file') {
+      return {
+        exists: true,
+        content: 'hello',
+        version: 'v1',
+        etag: '"v1"',
+        mimeType: 'text/plain; charset=utf-8',
+        size: 5,
+        mtimeMs: 123,
+        filename: action.args.name,
+      };
+    }
+    if (action.command === 'workbench_write_file') {
+      return {
+        ok: true,
+        version: 'v2',
+        files: [{ name: action.args.name, isDir: false, size: String(action.args.content || '').length }],
+      };
+    }
+    if (action.command === 'transcript') return [];
+    if (action.command === 'chat_partial') return null;
+    throw new Error('unknown backend command: ' + action.command);
+  };
+
+  const workbenchCapabilities = await adapter.http('GET', '/api/capabilities');
+  check('workbench capability registry opens after native host advertises commands',
+    workbenchCapabilities?.capabilities?.fileWorkbench === true
+    && workbenchCapabilities?.capabilities?.fileWorkbenchRead === true
+    && workbenchCapabilities?.capabilities?.fileWorkbenchWrite === true
+    && workbenchCapabilities?.capabilities?.fileWorkbenchSearch === true);
+
+  const workbenchFiles = await adapter.http('GET', '/api/workbench/files?mountId=default&subdir=src');
+  check('workbench list delegates to Studio native command',
+    workbenchFiles?.rootId === 'default'
+    && workbenchFiles?.subdir === 'src'
+    && workbenchFiles?.files?.[0]?.name === 'hello.txt');
+
+  const workbenchSearch = await adapter.http('GET', '/api/workbench/search?mountId=default&q=hello');
+  check('workbench search delegates to Studio native command',
+    workbenchSearch?.query === 'hello'
+    && workbenchSearch?.results?.[0]?.relativePath === 'hello.txt');
+
+  const workbenchContent = await adapter.http('GET', '/api/workbench/content?mountId=default&subdir=src&name=hello.txt');
+  check('workbench content returns raw-body envelope',
+    workbenchContent?.__httpStatus === 200
+    && workbenchContent?.__httpBody === 'hello'
+    && workbenchContent?.__httpBodyEncoding === 'utf8'
+    && workbenchContent?.__httpHeaders?.ETag === '"v1"'
+    && workbenchContent?.__httpHeaders?.['Content-Length'] === '5');
+
+  const workbenchHead = await adapter.http('HEAD', '/api/workbench/content?mountId=default&subdir=src&name=hello.txt');
+  check('workbench HEAD preserves metadata without a body',
+    workbenchHead?.__httpStatus === 200
+    && workbenchHead?.__httpHeadOnly === true
+    && workbenchHead?.__httpHeaders?.['Content-Length'] === '5');
+
+  const workbenchWrite = await adapter.http('POST', '/api/workbench/actions', {
+    action: 'writeText',
+    mountId: 'default',
+    subdir: 'src',
+    name: 'hello.txt',
+    content: 'hello world',
+    expectedVersion: 'v1',
+  });
+  check('workbench writeText delegates to Studio native command',
+    workbenchWrite?.ok === true && workbenchWrite?.version === 'v2');
+
   studio.hostAction = null;
 }
 check('permission default is explicitly locked to ask without backend support',

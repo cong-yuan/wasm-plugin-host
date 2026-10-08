@@ -54,6 +54,7 @@
 - `/api/capabilities`：UI 可读取真实 `uploadBlob` / `sessionTodoMutation` / `thinkingLevel` 等 capability；Studio host 更新后 uploadBlob 与 todo mutation 会开放，旧/缺少 Tauri bridge 的环境继续 fail closed。
 - backend command capability drift：测试会从 `js/lib/api.js` 提取所有 `tauri.invoke()` command，并要求全部出现在 `src/lib.rs` 的 plugin `backend_commands` 声明；同时固定保护新增的 upload/image/todo/compact/deleted-continuation/summary/folder-scope 八个 native commands。
 - native command version drift：`tauri.invoke()` 与 `invokeNative()` 都纳入 capability drift 检查；当 bridge 已连接但宿主缺少某个 command（混合版本/旧宿主）时，upload、image、todo、compact、deleted-agent continuation、summary、authorized-folders 会统一返回 `capability_unavailable`，WS turn 也携带稳定 `error.code`；缺失 command 会在当前 bridge 生命周期内被记入 capability cache，后续 `/api/capabilities` 会立即把对应功能降为不可用，避免把“宿主没升级”反复报成普通发送失败。
+- Studio-native workbench first slice：新增 `workbench_list_files` / `workbench_search_files` / `workbench_read_file` / `workbench_write_file` 四个最小 native command contract；`/api/workbench/files`、`/api/workbench/search`、`/api/workbench/content` 与 `create/writeText` action 已接回 adapter，并由 parent hello 的 `backendCommands` 精确能力门控。读内容通过 bridge raw UTF-8 response 保留 MIME/长度/ETag/mtime metadata，`HEAD` 无 body；rename/move/delete/upload、file-history、ResourceIO、generated-resource preview 仍保持 Hana，避免一次性扩大 Studio 文件权限面。
 - InputControlBar：backend 明确不支持 blob ingest 时禁用附件按钮、隐藏录音入口；thinking-level control 在 Studio 不支持时直接锁定并提供可访问说明。
 - `/api/models/auxiliary-vision`：现在从 provider model metadata 的 `image` / `input` 投影 capability；没有任何模型声明 image 能力时仍 `capability_unavailable`，声明后立即回显可用模型。
 - `/api/models`：会回显已持久化的 model metadata（name/context/maxOutput/input/image/reasoning/thinkingLevels 等），避免 Settings 保存后聊天模型选择器仍显示裸 ID。
@@ -77,8 +78,8 @@
   - 从 project 创建新 session 时优先使用 project workspace；显式 `cwd` 始终覆盖 project mapping；unknown project fail-closed，不创建幽灵 assignment。
   - Project 右键菜单现在可以选择/清除 workspace；cwd 自动生成的临时 project 不允许伪装成可编辑 catalog workspace。
   - 该映射仍属于 OpenHanako catalog 本地持久层，不冒充 Studio 的原生 project manager。
-- embedded Studio file/workbench bridge：当前**不拦截** `/api/workbench/*`、`/api/mobile/workbench/*`、Desk 文件读写、file-history、resource-io、generated-resource preview；这些 surface 在 Studio 尚无对应 host command，因此继续走 Hana HTTP，adapter 直调则统一 `capability_unavailable` / HTTP 501 fail-closed。不能把未实现的 native 能力伪装成已接入。
-- file / workbench / preview / 当前阶段：边界收口完成，下一步再补最小 host command 后逐条接回 bridge；不得先扩大 allowlist 再补实现。live bridge 与可复制的 patch source 已要求 byte-for-byte 同步，并由 `studio-backend-patch-sync.test.mjs` 回归保护。
+- embedded Studio file/workbench bridge：首个最小 native slice 已接回 `/api/workbench/files`、`/api/workbench/search`、`/api/workbench/content`（GET/HEAD）以及 `/api/workbench/actions` 的 `create/writeText`；`/api/mobile/workbench/*` 同步支持。Desk 文件读写、file-history、resource-io、generated-resource preview 仍不拦截，未实现的 native 能力继续 fail-closed。
+- file / workbench / 当前阶段：parent hello 通过 `backendCommands` 做逐 command 能力协商；没有 capability 时保持 Hana fallback，有 capability 才拦截对应 route。`workbench_read_file` 第一阶段只传文本，但 bridge 已保留 MIME/长度/ETag/mtime 与 HEAD 元数据。live bridge 与可复制 patch source 继续 byte-for-byte 同步，并由 `studio-backend-patch-sync.test.mjs` 回归保护。
 - Sidebar UI persistence / 已完成第一阶段
   - Jian 右侧栏开关已从 `hana-jian` / `hana-jian-chat` localStorage 迁到 `/api/preferences/sidebar-ui.shell.jianOpen`。
   - sidebar / Jian / channel inspector / preview 四组宽度迁到 `/api/preferences/sidebar-ui.layout.*`；首次 server payload 缺少 `layout` 时从旧 `hana-*-width` keys 一次性迁移，之后以 Studio/adapter 持久值为准。
