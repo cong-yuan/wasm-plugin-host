@@ -469,7 +469,7 @@ return (function () {
   };
   const loadGlobalModelPrefs = () => normalizeGlobalModelPrefs(readJson(GLOBAL_MODEL_PREFS_KEY, {}));
   const saveGlobalModelPrefs = (value) => writeJson(GLOBAL_MODEL_PREFS_KEY, normalizeGlobalModelPrefs(value));
-  const applyGlobalModelPrefsPatch = (raw) => {
+  const applyGlobalModelPrefsPatch = async (raw) => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'model preferences object required' };
     const current = loadGlobalModelPrefs();
     const next = { models: { ...current.models }, search: { ...current.search } };
@@ -492,6 +492,15 @@ return (function () {
         return { ok: false, error: 'invalid search.provider' };
       }
       next.search.provider = raw.search.provider.trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(raw.models || {}, 'utility') && next.models.utility) {
+      if (!next.models.utility.provider) return { ok: false, error: 'models.utility.provider required' };
+      if (api.mode() === 'tauri') {
+        const result = await api.setLlmConfig({
+          current: { provider: next.models.utility.provider, model: next.models.utility.id },
+        });
+        if (result?.ok === false) return { ok: false, error: result.error || 'failed to persist utility model' };
+      }
     }
     saveGlobalModelPrefs(next);
     return { ok: true, ...loadGlobalModelPrefs() };
@@ -1210,7 +1219,7 @@ return (function () {
     }
 
     if (pathname === '/api/preferences/models' && (verb === 'PUT' || verb === 'POST' || verb === 'PATCH')) {
-      return applyGlobalModelPrefsPatch(body);
+      return await applyGlobalModelPrefsPatch(body);
     }
 
     return null;
@@ -1899,10 +1908,13 @@ return (function () {
         const hit = (listed || []).find((m) => m.id === modelId && m.provider === provider);
         if (hit && hit.name) displayName = hit.name;
       } catch (_) {}
+      const providerOverlay = readOverlay()[provider] && typeof readOverlay()[provider] === 'object' ? readOverlay()[provider] : {};
+      const metadata = modelMetadataFor(providerOverlay, modelId) || {};
       return {
         ok: true,
-        model: serializeModel(modelId, provider, displayName),
-        thinkingLevel: 'medium',
+        model: { ...serializeModel(modelId, provider, displayName), ...metadata },
+        thinkingLevel: metadata.defaultThinkingLevel || 'medium',
+        thinkingLevels: Array.isArray(metadata.thinkingLevels) ? metadata.thinkingLevels : ['medium'],
       };
     }
 

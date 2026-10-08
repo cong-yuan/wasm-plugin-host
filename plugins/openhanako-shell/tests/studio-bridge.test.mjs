@@ -560,6 +560,7 @@ global.window.__TAURI_INTERNALS__ = {
     if (cmd === 'transcript') {
       return Promise.resolve(liveTranscript.map((m) => ({ ...m })));
     }
+    if (cmd === 'set_llm_config') return Promise.resolve({ ok: true });
     return Promise.reject(new Error('unknown ' + cmd));
   },
 };
@@ -601,6 +602,22 @@ const invalidGlobalModelPrefs = await adapter.http('PUT', '/api/preferences/mode
 });
 check('global model preference validation rejects malformed writes',
   invalidGlobalModelPrefs?.ok === false && /vision_enabled/.test(invalidGlobalModelPrefs?.error || ''));
+calls.length = 0;
+const utilityModelWrite = await adapter.http('PUT', '/api/preferences/models', {
+  models: { utility: { provider: 'deepseek', id: 'deepseek-reasoner' } },
+});
+check('utility model preference updates Studio current model',
+  utilityModelWrite?.ok === true
+  && utilityModelWrite?.models?.utility?.id === 'deepseek-reasoner'
+  && calls.some((call) => call.cmd === 'set_llm_config'
+    && call.args.patch.current.provider === 'deepseek'
+    && call.args.patch.current.model === 'deepseek-reasoner'));
+const utilityModelRefresh = await adapter.http('GET', '/api/preferences/models');
+check('utility model preference reads back the Studio-synced model',
+  utilityModelRefresh?.models?.utility?.id === 'deepseek-reasoner');
+await adapter.http('PUT', '/api/preferences/models', {
+  models: { utility: { provider: 'deepseek', id: 'deepseek-chat' } },
+});
 calls.length = 0;
 await api.create('mock');
 check('create resolves model within explicitly selected provider',
@@ -807,10 +824,6 @@ const visionAfterMetadata = await adapter.http('GET', '/api/models/auxiliary-vis
 check('auxiliary vision capability becomes available from persisted model metadata',
   visionAfterMetadata?.available === true
   && visionAfterMetadata.models?.some((model) => model.id === 'mock-1' && model.image === true));
-const providerModelDelete = await adapter.http('DELETE', '/api/providers/mock/models/mock-1');
-check('provider model metadata can be explicitly cleared',
-  providerModelDelete?.ok === true && !providerModelDelete?.model?.name);
-
 check('create_agent uses mock/mock-1',
   created.sessionId === 'agent-new'
   && created.path === 'studio://agent-new'
@@ -819,6 +832,16 @@ check('create_agent uses mock/mock-1',
 
 calls.length = 0;
 const switched = await adapter.http('POST', '/api/sessions/switch', { path: 'studio://agent-2', sessionId: 'agent-2' });
+const switchedWithMetadata = await adapter.http('POST', '/api/models/set', {
+  provider: 'mock', modelId: 'mock-1',
+});
+check('model switch response includes persisted model metadata',
+  switchedWithMetadata?.model?.id === 'mock-1'
+  && switchedWithMetadata?.model?.name === 'Mock Vision'
+  && switchedWithMetadata?.model?.image === true);
+const providerModelDelete = await adapter.http('DELETE', '/api/providers/mock/models/mock-1');
+check('provider model metadata can be explicitly cleared',
+  providerModelDelete?.ok === true && !providerModelDelete?.model?.name);
 check('cold session resumes without rebuilding its model driver',
   switched.sessionId === 'agent-2'
   && calls.some((c) => c.cmd === 'resume_session' && c.args.sessionId === 'agent-2')
