@@ -6,9 +6,11 @@ const apiSource = fs.readFileSync(path.join(root, 'js/lib/api.js'), 'utf8');
 const pluginSource = fs.readFileSync(path.join(root, 'src/lib.rs'), 'utf8');
 
 const invoked = new Set();
-for (const chunk of apiSource.split("tauri.invoke('").slice(1)) {
-  const end = chunk.indexOf("'");
-  if (end > 0) invoked.add(chunk.slice(0, end));
+for (const prefix of ["tauri.invoke('", "invokeNative('"]) {
+  for (const chunk of apiSource.split(prefix).slice(1)) {
+    const end = chunk.indexOf("'");
+    if (end > 0) invoked.add(chunk.slice(0, end));
+  }
 }
 
 const commandStart = pluginSource.indexOf('let backend_commands = [');
@@ -39,4 +41,4 @@ if (undeclaredNative.length) {
   throw new Error('native Studio command capability declaration is missing: ' + undeclaredNative.join(', '));
 }
 
-console.log('backend command capabilities: ok (' + declared.size + ' declared, ' + invoked.size + ' invoked)');
+console.log('backend command capabilities: ok (' + declared.size + ' declared, ' + invoked.size + ' native calls declared)');

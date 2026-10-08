@@ -80,6 +80,43 @@ return (function () {
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+  // A loaded Studio bridge is not enough: an older/newer host may expose the
+  // bridge while omitting one native command. Normalize that drift so callers
+  // can distinguish a missing capability from a real session failure.
+  const isCommandUnavailableError = (error) => {
+    const message = error && error.message ? error.message : String(error || '');
+    return /unknown (?:backend )?command|command (?:not found|unavailable|unsupported|not registered)|unsupported command|no such command/i.test(message);
+  };
+  const unavailableNativeCommands = new Set();
+  let capabilityBinding = typeof tauri.bindingIdentity === 'function' ? tauri.bindingIdentity() : null;
+  const refreshCapabilityBinding = () => {
+    const current = typeof tauri.bindingIdentity === 'function' ? tauri.bindingIdentity() : null;
+    if (current !== capabilityBinding) {
+      unavailableNativeCommands.clear();
+      capabilityBinding = current;
+    }
+  };
+  const nativeCommandAvailable = (command) => {
+    refreshCapabilityBinding();
+    return tauri.available() && !unavailableNativeCommands.has(command);
+  };
+  const invokeNative = async (command, args) => {
+    refreshCapabilityBinding();
+    try {
+      return await tauri.invoke(command, args || {});
+    } catch (error) {
+      if (isCommandUnavailableError(error)) {
+        const message = error && error.message ? error.message : String(error);
+        const normalized = new Error(message || ('studio command unavailable: ' + command));
+        normalized.code = 'capability_unavailable';
+        normalized.command = command;
+        unavailableNativeCommands.add(command);
+        throw normalized;
+      }
+      throw error;
+    }
+  };
+
   const mock = {
     status: () => ({
       providers: [DEFAULT_PROVIDER],
@@ -602,7 +639,7 @@ return (function () {
       msgId: msgId || ('ohk-' + Date.now()),
       ...(command === 'send_message_with_images' ? { images: options.images } : {}),
     };
-    const sendPromise = tauri.invoke(command, sendPayload);
+    const sendPromise = invokeNative(command, sendPayload);
 
     // Event push (if listen works) + chat_partial/transcript poll fallback.
     const loop = (async () => {
@@ -783,44 +820,44 @@ return (function () {
     },
 
     // Browser attachments cross the Studio bridge as base64 JSON; the host owns the destination.
-    uploadBlobAvailable: () => tauri.available(),
+    uploadBlobAvailable: () => nativeCommandAvailable('upload_blob'),
     uploadBlob: async ({ sessionId, name, base64Data, mimeType } = {}) => {
       if (!tauri.available()) return null;
-      return tauri.invoke('upload_blob', {
+      return invokeNative('upload_blob', {
         sessionId: sessionId || null,
         name: name || 'upload.bin',
         base64Data: base64Data || '',
         mimeType: mimeType || null,
       });
     },
-    completeSessionTodosAvailable: () => tauri.available(),
+    completeSessionTodosAvailable: () => nativeCommandAvailable('complete_session_todos'),
     completeSessionTodos: async (agentId) => {
       if (!tauri.available()) return null;
-      return tauri.invoke('complete_session_todos', { agentId });
+      return invokeNative('complete_session_todos', { agentId });
     },
-    freshCompactSessionAvailable: () => tauri.available(),
+    freshCompactSessionAvailable: () => nativeCommandAvailable('fresh_compact_session'),
     freshCompactSession: async (agentId) => {
       if (!tauri.available()) return null;
-      return tauri.invoke('fresh_compact_session', { agentId });
+      return invokeNative('fresh_compact_session', { agentId });
     },
-    continueDeletedAgentSessionAvailable: () => tauri.available(),
+    continueDeletedAgentSessionAvailable: () => nativeCommandAvailable('continue_deleted_agent_session'),
     continueDeletedAgentSession: async (agentId) => {
       if (!tauri.available()) return null;
-      return tauri.invoke('continue_deleted_agent_session', { agentId });
+      return invokeNative('continue_deleted_agent_session', { agentId });
     },
-    sessionSummaryAvailable: () => tauri.available(),
+    sessionSummaryAvailable: () => nativeCommandAvailable('get_session_summary'),
     getSessionSummary: async (agentId) => {
       if (!tauri.available()) return null;
-      return tauri.invoke('get_session_summary', { agentId });
+      return invokeNative('get_session_summary', { agentId });
     },
-    sessionFolderScopeAvailable: () => tauri.available(),
+    sessionFolderScopeAvailable: () => nativeCommandAvailable('get_session_folder_scope') && nativeCommandAvailable('patch_session_authorized_folders'),
     getSessionFolderScope: async (agentId) => {
       if (!tauri.available()) return null;
-      return tauri.invoke('get_session_folder_scope', { agentId });
+      return invokeNative('get_session_folder_scope', { agentId });
     },
     patchSessionAuthorizedFolders: async (agentId, action, folder, folders) => {
       if (!tauri.available()) return null;
-      return tauri.invoke('patch_session_authorized_folders', {
+      return invokeNative('patch_session_authorized_folders', {
         agentId,
         action: action || 'set',
         folder: folder || null,

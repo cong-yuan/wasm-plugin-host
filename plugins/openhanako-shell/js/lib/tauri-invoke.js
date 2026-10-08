@@ -59,6 +59,10 @@ return (function () {
     return null;
   };
 
+  const bindingIdentity = () => (
+    studio && typeof studio.hostAction === 'function' ? studio.hostAction : null
+  );
+
   const available = () => !!resolveHostAction() || !!resolveInvoke();
 
   const mode = () => {
@@ -93,5 +97,5 @@ return (function () {
     return typeof unlisten === 'function' ? unlisten : () => {};
   };
 
-  return { available, mode, invoke, listen, missing };
+  return { available, mode, invoke, listen, missing, bindingIdentity };
 })();

@@ -53,6 +53,7 @@
 - Native image path：桌面提交的 `images[]` 不再只停留在 WebSocket payload；Studio 新增 `send_message_with_images`，把图片转成持久化的 `ContentBlock::Image { url: data:, detail }`，OpenAI-compatible adapter 映射为原生 `image_url` content block。session JSONL 自包含图片数据，避免依赖本机临时路径。
 - `/api/capabilities`：UI 可读取真实 `uploadBlob` / `sessionTodoMutation` / `thinkingLevel` 等 capability；Studio host 更新后 uploadBlob 与 todo mutation 会开放，旧/缺少 Tauri bridge 的环境继续 fail closed。
 - backend command capability drift：测试会从 `js/lib/api.js` 提取所有 `tauri.invoke()` command，并要求全部出现在 `src/lib.rs` 的 plugin `backend_commands` 声明；同时固定保护新增的 upload/image/todo/compact/deleted-continuation/summary/folder-scope 八个 native commands。
+- native command version drift：`tauri.invoke()` 与 `invokeNative()` 都纳入 capability drift 检查；当 bridge 已连接但宿主缺少某个 command（混合版本/旧宿主）时，upload、image、todo、compact、deleted-agent continuation、summary、authorized-folders 会统一返回 `capability_unavailable`，WS turn 也携带稳定 `error.code`；缺失 command 会在当前 bridge 生命周期内被记入 capability cache，后续 `/api/capabilities` 会立即把对应功能降为不可用，避免把“宿主没升级”反复报成普通发送失败。
 - InputControlBar：backend 明确不支持 blob ingest 时禁用附件按钮、隐藏录音入口；thinking-level control 在 Studio 不支持时直接锁定并提供可访问说明。
 - `/api/models/auxiliary-vision`：现在从 provider model metadata 的 `image` / `input` 投影 capability；没有任何模型声明 image 能力时仍 `capability_unavailable`，声明后立即回显可用模型。
 - `/api/models`：会回显已持久化的 model metadata（name/context/maxOutput/input/image/reasoning/thinkingLevels 等），避免 Settings 保存后聊天模型选择器仍显示裸 ID。

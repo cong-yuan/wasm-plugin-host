@@ -479,6 +479,77 @@ check('Studio capability registry exposes real and unavailable input controls',
 const uploadCapability = await adapter.http('POST', '/api/upload-blob', { name: 'x.png', base64Data: 'AA==', mimeType: 'image/png' });
 check('blob upload reports missing Studio capability explicitly',
   uploadCapability?.ok === false && uploadCapability?.code === 'capability_unavailable');
+
+// A real bridge can exist while a particular host command is missing (mixed
+// host/plugin versions). Every native surface must report capability_unavailable
+// instead of leaking a raw "unknown command" error or claiming success.
+{
+  studio.hostAction = async (action) => {
+    if (action.command === 'list_sessions') {
+      return [{ id: 'mixed-host-session', title: 'Mixed host', busy: false, live: true, status: 'idle' }];
+    }
+    if (action.command === 'transcript') return [];
+    if (action.command === 'chat_partial') return null;
+    throw new Error('unknown backend command: ' + action.command);
+  };
+
+  const mixedUpload = await adapter.http('POST', '/api/upload-blob', {
+    sessionId: 'mixed-host-session',
+    name: 'x.txt',
+    base64Data: 'eA==',
+    mimeType: 'text/plain',
+  });
+  check('mixed host upload command fails closed', mixedUpload?.ok === false && mixedUpload?.code === 'capability_unavailable');
+
+  const mixedTodos = await adapter.http('POST', '/api/sessions/todos/complete', {
+    path: 'studio://mixed-host-session',
+  });
+  check('mixed host todo command fails closed', mixedTodos?.ok === false && mixedTodos?.code === 'capability_unavailable');
+
+  const mixedCompact = await adapter.http('POST', '/api/sessions/fresh-compact', {
+    path: 'studio://mixed-host-session',
+  });
+  check('mixed host compact command fails closed', mixedCompact?.ok === false && mixedCompact?.code === 'capability_unavailable');
+  const mixedDeleted = await adapter.http('POST', '/api/sessions/continue-deleted-agent', {
+    path: 'studio://mixed-host-session',
+  });
+  check('mixed host deleted-agent continuation fails closed', mixedDeleted?.ok === false && mixedDeleted?.code === 'capability_unavailable');
+
+  const mixedSummary = await adapter.http('GET', '/api/sessions/summary', {
+    path: 'studio://mixed-host-session',
+  });
+  check('mixed host summary command fails closed', mixedSummary?.code === 'capability_unavailable');
+
+  const mixedFolders = await adapter.http('GET', '/api/sessions/authorized-folders', {
+    path: 'studio://mixed-host-session',
+  });
+  check('mixed host folder-scope command fails closed', mixedFolders?.ok === false && mixedFolders?.code === 'capability_unavailable');
+  const mixedFolderPatch = await adapter.http('PATCH', '/api/sessions/authorized-folders', {
+    path: 'studio://mixed-host-session',
+    action: 'set',
+    folders: [],
+  });
+  check('mixed host folder-scope patch command fails closed', mixedFolderPatch?.ok === false && mixedFolderPatch?.code === 'capability_unavailable');
+
+  const mixedTurn = await adapter.ws({
+    type: 'prompt',
+    sessionId: 'mixed-host-session',
+    sessionPath: 'studio://mixed-host-session',
+    text: 'send an image',
+    images: [{ data: 'aGVsbG8=', mimeType: 'image/png' }],
+    clientMessageId: 'mixed-image-1',
+  });
+  const mixedError = (mixedTurn?.events || []).find((event) => event.type === 'error');
+  check('mixed host image turn exposes capability code', mixedError?.code === 'capability_unavailable');
+  const mixedCapabilities = await adapter.http('GET', '/api/capabilities');
+  check('mixed host capability cache disables upload after first failure', mixedCapabilities?.capabilities?.uploadBlob === false);
+  check('mixed host capability cache disables todo after first failure', mixedCapabilities?.capabilities?.sessionTodoMutation === false);
+  check('mixed host capability cache disables compact after first failure', mixedCapabilities?.capabilities?.sessionCompaction === false);
+  check('mixed host capability cache disables deleted-agent continuation after first failure', mixedCapabilities?.capabilities?.deletedAgentContinuation === false);
+  check('mixed host capability cache disables summary after first failure', mixedCapabilities?.capabilities?.sessionSummary === false);
+  check('mixed host capability cache disables authorized folders after first failure', mixedCapabilities?.capabilities?.authorizedFolders === false);
+  studio.hostAction = null;
+}
 check('permission default is explicitly locked to ask without backend support',
   permissionDefault?.permissionMode === 'ask'
   && permissionDefault?.locked === true

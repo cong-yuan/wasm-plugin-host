@@ -1825,10 +1825,11 @@ return (function () {
           }],
         };
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         return {
           ok: false,
-          code: 'upload_failed',
-          error: error instanceof Error ? error.message : String(error),
+          code: error?.code === 'capability_unavailable' ? 'capability_unavailable' : 'upload_failed',
+          error: message,
         };
       }
     }
@@ -1859,13 +1860,15 @@ return (function () {
         return result;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const code = message === 'agent_not_deleted'
-          ? 'agent_not_deleted'
-          : message === 'session_not_found'
-            ? 'session_not_found'
-            : message === 'session_transcript_empty'
-              ? 'session_transcript_empty'
-              : 'continuation_failed';
+        const code = error?.code === 'capability_unavailable'
+          ? 'capability_unavailable'
+          : message === 'agent_not_deleted'
+            ? 'agent_not_deleted'
+            : message === 'session_not_found'
+              ? 'session_not_found'
+              : message === 'session_transcript_empty'
+                ? 'session_transcript_empty'
+                : 'continuation_failed';
         return { ok: false, code, error: message };
       }
     }
@@ -1886,14 +1889,18 @@ return (function () {
         if (!result || result.fresh !== true) {
           return {
             ok: false,
-            code: 'compaction_failed',
+            code: result?.code || 'compaction_failed',
             error: result?.error || 'studio fresh compact failed',
           };
         }
         return { ok: true, ...result };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const code = message === 'session is busy' ? 'session_busy' : 'compaction_failed';
+        const code = error?.code === 'capability_unavailable'
+          ? 'capability_unavailable'
+          : message === 'session is busy'
+            ? 'session_busy'
+            : 'compaction_failed';
         return { ok: false, code, error: message };
       }
     }
@@ -1918,7 +1925,11 @@ return (function () {
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const code = message === 'session is busy' ? 'session_busy' : 'todo_mutation_failed';
+        const code = error?.code === 'capability_unavailable'
+          ? 'capability_unavailable'
+          : message === 'session is busy'
+            ? 'session_busy'
+            : 'todo_mutation_failed';
         return { ok: false, code, error: message };
       }
     }
@@ -2355,7 +2366,14 @@ return (function () {
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return { hasSummary: false, summary: null, createdAt: null, updatedAt: null, code: 'summary_failed', error: message };
+        return {
+          hasSummary: false,
+          summary: null,
+          createdAt: null,
+          updatedAt: null,
+          code: error?.code === 'capability_unavailable' ? 'capability_unavailable' : 'summary_failed',
+          error: message,
+        };
       }
     }
 
@@ -2397,11 +2415,13 @@ return (function () {
         return result;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const code = /folder (is required|does not exist|must be a directory)/.test(message)
-          ? 'invalid_folder'
-          : message === 'session is busy'
-            ? 'session_busy'
-            : 'authorized_folders_failed';
+        const code = error?.code === 'capability_unavailable'
+          ? 'capability_unavailable'
+          : /folder (is required|does not exist|must be a directory)/.test(message)
+            ? 'invalid_folder'
+            : message === 'session is busy'
+              ? 'session_busy'
+              : 'authorized_folders_failed';
         return { ok: false, code, error: message };
       }
     }
@@ -2970,6 +2990,7 @@ return (function () {
           type: 'error',
           sessionId: liveId,
           sessionPath: livePath,
+          code: err?.code || 'turn_failed',
           message: err && err.message ? err.message : String(err),
         });
         push({ type: 'status', sessionId: liveId, sessionPath: livePath, isStreaming: false });
