@@ -59,6 +59,7 @@
 
 ## Phase 4 — Workspace
 
+- session-project assignment：已补 GET read-back，并在 POST 时校验 project 必须真实存在；清空 assignment 统一回到 uncategorized，避免 localStorage 中留下悬挂 project id。
 - authorized folders
 - project / workspace mapping
 - file / workbench / preview

@@ -624,13 +624,23 @@ return (function () {
 
   const nextOrder = (items) => items.reduce((max, item) => Math.max(max, Number(item.order) || 0), -1) + 1;
 
-  const handleSessionProjects = (pathname, verb, body) => {
+  const handleSessionProjects = (pathname, verb, body, query = {}) => {
     if (pathname !== '/api/session-projects' && !pathname.startsWith('/api/session-projects/')) {
       return null;
     }
 
     if (pathname === '/api/session-projects' && verb === 'GET') {
       return { catalog: loadCatalog() };
+    }
+
+    if (pathname === '/api/session-projects/session-assignment' && verb === 'GET') {
+      const sessionPath = typeof query.sessionPath === 'string' ? query.sessionPath : '';
+      if (!sessionPath) return { error: 'sessionPath is required' };
+      const assignments = loadAssignments();
+      const projectId = assignments[sessionPath] || UNCATEGORIZED_PROJECT_ID;
+      const catalog = loadCatalog();
+      const project = catalog.projects.find((item) => item.id === projectId) || null;
+      return { assignment: { sessionPath, projectId, project } };
     }
 
     if (pathname === '/api/session-projects/projects' && verb === 'POST') {
@@ -776,11 +786,15 @@ return (function () {
       const projectId = body && typeof body.projectId === 'string' && body.projectId.trim()
         ? body.projectId.trim()
         : null;
+      if (projectId && projectId !== UNCATEGORIZED_PROJECT_ID) {
+        const catalog = loadCatalog();
+        if (!catalog.projects.some((project) => project.id === projectId)) return { error: 'project not found' };
+      }
       const assignments = loadAssignments();
       if (!projectId || projectId === UNCATEGORIZED_PROJECT_ID) delete assignments[sessionPath];
       else assignments[sessionPath] = projectId;
       saveAssignments(assignments);
-      return { ok: true, assignment: { sessionPath, projectId } };
+      return { ok: true, assignment: { sessionPath, projectId: projectId || UNCATEGORIZED_PROJECT_ID } };
     }
 
     return { error: 'studio bridge: unhandled ' + verb + ' ' + pathname };
@@ -2391,7 +2405,7 @@ return (function () {
       };
     }
 
-    const projectResult = handleSessionProjects(pathname, verb, body);
+    const projectResult = handleSessionProjects(pathname, verb, body, query);
     if (projectResult !== null) return projectResult;
 
     const stub = stubHttp(pathname, verb, body);

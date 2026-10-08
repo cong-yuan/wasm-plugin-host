@@ -339,6 +339,29 @@ await adapter.http('PUT', '/api/preferences/notifications', {
   scheduledTaskCompletion: 'never',
   patrolCompletion: 'never',
 });
+const assignmentFolder = await adapter.http('POST', '/api/session-projects/folders', { name: 'assignment-test-folder' });
+const assignmentProject = await adapter.http('POST', '/api/session-projects/projects', {
+  name: 'assignment-test-project', folderId: assignmentFolder?.folder?.id,
+});
+const assignmentSaved = await adapter.http('POST', '/api/session-projects/session-assignment', {
+  sessionPath: 'studio://agent-1', projectId: assignmentProject?.project?.id,
+});
+check('session assignment rejects dangling project ids',
+  assignmentSaved?.ok === true && assignmentSaved?.assignment?.projectId === assignmentProject?.project?.id);
+const assignmentRead = await adapter.http('GET', '/api/session-projects/session-assignment?sessionPath=' + encodeURIComponent('studio://agent-1'));
+check('session assignment can be read back by session path',
+  assignmentRead?.assignment?.sessionPath === 'studio://agent-1'
+  && assignmentRead?.assignment?.project?.id === assignmentProject?.project?.id);
+const missingAssignmentProject = await adapter.http('POST', '/api/session-projects/session-assignment', {
+  sessionPath: 'studio://agent-1', projectId: 'missing-project-id',
+});
+check('session assignment rejects unknown projects',
+  missingAssignmentProject?.error === 'project not found');
+await adapter.http('POST', '/api/session-projects/session-assignment', {
+  sessionPath: 'studio://agent-1', projectId: null,
+});
+await adapter.http('DELETE', '/api/session-projects/projects/' + encodeURIComponent(assignmentProject?.project?.id || ''));
+await adapter.http('DELETE', '/api/session-projects/folders/' + encodeURIComponent(assignmentFolder?.folder?.id || ''));
 
 const thinkingLevelLocked = await adapter.http('GET', '/api/session-thinking-level');
 check('thinking level is explicitly locked when Studio has no control',
