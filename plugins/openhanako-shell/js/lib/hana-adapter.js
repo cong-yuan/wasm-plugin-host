@@ -1591,7 +1591,7 @@ return (function () {
   // Soft stubs for openhanako surfaces that are not part of the Studio agent
   // vertical slice. Returning empty/ok stops noisy 404s in the harness and
   // iframe console without pretending the feature exists.
-  const stubHttp = (pathname, verb, body) => {
+  const stubHttp = async (pathname, verb, body) => {
     if (pathname === '/api/preferences/models' && verb === 'GET') {
       return {
         models: [{ id: api.DEFAULT_MODEL, name: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER }],
@@ -1634,11 +1634,24 @@ return (function () {
       };
     }
     if (pathname === '/api/models/auxiliary-vision' && verb === 'GET') {
-      return {
-        available: false,
-        code: 'capability_unavailable',
-        error: 'studio backend does not expose model input-modality metadata yet',
-      };
+      const llm = await api.getLlmConfig();
+      const lists = llm && llm.model_lists && typeof llm.model_lists === 'object' ? llm.model_lists : {};
+      const visionModels = [];
+      Object.keys(lists).forEach((provider) => {
+        const providerOverlay = readOverlay()[provider] && typeof readOverlay()[provider] === 'object' ? readOverlay()[provider] : {};
+        const ids = Array.isArray(lists[provider]) ? lists[provider] : [];
+        ids.forEach((entry) => {
+          const id = modelIdOf(entry);
+          const metadata = modelMetadataFor(providerOverlay, id) || {};
+          const input = Array.isArray(metadata.input) ? metadata.input : [];
+          if (metadata.image === true || input.includes('image')) {
+            visionModels.push({ id, provider, name: metadata.name || id, ...metadata });
+          }
+        });
+      });
+      return visionModels.length
+        ? { available: true, models: visionModels, source: 'local-model-metadata' }
+        : { available: false, models: [], code: 'capability_unavailable', error: 'no model is marked as image-capable' };
     }
     if (pathname === '/api/upload-blob' && verb === 'POST') {
       return {
@@ -1830,19 +1843,26 @@ return (function () {
           arr.forEach((id) => {
             const mid = typeof id === 'string' ? id : (id && id.id);
             if (!mid) return;
+            const providerOverlay = readOverlay()[prov] && typeof readOverlay()[prov] === 'object' ? readOverlay()[prov] : {};
+            const metadata = modelMetadataFor(providerOverlay, mid) || {};
             models.push({
               id: mid,
-              name: mid,
+              name: metadata.name || mid,
               provider: prov,
+              ...metadata,
               isCurrent: prov === provider && mid === model,
             });
           });
         });
         if (!models.some((entry) => entry.provider === provider && entry.id === model)) {
-          models.push({ id: model, name: model, provider, isCurrent: true });
+          const providerOverlay = readOverlay()[provider] && typeof readOverlay()[provider] === 'object' ? readOverlay()[provider] : {};
+          const metadata = modelMetadataFor(providerOverlay, model) || {};
+          models.push({ id: model, name: metadata.name || model, provider, ...metadata, isCurrent: true });
         }
         if (!models.length) {
-          models.push({ id: model, name: model, provider, isCurrent: true });
+          const providerOverlay = readOverlay()[provider] && typeof readOverlay()[provider] === 'object' ? readOverlay()[provider] : {};
+          const metadata = modelMetadataFor(providerOverlay, model) || {};
+          models.push({ id: model, name: metadata.name || model, provider, ...metadata, isCurrent: true });
         }
         return {
           models,
@@ -1990,10 +2010,24 @@ return (function () {
     }
 
     if (/^\/api\/agents\/[^/]+\/config$/.test(pathname) && verb === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3] || '');
+      const llm = await api.getLlmConfig();
+      const current = llm && llm.current && typeof llm.current === 'object' ? llm.current : {};
       return {
-        chat: {},
+        chat: {
+          provider: typeof current.provider === 'string' ? current.provider : api.DEFAULT_PROVIDER,
+          model: typeof current.model === 'string' ? current.model : api.DEFAULT_MODEL,
+          agentId,
+        },
         memory: { enabled: true },
         user: { name: loadUserPrefs().name },
+        capabilities: {
+          modelSwitch: true,
+          thinkingLevel: false,
+          permissionMode: false,
+          primaryAgentSwitch: false,
+        },
+        source: 'studio',
       };
     }
 
@@ -2408,7 +2442,7 @@ return (function () {
     const projectResult = handleSessionProjects(pathname, verb, body, query);
     if (projectResult !== null) return projectResult;
 
-    const stub = stubHttp(pathname, verb, body);
+    const stub = await stubHttp(pathname, verb, body);
     if (stub !== null) return stub;
 
     return { error: 'studio bridge: unhandled ' + verb + ' ' + pathname };

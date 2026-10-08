@@ -778,6 +778,13 @@ check('agent list comes from the agent surface rather than duplicating sessions'
   && agentsResponse.agents.length === 1
   && agentsResponse.agents[0]?.id === 'studio'
   && agentsResponse.agents[0]?.isPrimary === true);
+const agentConfig = await adapter.http('GET', '/api/agents/studio/config');
+check('agent config reports the current Studio model and unsupported controls',
+  agentConfig?.source === 'studio'
+  && agentConfig?.chat?.agentId === 'studio'
+  && agentConfig?.capabilities?.modelSwitch === true
+  && agentConfig?.capabilities?.thinkingLevel === false
+  && agentConfig?.capabilities?.permissionMode === false);
 const providerModelEdit = await adapter.http('PUT', '/api/providers/mock/models/mock-1', {
   name: 'Mock Vision', context: 32768, maxOutput: 4096,
   image: true, reasoning: true, input: ['text', 'image'],
@@ -792,6 +799,14 @@ check('provider model metadata survives provider refresh',
 const discoveredAfterEdit = await adapter.http('GET', '/api/providers/mock/discovered-models');
 check('discovered model projection includes persisted metadata',
   discoveredAfterEdit?.models?.some((model) => model.id === 'mock-1' && model.name === 'Mock Vision'));
+const modelsAfterMetadata = await adapter.http('GET', '/api/models');
+check('model listing carries persisted model metadata into the chat selector',
+  modelsAfterMetadata?.models?.some((model) =>
+    model.id === 'mock-1' && model.name === 'Mock Vision' && model.context === 32768 && model.image === true));
+const visionAfterMetadata = await adapter.http('GET', '/api/models/auxiliary-vision');
+check('auxiliary vision capability becomes available from persisted model metadata',
+  visionAfterMetadata?.available === true
+  && visionAfterMetadata.models?.some((model) => model.id === 'mock-1' && model.image === true));
 const providerModelDelete = await adapter.http('DELETE', '/api/providers/mock/models/mock-1');
 check('provider model metadata can be explicitly cleared',
   providerModelDelete?.ok === true && !providerModelDelete?.model?.name);

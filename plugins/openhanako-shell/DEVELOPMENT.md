@@ -47,13 +47,14 @@
 - provider model metadata：`/api/providers/:provider/models/:model` 的 PUT/PATCH/DELETE 已从 soft-ack 改为真实 local overlay 写入/删除，并在 provider config、discovered-models 两条读取链路回显。
 - `/api/session-thinking-level`：已从固定 `off` 改为显式 `medium + locked + capability_unavailable`，避免 UI 误以为 Studio 支持切换；宿主补真实 session thinking 原语后再接。
 - 接 `/api/upload-blob`、附件、图片和 vision 路径；当前 Studio 没有 blob/file-ingest command，继续保持 fail closed。
-- `/api/models/auxiliary-vision` 改为真实 capability projection；当前 Studio 模型列表没有输入模态元数据，暂保持 unavailable。
+- `/api/models/auxiliary-vision`：现在从 provider model metadata 的 `image` / `input` 投影 capability；没有任何模型声明 image 能力时仍 `capability_unavailable`，声明后立即回显可用模型。
+- `/api/models`：会回显已持久化的 model metadata（name/context/maxOutput/input/image/reasoning/thinkingLevels 等），避免 Settings 保存后聊天模型选择器仍显示裸 ID。
 
 ## Phase 3 — Studio-native Agent
 
 - 多 Agent 列表：GET `/api/agents` 现在读取 Studio `list_agents`；mock 模式也使用单独的 `studio` agent fixture，不再把 session rows 冒充 agents。`isPrimary` 只对明确的 `studio` Agent 投影为 true，不再按返回顺序猜 primary。
 - agent switch：Studio 当前没有 primary-agent switch 命令，已改为带 `capability_unavailable` 的 fail-closed 响应，不伪造切换成功。
-- agent config：目前只保留最小兼容投影，真实 per-agent config 持久化仍待宿主能力。
+- agent config：GET 已投影 Studio 当前 provider/model，并明确标注 modelSwitch 与暂不支持的 thinking/permission/primary-agent 控制；真实 per-agent config 持久化仍待宿主能力。
 - permission mode / read-only / operate / auto：继续保持 `ask` locked，待宿主控制面。
 - 对 Studio backend 缺失的控制面先补宿主命令，再接 UI。
 
