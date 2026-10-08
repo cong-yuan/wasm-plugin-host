@@ -16,10 +16,11 @@ const THINKING_LEVEL_COPY: Record<ThinkingLevel, { label: string; description: s
   max: { label: 'Max', description: 'Maximum reasoning' },
 };
 
-export function ThinkingLevelButton({ level, onChange, availableLevels }: {
+export function ThinkingLevelButton({ level, onChange, availableLevels, locked = false }: {
   level: ThinkingLevel;
   onChange: (level: ThinkingLevel) => void;
   availableLevels?: readonly ThinkingLevel[];
+  locked?: boolean;
 }) {
   const { t } = useI18n();
   const currentSessionPath = useStore(s => s.currentSessionPath);
@@ -70,6 +71,7 @@ export function ThinkingLevelButton({ level, onChange, availableLevels }: {
   };
 
   const isOff = activeLevel === 'off';
+  const lockedLabel = tLevel('input.thinkingLevelLocked', 'Thinking level is unavailable in the Studio backend');
 
   const options: SelectOption[] = normalizedAvailableLevels.map(lv => {
     const copy = THINKING_LEVEL_COPY[lv];
@@ -86,6 +88,8 @@ export function ThinkingLevelButton({ level, onChange, availableLevels }: {
       options={options}
       value={activeLevel}
       onChange={(v) => selectLevel(v as ThinkingLevel)}
+      disabled={locked}
+      ariaLabel={locked ? lockedLabel : undefined}
       align="end"
       placement="top"
       offset={4}

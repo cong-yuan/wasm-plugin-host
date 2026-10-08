@@ -229,6 +229,7 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/providers/test') return true;
   if (pathname.startsWith('/api/providers/')) return true;
   if (pathname === '/api/models/auxiliary-vision') return true;
+  if (pathname === '/api/capabilities') return true;
   if (pathname === '/api/server/identity') return true;
   if (pathname === '/api/ws-ticket') return true;
   if (pathname === '/api/preferences/session-permission-default') return true;

@@ -381,6 +381,14 @@ check('agent switching fails closed without a Studio primary-agent command',
 const visionCapability = await adapter.http('GET', '/api/models/auxiliary-vision');
 check('auxiliary vision reports missing Studio capability explicitly',
   visionCapability?.available === false && visionCapability?.code === 'capability_unavailable');
+const capabilities = await adapter.http('GET', '/api/capabilities');
+check('Studio capability registry exposes real and unavailable input controls',
+  capabilities?.source === 'studio'
+  && capabilities?.capabilities?.modelSwitch === true
+  && capabilities?.capabilities?.uploadBlob === false
+  && capabilities?.capabilities?.thinkingLevel === false
+  && capabilities?.capabilities?.permissionMode === false
+  && capabilities?.capabilities?.sessionProjects === true);
 const uploadCapability = await adapter.http('POST', '/api/upload-blob', { name: 'x.png', base64Data: 'AA==', mimeType: 'image/png' });
 check('blob upload reports missing Studio capability explicitly',
   uploadCapability?.ok === false && uploadCapability?.code === 'capability_unavailable');

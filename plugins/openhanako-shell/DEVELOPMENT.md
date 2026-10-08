@@ -19,7 +19,7 @@
 
 目标：把日常会话操作补齐，避免核心聊天动作掉回 Hana Server 或 soft stub。
 
-当前推进顺序：retry/fork、cleanup、search、Session 键盘可达性、批量操作已完成；本批继续补 React Session/Archived 的可见全选入口、runtime-state signature incremental transport，以及 session→project 批量归类；下一批进入 attachment/file ingest 与宿主能力补齐。
+当前推进顺序：retry/fork、cleanup、search、Session 键盘可达性、批量操作已完成；本批继续补 backend capability registry、Studio 不支持能力的 UI affordance fail-closed，以及 attachment/file ingest 的宿主能力接线准备；下一批进入真实 attachment/file ingest 与宿主命令补齐。
 
 1. **Session retry + fork** — P0 / 已实现
    - `/api/sessions/turns/retry` → `retry_session_turn`
@@ -49,7 +49,8 @@
 - `/api/preferences/models`：GET 读取 Studio `get_llm_config` 的当前 provider/model 作为 utility fallback；utility_large / vision / vision_enabled / search provider 已有受校验的本地 overlay 持久化，刷新后可恢复；secret API key 仍不落 localStorage。
 - provider model metadata：`/api/providers/:provider/models/:model` 的 PUT/PATCH/DELETE 已从 soft-ack 改为真实 local overlay 写入/删除，并在 provider config、discovered-models 两条读取链路回显。
 - `/api/session-thinking-level`：已从固定 `off` 改为显式 `medium + locked + capability_unavailable`，避免 UI 误以为 Studio 支持切换；宿主补真实 session thinking 原语后再接。
-- 接 `/api/upload-blob`、附件、图片和 vision 路径；当前 Studio 没有 blob/file-ingest command，继续保持 fail closed。
+- `/api/upload-blob`：当前 Studio 没有 blob/file-ingest command，继续 fail closed；新增 `/api/capabilities` capability registry，让 UI 能知道 `uploadBlob=false` / `thinkingLevel=false` 等真实缺口，不再只在点击后才失败。
+- InputControlBar：当 backend capability 明确不支持 blob ingest 时禁用附件按钮、隐藏录音入口；thinking-level control 在 Studio 不支持时直接锁定并提供可访问的说明，避免暴露不可用操作。
 - `/api/models/auxiliary-vision`：现在从 provider model metadata 的 `image` / `input` 投影 capability；没有任何模型声明 image 能力时仍 `capability_unavailable`，声明后立即回显可用模型。
 - `/api/models`：会回显已持久化的 model metadata（name/context/maxOutput/input/image/reasoning/thinkingLevels 等），避免 Settings 保存后聊天模型选择器仍显示裸 ID。
 

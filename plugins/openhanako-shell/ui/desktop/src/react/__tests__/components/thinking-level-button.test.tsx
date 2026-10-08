@@ -122,6 +122,19 @@ describe('ThinkingLevelButton', () => {
     }));
   });
 
+  it('locks the thinking selector when the backend does not expose a thinking-level command', () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <ThinkingLevelButton level="medium" onChange={onChange} availableLevels={['off', 'medium', 'high']} locked />,
+    );
+    const button = container.querySelector('button') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute('aria-label')).toBe('Thinking level is unavailable in the Studio backend');
+    fireEvent.click(button);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(hanaFetch).not.toHaveBeenCalled();
+  });
+
   it('does not render a trailing checkmark for the selected thinking level', () => {
     const { container } = render(<ThinkingLevelButton level="high" onChange={vi.fn()} availableLevels={['off', 'medium', 'high', 'max']} />);
 

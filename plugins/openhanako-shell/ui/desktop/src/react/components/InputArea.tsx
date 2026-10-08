@@ -487,6 +487,10 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     ? t('input.refreshAndCompactBusy')
     : t(compactionMode === 'lossy_local' ? 'chat.instantSimpleCompaction' : 'chat.compacting');
   const currentModelInfo = sessionModelInfo || globalModelInfo;
+  const [backendCapabilities, setBackendCapabilities] = useState<{
+    uploadBlob?: boolean;
+    thinkingLevel?: boolean;
+  } | null>(null);
   const availableThinkingLevels = useMemo(
     () => getModelThinkingLevels(currentModelInfo),
     [currentModelInfo],
@@ -498,6 +502,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     () => shouldShowThinkingControl(currentModelInfo, models),
     [currentModelInfo, models],
   );
+  const attachmentsAvailable = backendCapabilities?.uploadBlob !== false;
   const modelSwitching = useStore(s => s.modelSwitching);
   const currentSessionItems = useStore(s => s.currentSessionPath ? sessionScopedValue(s, s.chatSessions, s.currentSessionPath)?.items : undefined);
   const storedSessionConfirmation = useStore(s => s.currentSessionPath
@@ -1583,6 +1588,16 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   // ── Load thinking level once server port is ready + listen for plan mode sync ──
   const activeServerConnection = useStore(s => s.activeServerConnection);
   useEffect(() => {
+    setBackendCapabilities(null);
+    if (activeServerConnection) {
+      hanaFetch('/api/capabilities')
+        .then(async (response) => {
+          if (!response.ok) throw new Error(`capabilities HTTP ${response.status}`);
+          return response.json();
+        })
+        .then((data) => setBackendCapabilities(data?.capabilities || null))
+        .catch((err: unknown) => console.debug('[InputArea] capability probe unavailable', err));
+    }
     if (activeServerConnection && surface !== 'mobile') {
       const query = pendingNewSession
         ? '?pendingNewSession=1'
@@ -2322,7 +2337,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
             type="file"
             multiple
             accept="image/png,image/jpeg,image/gif,image/webp,audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/ogg,audio/flac,audio/webm"
-            disabled={inputLocked}
+            disabled={inputLocked || !attachmentsAvailable}
             onChange={handleBrowserFileInputChange}
           />
           <div
@@ -2337,12 +2352,14 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
           <InputControlBar
             t={t}
             onAttach={handleAttach}
+            attachmentsAvailable={attachmentsAvailable}
             slashBtnRef={slashBtnRef}
             onSlashToggle={handleSlashToggle}
             permissionMode={permissionMode}
             onPermissionModeChange={setPermissionMode}
             planModeLocked={inputLocked}
             showThinking={showThinkingControl}
+            thinkingLocked={backendCapabilities?.thinkingLevel === false}
             thinkingLevel={thinkingLevel}
             onThinkingChange={setThinkingLevel}
             availableThinkingLevels={availableThinkingLevels}
@@ -2351,7 +2368,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
             isStreaming={isStreaming}
             hasInput={hasContent}
             canSend={canSend}
-            showAudioInput={showAudioInput}
+            showAudioInput={showAudioInput && attachmentsAvailable}
             audioRecordingActive={audioRecordingState === 'recording'}
             audioRecordingBusy={audioRecordingState === 'starting' || audioRecordingState === 'stopping'}
             onAudioToggle={handleAudioRecordToggle}

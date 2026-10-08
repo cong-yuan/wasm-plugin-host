@@ -1673,6 +1673,47 @@ return (function () {
         ? { available: true, models: visionModels, source: 'local-model-metadata' }
         : { available: false, models: [], code: 'capability_unavailable', error: 'no model is marked as image-capable' };
     }
+    if (pathname === '/api/capabilities' && verb === 'GET') {
+      let visionAvailable = false;
+      try {
+        const llm = await api.getLlmConfig();
+        const lists = llm && llm.model_lists && typeof llm.model_lists === 'object' ? llm.model_lists : {};
+        const overlay = readOverlay();
+        for (const provider of Object.keys(lists)) {
+          const providerOverlay = overlay[provider] && typeof overlay[provider] === 'object' ? overlay[provider] : {};
+          for (const entry of (Array.isArray(lists[provider]) ? lists[provider] : [])) {
+            const id = modelIdOf(entry);
+            const metadata = modelMetadataFor(providerOverlay, id) || {};
+            const input = Array.isArray(metadata.input) ? metadata.input : [];
+            if (metadata.image === true || input.includes('image')) {
+              visionAvailable = true;
+              break;
+            }
+          }
+          if (visionAvailable) break;
+        }
+      } catch (_) {
+        visionAvailable = false;
+      }
+      return {
+        ok: true,
+        source: 'studio',
+        capabilities: {
+          modelSwitch: true,
+          modelMetadata: true,
+          vision: visionAvailable,
+          uploadBlob: false,
+          thinkingLevel: false,
+          permissionMode: false,
+          primaryAgentSwitch: false,
+          sessionSearch: true,
+          sessionProjects: true,
+          runtimeIncremental: true,
+          sessionCompaction: false,
+          sessionTodoMutation: false,
+        },
+      };
+    }
     if (pathname === '/api/upload-blob' && verb === 'POST') {
       return {
         ok: false,

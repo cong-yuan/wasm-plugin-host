@@ -13,6 +13,7 @@ interface Props {
   t: (key: string) => string;
   // 左侧工具按钮
   onAttach: () => void;
+  attachmentsAvailable?: boolean;
   slashBtnRef: RefObject<HTMLButtonElement | null>;
   onSlashToggle: () => void;
   permissionMode: PermissionMode;
@@ -23,6 +24,7 @@ interface Props {
   thinkingLevel: ThinkingLevel;
   onThinkingChange: (level: ThinkingLevel) => void;
   availableThinkingLevels: ThinkingLevel[];
+  thinkingLocked?: boolean;
   models: Model[];
   sessionModel?: SessionModel;
   isStreaming: boolean;
@@ -40,9 +42,9 @@ interface Props {
 /** 编辑器下方的工具按钮行 + 发送控制 */
 export const InputControlBar = memo(function InputControlBar(props: Props) {
   const {
-    t, onAttach, slashBtnRef, onSlashToggle,
+    t, onAttach, attachmentsAvailable = true, slashBtnRef, onSlashToggle,
     permissionMode, onPermissionModeChange, planModeLocked,
-    showThinking, thinkingLevel, onThinkingChange, availableThinkingLevels,
+    showThinking, thinkingLevel, onThinkingChange, availableThinkingLevels, thinkingLocked = false,
     models, sessionModel, isStreaming, hasInput, canSend,
     showAudioInput, audioRecordingActive, audioRecordingBusy, onAudioToggle,
     onSend, onSteer, onStop,
@@ -54,6 +56,7 @@ export const InputControlBar = memo(function InputControlBar(props: Props) {
         <button
           className={styles['attach-btn']}
           title={t('input.attachFiles')}
+          disabled={!attachmentsAvailable}
           onClick={onAttach}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -77,13 +80,13 @@ export const InputControlBar = memo(function InputControlBar(props: Props) {
       <div className={styles['input-controls']}>
         {showThinking ? (
           <div className={styles['model-split-control']}>
-            <ThinkingLevelButton level={thinkingLevel} onChange={onThinkingChange} availableLevels={availableThinkingLevels} />
+            <ThinkingLevelButton level={thinkingLevel} onChange={onThinkingChange} availableLevels={availableThinkingLevels} locked={thinkingLocked} />
             <ModelSelector models={models} sessionModel={sessionModel} isStreaming={isStreaming} />
           </div>
         ) : (
           <ModelSelector models={models} sessionModel={sessionModel} isStreaming={isStreaming} />
         )}
-        {showAudioInput && (
+        {showAudioInput && attachmentsAvailable && (
           <button
             type="button"
             className={`${styles['audio-record-btn']}${audioRecordingActive ? ` ${styles['is-recording']}` : ''}`}

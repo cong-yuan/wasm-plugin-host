@@ -62,6 +62,12 @@ describe('InputControlBar audio button', () => {
 
     expect(screen.queryByLabelText('input.recordAudio')).toBeNull();
   });
+  it('disables file attachment controls when the backend cannot ingest blobs', () => {
+    renderBar({ attachmentsAvailable: false, showAudioInput: true });
+
+    expect((screen.getByTitle('input.attachFiles') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByLabelText('input.recordAudio')).toBeNull();
+  });
 
   it('shows the audio button and calls the toggle handler when audio input is supported', () => {
     const onAudioToggle = vi.fn();

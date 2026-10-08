@@ -18,6 +18,7 @@ interface SelectWidgetProps {
   onChange: (value: string) => void;
   placeholder?: string;
   disabled?: boolean;
+  ariaLabel?: string;
   className?: string;
   triggerClassName?: string;
   popupClassName?: string;
@@ -49,6 +50,7 @@ export function SelectWidget({
   onChange,
   placeholder,
   disabled,
+  ariaLabel,
   className,
   triggerClassName,
   popupClassName,
@@ -203,6 +205,7 @@ export function SelectWidget({
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label={ariaLabel}
         data-open={open}
         title={displayText}
       >
