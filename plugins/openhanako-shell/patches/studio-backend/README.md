@@ -48,14 +48,18 @@ The checked-in patch copy is intentionally kept byte-for-byte identical to `ui/d
 
 ### Native workbench command contract
 
-The parent/Studio host owns filesystem authority. The four commands receive only logical workspace coordinates and must enforce the authorized root/mount before touching disk:
+The parent/Studio host owns filesystem authority. These native workbench commands receive only logical workspace coordinates and must enforce the authorized root/mount before touching disk:
 
 - `workbench_list_files({ rootId, subdir })` → `{ rootId, mountId, mount, subdir, files }`
 - `workbench_search_files({ rootId, query })` → `{ rootId, mountId, mount, query, results }`
 - `workbench_read_file({ rootId, subdir, name })` → `{ exists, content, version, etag, mimeType, size, mtimeMs, filename }`
 - `workbench_write_file({ rootId, subdir, name, content, expectedVersion, mustNotExist })` → `{ ok, version, files }`
+- `workbench_rename_file({ rootId, subdir, oldName, newName, expectedVersion })` → `{ ok, version, files }`
+- `workbench_move_file({ rootId, subdir, name, destSubdir, expectedVersion })` → `{ ok, version, files }`
+- `workbench_safe_delete({ rootId, subdir, name, expectedVersion })` → `{ ok, version, trashId, files }`
+- `workbench_upload_file({ rootId, subdir, name, base64Data, mimeType, expectedVersion })` → `{ ok, version, name, size, files }`
 
-`workbench_read_file` is text-only in this first native slice; the bridge preserves the response as a raw UTF-8 `Response` body and carries `Content-Type`, `Content-Length`, `ETag`, and file metadata headers. `HEAD` returns the same metadata without a body. Rename/move/delete/upload remain on the existing Hana workbench routes until their native commands are defined.
+`workbench_read_file` is text-only in this native slice; the bridge preserves the response as a raw UTF-8 `Response` body and carries `Content-Type`, `Content-Length`, `ETag`, and file metadata headers. `HEAD` returns the same metadata without a body. `workbench_safe_delete` must use the host's recoverable-trash/checkpoint mechanism rather than a permanent unlink. Upload accepts the same base64 payload shape as the existing mobile workbench endpoint; the host must enforce the workspace scope and the existing per-file size limit before writing.
 
 When the parent hello has no `backendCommands` field, workbench interception stays disabled for backwards compatibility. The hello may provide the list as `backendCommands` or `backend_commands`; `capabilities.backendCommands` and `capabilities.backend_commands` are also accepted.
 

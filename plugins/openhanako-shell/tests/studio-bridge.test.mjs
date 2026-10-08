@@ -587,6 +587,43 @@ check('blob upload reports missing Studio capability explicitly',
         files: [{ name: action.args.name, isDir: false, size: String(action.args.content || '').length }],
       };
     }
+    if (action.command === 'workbench_rename_file') {
+      return {
+        ok: true,
+        action: 'rename',
+        version: 'v3',
+        files: [{ name: action.args.newName, isDir: false, size: 5 }],
+      };
+    }
+    if (action.command === 'workbench_move_file') {
+      return {
+        ok: true,
+        action: 'move',
+        version: 'v4',
+        rootId: action.args.rootId,
+        subdir: action.args.destSubdir,
+        files: [{ name: action.args.name, isDir: false, size: 5 }],
+      };
+    }
+    if (action.command === 'workbench_safe_delete') {
+      return {
+        ok: true,
+        action: 'safeDelete',
+        trashId: 'trash-1',
+        version: 'v5',
+        files: [],
+      };
+    }
+    if (action.command === 'workbench_upload_file') {
+      return {
+        ok: true,
+        action: 'upload',
+        name: action.args.name,
+        version: 'v6',
+        size: 5,
+        files: [{ name: action.args.name, isDir: false, size: 5 }],
+      };
+    }
     if (action.command === 'transcript') return [];
     if (action.command === 'chat_partial') return null;
     throw new Error('unknown backend command: ' + action.command);
@@ -597,7 +634,11 @@ check('blob upload reports missing Studio capability explicitly',
     workbenchCapabilities?.capabilities?.fileWorkbench === true
     && workbenchCapabilities?.capabilities?.fileWorkbenchRead === true
     && workbenchCapabilities?.capabilities?.fileWorkbenchWrite === true
-    && workbenchCapabilities?.capabilities?.fileWorkbenchSearch === true);
+    && workbenchCapabilities?.capabilities?.fileWorkbenchSearch === true
+    && workbenchCapabilities?.capabilities?.fileWorkbenchRename === true
+    && workbenchCapabilities?.capabilities?.fileWorkbenchMove === true
+    && workbenchCapabilities?.capabilities?.fileWorkbenchDelete === true
+    && workbenchCapabilities?.capabilities?.fileWorkbenchUpload === true);
 
   const workbenchFiles = await adapter.http('GET', '/api/workbench/files?mountId=default&subdir=src');
   check('workbench list delegates to Studio native command',
@@ -634,6 +675,62 @@ check('blob upload reports missing Studio capability explicitly',
   });
   check('workbench writeText delegates to Studio native command',
     workbenchWrite?.ok === true && workbenchWrite?.version === 'v2');
+  const workbenchRename = await adapter.http('POST', '/api/workbench/actions', {
+    action: 'rename',
+    mountId: 'default',
+    subdir: 'src',
+    oldName: 'hello.txt',
+    newName: 'renamed.txt',
+    expectedVersion: 'v2',
+  });
+  check('workbench rename delegates to dedicated native command',
+    workbenchRename?.ok === true && workbenchRename?.action === 'rename' && workbenchRename?.version === 'v3');
+
+  const workbenchMove = await adapter.http('POST', '/api/workbench/actions', {
+    action: 'move',
+    mountId: 'default',
+    subdir: 'src',
+    name: 'renamed.txt',
+    destSubdir: 'archive',
+    expectedVersion: 'v3',
+  });
+  check('workbench move delegates to dedicated native command',
+    workbenchMove?.ok === true && workbenchMove?.action === 'move' && workbenchMove?.subdir === 'archive');
+
+  const workbenchDelete = await adapter.http('POST', '/api/workbench/actions', {
+    action: 'safeDelete',
+    mountId: 'default',
+    subdir: 'archive',
+    name: 'renamed.txt',
+    expectedVersion: 'v4',
+  });
+  check('workbench safeDelete delegates to trash-capable native command',
+    workbenchDelete?.ok === true && workbenchDelete?.action === 'safeDelete' && workbenchDelete?.trashId === 'trash-1');
+
+  const workbenchUpload = await adapter.http('POST', '/api/workbench/upload', {
+    mountId: 'default',
+    subdir: 'src',
+    files: [{
+      name: 'uploaded.txt',
+      contentBase64: 'aGVsbG8=',
+      mimeType: 'text/plain',
+    }],
+  });
+  check('workbench upload delegates to dedicated native command',
+    workbenchUpload?.ok === true
+    && workbenchUpload?.results?.[0]?.name === 'uploaded.txt'
+    && workbenchUpload?.results?.[0]?.version === 'v6');
+  const workbenchMobileRename = await adapter.http('POST', '/api/mobile/workbench/actions', {
+    action: 'rename',
+    mountId: 'default',
+    subdir: 'src',
+    oldName: 'uploaded.txt',
+    newName: 'mobile-renamed.txt',
+  });
+  check('mobile workbench mutations share the native rename bridge',
+    workbenchMobileRename?.ok === true && workbenchMobileRename?.action === 'rename');
+
+
 
   studio.hostAction = null;
 }

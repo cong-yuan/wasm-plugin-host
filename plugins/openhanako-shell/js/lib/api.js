@@ -901,6 +901,50 @@ return (function () {
         query: query || '',
       });
     },
+    workbenchRenameFileAvailable: () => nativeCommandAvailable('workbench_rename_file'),
+    workbenchRenameFile: async ({ rootId, subdir, oldName, newName, expectedVersion } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('workbench_rename_file', {
+        rootId: rootId || 'default',
+        subdir: subdir || '',
+        oldName: oldName || '',
+        newName: newName || '',
+        expectedVersion: expectedVersion == null ? null : String(expectedVersion),
+      });
+    },
+    workbenchMoveFileAvailable: () => nativeCommandAvailable('workbench_move_file'),
+    workbenchMoveFile: async ({ rootId, subdir, name, destSubdir, expectedVersion } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('workbench_move_file', {
+        rootId: rootId || 'default',
+        subdir: subdir || '',
+        name: name || '',
+        destSubdir: destSubdir || '',
+        expectedVersion: expectedVersion == null ? null : String(expectedVersion),
+      });
+    },
+    workbenchDeleteFileAvailable: () => nativeCommandAvailable('workbench_safe_delete'),
+    workbenchDeleteFile: async ({ rootId, subdir, name, expectedVersion } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('workbench_safe_delete', {
+        rootId: rootId || 'default',
+        subdir: subdir || '',
+        name: name || '',
+        expectedVersion: expectedVersion == null ? null : String(expectedVersion),
+      });
+    },
+    workbenchUploadFileAvailable: () => nativeCommandAvailable('workbench_upload_file'),
+    workbenchUploadFile: async ({ rootId, subdir, name, base64Data, mimeType, expectedVersion } = {}) => {
+      if (!tauri.available()) return null;
+      return invokeNative('workbench_upload_file', {
+        rootId: rootId || 'default',
+        subdir: subdir || '',
+        name: name || 'upload.bin',
+        base64Data: base64Data || '',
+        mimeType: mimeType || null,
+        expectedVersion: expectedVersion == null ? null : String(expectedVersion),
+      });
+    },
 
     sendWithProgress,
 

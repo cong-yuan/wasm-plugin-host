@@ -1788,6 +1788,10 @@ return (function () {
           fileWorkbenchRead: typeof api.workbenchReadFileAvailable === 'function' && api.workbenchReadFileAvailable(),
           fileWorkbenchWrite: typeof api.workbenchWriteFileAvailable === 'function' && api.workbenchWriteFileAvailable(),
           fileWorkbenchSearch: typeof api.workbenchSearchFilesAvailable === 'function' && api.workbenchSearchFilesAvailable(),
+          fileWorkbenchRename: typeof api.workbenchRenameFileAvailable === 'function' && api.workbenchRenameFileAvailable(),
+          fileWorkbenchMove: typeof api.workbenchMoveFileAvailable === 'function' && api.workbenchMoveFileAvailable(),
+          fileWorkbenchDelete: typeof api.workbenchDeleteFileAvailable === 'function' && api.workbenchDeleteFileAvailable(),
+          fileWorkbenchUpload: typeof api.workbenchUploadFileAvailable === 'function' && api.workbenchUploadFileAvailable(),
           fileHistory: false,
           resourceIO: false,
           generatedResourcePreview: false,
@@ -2168,29 +2172,133 @@ return (function () {
     ) {
       const payload = body && typeof body === 'object' ? body : {};
       const action = typeof payload.action === 'string' ? payload.action.trim() : '';
-      if (action !== 'create' && action !== 'writeText') return null;
-      if (typeof api.workbenchWriteFile !== 'function' || typeof api.workbenchWriteFileAvailable !== 'function' || !api.workbenchWriteFileAvailable()) {
-        return workbenchCapabilityUnavailable('workbench_write_file');
+      const actionCommands = {
+        create: 'workbench_write_file',
+        writeText: 'workbench_write_file',
+        rename: 'workbench_rename_file',
+        move: 'workbench_move_file',
+        safeDelete: 'workbench_safe_delete',
+      };
+      const command = actionCommands[action];
+      if (!command) return null;
+      const available = {
+        workbench_write_file: api.workbenchWriteFileAvailable,
+        workbench_rename_file: api.workbenchRenameFileAvailable,
+        workbench_move_file: api.workbenchMoveFileAvailable,
+        workbench_safe_delete: api.workbenchDeleteFileAvailable,
+      }[command];
+      if (typeof available !== 'function' || !available()) {
+        return workbenchCapabilityUnavailable(command);
       }
       try {
         const rootId = typeof payload.mountId === 'string' && payload.mountId.trim()
           ? payload.mountId.trim()
           : (typeof payload.rootId === 'string' && payload.rootId.trim() ? payload.rootId.trim() : 'default');
-        const result = await api.workbenchWriteFile({
-          rootId,
-          subdir: typeof payload.subdir === 'string' ? payload.subdir : '',
-          name: typeof payload.name === 'string' ? payload.name : '',
-          content: payload.content == null ? '' : String(payload.content),
-          expectedVersion: payload.expectedVersion,
-          mustNotExist: action === 'create',
-        });
+        let result;
+        if (action === 'create' || action === 'writeText') {
+          result = await api.workbenchWriteFile({
+            rootId,
+            subdir: typeof payload.subdir === 'string' ? payload.subdir : '',
+            name: typeof payload.name === 'string' ? payload.name : '',
+            content: payload.content == null ? '' : String(payload.content),
+            expectedVersion: payload.expectedVersion,
+            mustNotExist: action === 'create',
+          });
+        } else if (action === 'rename') {
+          result = await api.workbenchRenameFile({
+            rootId,
+            subdir: typeof payload.subdir === 'string' ? payload.subdir : '',
+            oldName: typeof payload.oldName === 'string' ? payload.oldName : '',
+            newName: typeof payload.newName === 'string' ? payload.newName : '',
+            expectedVersion: payload.expectedVersion,
+          });
+        } else if (action === 'move') {
+          result = await api.workbenchMoveFile({
+            rootId,
+            subdir: typeof payload.subdir === 'string' ? payload.subdir : '',
+            name: typeof payload.name === 'string' ? payload.name : '',
+            destSubdir: typeof payload.destSubdir === 'string' ? payload.destSubdir : '',
+            expectedVersion: payload.expectedVersion,
+          });
+        } else {
+          result = await api.workbenchDeleteFile({
+            rootId,
+            subdir: typeof payload.subdir === 'string' ? payload.subdir : '',
+            name: typeof payload.name === 'string' ? payload.name : '',
+            expectedVersion: payload.expectedVersion,
+          });
+        }
         return {
           ...(result && typeof result === 'object' ? result : {}),
           action,
           ok: result?.ok !== false,
         };
       } catch (error) {
-        return nativeWorkbenchError(error, 'workbench_write_failed');
+        return nativeWorkbenchError(error, command + '_failed');
+      }
+    }
+
+    if (
+      (pathname === '/api/workbench/upload' || pathname === '/api/mobile/workbench/upload')
+      && verb === 'POST'
+    ) {
+      if (typeof api.workbenchUploadFile !== 'function' || typeof api.workbenchUploadFileAvailable !== 'function' || !api.workbenchUploadFileAvailable()) {
+        return workbenchCapabilityUnavailable('workbench_upload_file');
+      }
+      try {
+        const payload = body && typeof body === 'object' ? body : {};
+        const rootId = typeof payload.mountId === 'string' && payload.mountId.trim()
+          ? payload.mountId.trim()
+          : (typeof payload.rootId === 'string' && payload.rootId.trim() ? payload.rootId.trim() : 'default');
+        const subdir = typeof payload.subdir === 'string' ? payload.subdir : '';
+        const files = Array.isArray(payload.files) ? payload.files : [payload];
+        if (!files.length) {
+          return {
+            ok: false,
+            code: 'invalid_upload',
+            error: 'files required',
+            __httpStatus: 400,
+          };
+        }
+        const results = [];
+        for (const file of files) {
+          const name = typeof file?.name === 'string' ? file.name : '';
+          const base64Data = typeof file?.contentBase64 === 'string' ? file.contentBase64 : '';
+          if (!name || !base64Data) {
+            results.push({ name: name || null, ok: false, error: 'invalid_upload' });
+            continue;
+          }
+          try {
+            const result = await api.workbenchUploadFile({
+              rootId,
+              subdir,
+              name,
+              base64Data,
+              mimeType: typeof file.mimeType === 'string' ? file.mimeType : null,
+              expectedVersion: file.expectedVersion,
+            });
+            results.push({
+              ...(result && typeof result === 'object' ? result : {}),
+              name: result?.name || name,
+              ok: result?.ok !== false,
+            });
+          } catch (error) {
+            results.push({
+              name,
+              ok: false,
+              error: error?.code || error?.message || 'upload_failed',
+            });
+          }
+        }
+        return {
+          ok: results.every((item) => item.ok),
+          rootId,
+          mountId: rootId,
+          subdir,
+          results,
+        };
+      } catch (error) {
+        return nativeWorkbenchError(error, 'workbench_upload_failed');
       }
     }
 

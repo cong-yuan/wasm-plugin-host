@@ -23,6 +23,10 @@ describe('Studio backend bridge file/workbench coverage', () => {
       'workbench_read_file',
       'workbench_write_file',
       'workbench_search_files',
+      'workbench_rename_file',
+      'workbench_move_file',
+      'workbench_safe_delete',
+      'workbench_upload_file',
     ]);
 
     expect(interceptsWithCapabilities('/api/workbench/files', read, 'GET')).toBe(true);
@@ -32,6 +36,15 @@ describe('Studio backend bridge file/workbench coverage', () => {
       action: 'writeText',
       name: 'x.txt',
       content: 'x',
+    })).toBe(false);
+    expect(interceptsWithCapabilities('/api/workbench/actions', read, 'POST', {
+      action: 'rename',
+      oldName: 'x.txt',
+      newName: 'y.txt',
+    })).toBe(false);
+    expect(interceptsWithCapabilities('/api/workbench/upload', read, 'POST', {
+      name: 'x.txt',
+      contentBase64: 'eA==',
     })).toBe(false);
 
     expect(interceptsWithCapabilities('/api/workbench/search', full, 'GET')).toBe(true);
@@ -44,7 +57,20 @@ describe('Studio backend bridge file/workbench coverage', () => {
       action: 'rename',
       oldName: 'x.txt',
       newName: 'y.txt',
-    })).toBe(false);
+    })).toBe(true);
+    expect(interceptsWithCapabilities('/api/workbench/actions', full, 'POST', {
+      action: 'move',
+      name: 'x.txt',
+      destSubdir: 'archive',
+    })).toBe(true);
+    expect(interceptsWithCapabilities('/api/workbench/actions', full, 'POST', {
+      action: 'safeDelete',
+      name: 'x.txt',
+    })).toBe(true);
+    expect(interceptsWithCapabilities('/api/workbench/upload', full, 'POST', {
+      name: 'x.txt',
+      contentBase64: 'eA==',
+    })).toBe(true);
     expect(interceptsWithCapabilities('/api/desk/files', full, 'GET')).toBe(false);
   });
 

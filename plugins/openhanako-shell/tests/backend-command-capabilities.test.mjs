@@ -39,6 +39,10 @@ const requiredNative = [
   'workbench_read_file',
   'workbench_write_file',
   'workbench_search_files',
+  'workbench_rename_file',
+  'workbench_move_file',
+  'workbench_safe_delete',
+  'workbench_upload_file',
 ];
 const undeclaredNative = requiredNative.filter((command) => !declared.has(command));
 if (undeclaredNative.length) {

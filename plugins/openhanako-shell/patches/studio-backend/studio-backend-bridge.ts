@@ -327,7 +327,17 @@ function workbenchCommandFor(pathname: string, method = 'GET', body: unknown = n
   if (pathname === '/api/workbench/actions' || pathname === '/api/mobile/workbench/actions') {
     if (verb !== 'POST' || !body || typeof body !== 'object') return null;
     const action = (body as Record<string, unknown>).action;
-    return action === 'create' || action === 'writeText' ? 'workbench_write_file' : null;
+    const commands: Record<string, string> = {
+      create: 'workbench_write_file',
+      writeText: 'workbench_write_file',
+      rename: 'workbench_rename_file',
+      move: 'workbench_move_file',
+      safeDelete: 'workbench_safe_delete',
+    };
+    return typeof action === 'string' ? commands[action] || null : null;
+  }
+  if (pathname === '/api/workbench/upload' || pathname === '/api/mobile/workbench/upload') {
+    return verb === 'POST' ? 'workbench_upload_file' : null;
   }
   return null;
 }
