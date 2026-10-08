@@ -310,6 +310,62 @@ describe('channel-actions', () => {
     });
   });
 
+  describe('DM reset', () => {
+    it('resets the current DM through its stored owner and clears only local projection state', async () => {
+      mockState.currentChannel = 'dm:agent1';
+      mockState.channels = [{
+        id: 'dm:agent1',
+        name: 'Agent 1',
+        members: ['agent1'],
+        lastMessage: 'old',
+        lastSender: 'agent1',
+        lastTimestamp: '2026-05-19 12:00:00',
+        newMessageCount: 3,
+        messageCount: 4,
+        isDM: true,
+        peerId: 'agent1',
+        peerName: 'Agent 1',
+        dmOwnerId: 'hana',
+      }];
+      mockState.channelMessages = [
+        { sender: 'agent1', timestamp: '2026-05-19 12:00:00', body: 'old' },
+      ];
+      mockState.channelMessageCache = { 'dm:agent1': mockState.channelMessages };
+      mockState.channelMessageCacheDirty = { 'dm:agent1': false };
+      mockState.channelAgentActivities = { 'dm:agent1': { hana: [{ state: 'done' }] } };
+      mockState.channelTickerStatus = { 'dm:agent1': { active: false } };
+      mockState.channelTotalUnread = 3;
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          ownerAgentId: 'hana',
+          peerId: 'agent1',
+          visibleAfterTimestamp: '2026-05-19 12:00:00',
+        }),
+      } as Response);
+
+      const { resetDmConversation } = await import('../../stores/channel-actions');
+      await resetDmConversation();
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/dm/agent1/reset?agentId=hana', { method: 'POST' });
+      expect(mockState.channelMessages).toEqual([]);
+      expect((mockState.channelMessageCache as any)['dm:agent1']).toBeUndefined();
+      expect((mockState.channelMessageCacheDirty as any)['dm:agent1']).toBe(false);
+      expect((mockState.channelAgentActivities as any)['dm:agent1']).toBeUndefined();
+      expect((mockState.channelTickerStatus as any)['dm:agent1']).toBeUndefined();
+      expect((mockState.channels as any[])[0]).toMatchObject({
+        messageCount: 0,
+        newMessageCount: 0,
+        lastMessage: '',
+        lastTimestamp: '',
+      });
+      expect(mockState.channelTotalUnread).toBe(0);
+    });
+  });
+
   describe('channel member management', () => {
     it('adds a member and updates the current channel projection', async () => {
       mockState.currentChannel = 'ch1';

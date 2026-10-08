@@ -14,6 +14,7 @@ import {
   exportCurrentConversation,
   loadChannels,
   removeChannelMember,
+  resetDmConversation,
   saveConversationAgentPhoneSettings,
   sendChannelMessage,
 } from '../stores/channel-actions';
@@ -799,6 +800,8 @@ export function ChannelAgentSettingsPanel() {
   const modelOverrideEnabled = useStore(s => s.channelAgentModelOverrideEnabled);
   const modelOverrideModel = useStore(s => s.channelAgentModelOverrideModel);
   const [saving, setSaving] = useState(false);
+  const [resettingDm, setResettingDm] = useState(false);
+  const addToast = useStore(s => s.addToast);
   const [modelOpen, setModelOpen] = useState(false);
   const [draftMin, setDraftMin] = useState(replyMinChars ? String(replyMinChars) : '');
   const [draftMax, setDraftMax] = useState(replyMaxChars ? String(replyMaxChars) : '');
@@ -862,6 +865,24 @@ export function ChannelAgentSettingsPanel() {
       replyMaxChars: max,
       ...(!isDM ? { reminderIntervalMinutes: reminder, guardLimit: guard } : {}),
     });
+  };
+
+  const handleResetDm = async () => {
+    if (!isDM || !currentChannel || resettingDm) return;
+    const channel = useStore.getState().channels.find((item) => item.id === currentChannel);
+    const peerName = channel?.peerName || channel?.name || currentChannel.slice(3);
+    if (!confirm(t('channel.resetDmConfirm', { name: peerName }))) return;
+
+    setResettingDm(true);
+    try {
+      await resetDmConversation();
+      addToast(t('channel.resetDmSuccess'), 'success');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      addToast(t('channel.resetDmFailed', { message }), 'error');
+    } finally {
+      setResettingDm(false);
+    }
   };
 
   const changeMode = (mode: 'read_only' | 'write') => {
@@ -1071,6 +1092,19 @@ export function ChannelAgentSettingsPanel() {
                 )}
               </div>
             </div>
+          </div>
+        )}
+        {isDM && (
+          <div className={styles.agentSettingsField}>
+            <div className={styles.agentSettingsLabel}>{t('channel.resetDmTitle')}</div>
+            <button
+              type="button"
+              className={styles.agentSettingsResetButton}
+              onClick={() => { void handleResetDm(); }}
+              disabled={saving || resettingDm}
+            >
+              {resettingDm ? t('channel.resetDmWorking') : t('channel.resetDmAction')}
+            </button>
           </div>
         )}
       </div>

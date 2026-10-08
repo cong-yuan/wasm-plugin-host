@@ -580,7 +580,66 @@ export async function deleteChannel(channelId: string): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════
+// 重置 DM 可见会话
+// ══════════════════════════════════════════════════════
+
+export async function resetDmConversation(): Promise<void> {
+  const state = useStore.getState();
+  const conversationId = state.currentChannel;
+  if (!conversationId?.startsWith('dm:') || !hasServerConnection(state)) return;
+
+  const peerId = conversationId.slice(3);
+  if (!peerId) return;
+
+  const ownerQuery = conversationOwnerQuery(conversationId);
+  const res = await hanaFetch(
+    `/api/dm/${encodeURIComponent(peerId)}/reset${ownerQuery}`,
+    { method: 'POST' },
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) {
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+
+  const latest = useStore.getState();
+  const cached = { ...latest.channelMessageCache };
+  const dirty = { ...latest.channelMessageCacheDirty };
+  delete cached[conversationId];
+  dirty[conversationId] = false;
+
+  useStore.setState({
+    channelMessages: latest.currentChannel === conversationId ? [] : latest.channelMessages,
+    channelMessageCache: cached,
+    channelMessageCacheDirty: dirty,
+    channelAgentActivities: Object.fromEntries(
+      Object.entries(latest.channelAgentActivities || {}).filter(([id]) => id !== conversationId),
+    ),
+    channelTickerStatus: Object.fromEntries(
+      Object.entries(latest.channelTickerStatus || {}).filter(([id]) => id !== conversationId),
+    ),
+    channels: latest.channels.map((channel: Channel) =>
+      channel.id === conversationId
+        ? {
+            ...channel,
+            lastMessage: '',
+            lastSender: '',
+            lastTimestamp: '',
+            messageCount: 0,
+            newMessageCount: 0,
+          }
+        : channel,
+    ),
+    channelTotalUnread: Math.max(0, latest.channels.reduce(
+      (sum: number, channel: Channel) =>
+        sum + (channel.id === conversationId ? 0 : (channel.newMessageCount || 0)),
+      0,
+    )),
+  });
+}
+
+// ══════════════════════════════════════════════════════
 // 频道成员管理
+// ══════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════
 
 export async function addChannelMember(channelId: string, memberId: string): Promise<void> {

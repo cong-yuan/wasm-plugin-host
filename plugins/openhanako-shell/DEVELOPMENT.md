@@ -91,8 +91,8 @@
 
 - automation scheduler — Hana-owned `StudioCronService` + Studio-wide scheduler now support CRUD, suggestion receipt, `agent_session` execution, stable-session scope, permission/revision guards, and UI `Run now`. Manual execution reuses the scheduler timeout/lock/schema guard, records `manual: true`, and does not advance `nextRunAt` or disable one-shot jobs.
 - MCP / connectors — connector configuration export is now available from the first-class and legacy routes. Exports intentionally contain only non-sensitive reusable config; tokens, secrets, env/header values, runtime status, and discovered tools are excluded. Settings exposes one-click JSON copy and credentials must be re-entered on import.
-- plugins / widgets / pages
-- channels / DM
+- plugins / widgets / pages — Plugin pages/widgets are now protected against stale concurrent catalog refreshes, and persisted hide/show/reorder preference writes are serialized so rapid UI changes cannot reorder the durable preference stream. Existing iframe/page/widget routing remains capability-gated.
+- channels / DM — DM inspector now exposes a non-destructive reset action backed by `/api/dm/:peerId/reset`; it clears only the current Agent's phone projection/cache and activity UI while preserving the shared DM truth file. The action is owner-scoped, confirmed, and fail-closed on backend errors.
 - memories — Agent Memory settings now expose JSON backup/restore for the selected Agent. Export downloads the existing server-generated memory payload; import accepts the versioned `facts`/`memories` array, routes it through the existing agent-scoped import endpoint, and broadcasts `hana-memories-changed` so an open Memory Viewer refreshes immediately after import or clear.
 - browser
 - skills — Skills settings now has an explicit `Reload skills` action. It calls the backend reload endpoint, then refreshes the selected Agent skills and compatible external-path view; the action is guarded against concurrent clicks and covered by the existing SkillsTab safety net.

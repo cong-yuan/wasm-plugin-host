@@ -22,8 +22,12 @@ function collectPluginUiHostCapabilities(
   return byPlugin;
 }
 
+let pluginUiRefreshGeneration = 0;
+let pluginUiPreferenceWriteQueue: Promise<void> = Promise.resolve();
+
 /** Fetch plugin pages, widgets, and persisted UI prefs from backend, update store. */
 export async function refreshPluginUI(): Promise<void> {
+  const generation = ++pluginUiRefreshGeneration;
   try {
     let pages: PluginPageInfo[] = [];
     let widgets: PluginWidgetInfo[] = [];
@@ -41,6 +45,8 @@ export async function refreshPluginUI(): Promise<void> {
       hostCapabilityGrants = grantsResult.value;
     }
 
+    // A slower refresh must never overwrite a newer plugin catalog/prefs snapshot.
+    if (generation !== pluginUiRefreshGeneration) return;
     const s = useStore.getState();
     s.setPluginPages(pages);
     s.setPluginWidgets(widgets);
@@ -75,11 +81,21 @@ export async function refreshPluginUI(): Promise<void> {
 }
 
 function persistField(field: Record<string, unknown>): void {
-  hanaFetch('/api/preferences/plugin-ui', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(field),
-  }).catch(err => console.warn('[plugin-ui] Failed to persist prefs:', err));
+  pluginUiPreferenceWriteQueue = pluginUiPreferenceWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const response = await hanaFetch('/api/preferences/plugin-ui', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(field),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+    })
+    .catch(err => {
+      console.warn('[plugin-ui] Failed to persist prefs:', err);
+    });
 }
 
 /** Hide a widget from the titlebar. */
