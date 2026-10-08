@@ -105,3 +105,10 @@
 2. UI 状态与 Studio 状态只有一个 source of truth；本地兼容存储必须在文档中明确标注。
 3. 新增 bridge endpoint 时必须有：正常路径、非法输入、底层 capability 缺失、刷新/历史 hydration 回归测试。
 4. 跨仓能力优先在 Studio 暴露最小稳定 Tauri command，再由 `js/lib/api.js` 和 `hana-adapter.js` 投影成 OpenHanako API。
+
+### Session search consistency (2026-10-09)
+
+- Remote title/content searches for an identical normalized query share a single in-flight request, while each caller receives independent result rows.
+- `clear()` invalidates both cached and pending search generations: old responses may complete for existing callers but cannot repopulate a cleared cache.
+- The bounded query cache now uses access-order LRU eviction and defensive row copies; malformed or failed HTTP search phases reject rather than caching phantom empty results.
+- `session-sidebar-utils.test.mjs` covers concurrent coalescing, clear-vs-response races, retry after failure, LRU eviction and caller mutation isolation.

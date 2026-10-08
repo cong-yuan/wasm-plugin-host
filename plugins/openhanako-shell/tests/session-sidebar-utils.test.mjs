@@ -132,6 +132,51 @@ const check = (label, condition) => { if (!condition) failures.push(label); };
 }
 
 {
+  let calls = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const controller = searchController.create({ adapter: { async http() {
+    calls += 1;
+    await gate;
+    return { results: [{ sessionId: 'one', title: 'Original' }] };
+  } }, maxEntries: 1 });
+  const first = controller.search('Same');
+  const second = controller.search('same');
+  await Promise.resolve();
+  check('concurrent searches share both HTTP phases', calls === 2);
+  controller.clear();
+  release();
+  const [a, b] = await Promise.all([first, second]);
+  a.rows[0].title = 'Mutated';
+  check('concurrent results return independent objects', b.rows[0].title === 'Original');
+  check('clear prevents obsolete responses from reentering cache', controller.size() === 0);
+  await controller.search('same');
+  check('clear allows a new request', calls === 4);
+  const cachedRows = controller.cached('same');
+  cachedRows[0].title = 'Changed';
+  check('cached rows are isolated from callers', controller.cached('same')[0].title === 'Original');
+}
+
+{
+  let requests = 0;
+  const controller = searchController.create({ adapter: { async http(_method, path) {
+    requests += 1;
+    if (path.includes('q=bad')) return { ok: false, results: [] };
+    return { results: [{ sessionId: path.includes('q=first') ? 'first' : 'second' }] };
+  } }, maxEntries: 1 });
+  await controller.search('first');
+  await controller.search('second');
+  await controller.search('first');
+  check('bounded cache evicts least recently used entries', requests === 6);
+  await controller.search('bad').then(
+    () => check('failed search rejects error payloads', false),
+    () => check('failed search does not poison cache', controller.cached('bad') === null),
+  );
+  await controller.search('bad').catch(() => {});
+  check('failed searches can be retried', requests === 10);
+}
+
+{
   let activeLoads = 0;
   let maxLoads = 0;
   const rows = Array.from({ length: 6 }, (_value, index) => ({ id: `s-${index}`, title: `S${index}` }));
