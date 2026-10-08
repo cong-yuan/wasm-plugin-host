@@ -1090,8 +1090,8 @@ check('unsupported standalone controls are explicitly disabled',
   && root.querySelectorAll('.attach-btn').every((button) => button.disabled === true)
   && root.querySelector('.plan-mode-btn')?.disabled === true);
 check('unsupported controls explain why they are disabled',
-  /standalone Studio bridge/.test(root.querySelector('.folderSelectBtn')?.title || '')
-  && /server command dispatcher/.test(root.querySelectorAll('.attach-btn')[1]?.title || '')
+  /does not expose authorized folder/.test(root.querySelector('.folderSelectBtn')?.title || '')
+  && /server command dispatcher/.test(root.querySelectorAll('.attach-btn')[2]?.title || '')
   && /enforce/.test(root.querySelector('.plan-mode-btn')?.title || ''));
 check('unsupported automation control is explicitly disabled',
   root.querySelector('.automation-count-badge')?.parentNode?.disabled === true
@@ -1854,6 +1854,102 @@ adapterForShellRefresh.http = originalHttpForRefresh;
     && /Current Session Model/.test(pill.textContent || ''));
   panel.reset();
   adapter.http = oldHttp;
+  api.transcript = originalTranscript;
+}
+
+// Native authorized folders are session-scoped, capability gated, and
+// require backend acknowledgments before changing the visible projection.
+{
+  const conversation = studio.require('panels/conversation');
+  const adapter = studio.require('lib/hana-adapter');
+  const originalHttp = adapter.http;
+  const originalCapability = api.sessionFolderScopeAvailable;
+  const originalTranscript = api.transcript;
+  api.sessionFolderScopeAvailable = () => true;
+  api.transcript = async () => [];
+  let folders = ['/work/project'];
+  let loadCount = 0;
+  const patchCalls = [];
+  let rejectPatch = false;
+  let partialPatch = false;
+  let pendingRead = null;
+  adapter.http = async (method, path, body) => {
+    if (method === 'GET' && path.startsWith('/api/models')) return { models: [], activeModel: null };
+    if (method === 'GET' && path.startsWith('/api/sessions/authorized-folders?')) {
+      loadCount += 1;
+      if (pendingRead) return new Promise((resolve) => { pendingRead.resolve = resolve; });
+      return { ok: true, authorizedFolders: folders.slice() };
+    }
+    if (method === 'PATCH' && path === '/api/sessions/authorized-folders') {
+      patchCalls.push(body);
+      if (rejectPatch) return { ok: false, error: 'Permission denied' };
+      if (partialPatch) return { ok: true, authorizedFolders: folders.slice() };
+      folders = body.action === 'add'
+        ? Array.from(new Set([...folders, body.folder]))
+        : folders.filter((folder) => folder !== body.folder);
+      return { ok: true, authorizedFolders: folders.slice() };
+    }
+    return originalHttp(method, path, body);
+  };
+  const panel = conversation.render({ onChanged() {}, onOpened() {}, onCreated() {} });
+  const scopeBtn = panel.root.querySelector('.sessionFolderScopeBtn');
+  const scope = panel.root.querySelector('.sessionFolderScopePanel');
+  const status = panel.root.querySelector('.sessionFolderScopeStatus');
+  const path = panel.root.querySelector('.sessionFolderScopePath');
+  const add = panel.root.querySelector('.sessionFolderScopeAdd');
+  const refresh = panel.root.querySelector('.sessionFolderScopeRefresh');
+  check('authorized-folder editor enabled only with backend capability', scopeBtn?.disabled !== true);
+  scopeBtn?.fire('click');
+  check('cannot mutate folder scope without an open session',
+    scope.style.display === 'none' && patchCalls.length === 0);
+  await panel.open({ id: 'folder-session-a', live: true });
+  scopeBtn.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('authorized folder editor reads real session scope',
+    loadCount === 1 && /work\/project/.test(scope.textContent)
+    && scopeBtn.getAttribute('aria-expanded') === 'true');
+  path.value = 'relative/unsafe';
+  add.fire('click');
+  check('relative folder path is rejected before a PATCH',
+    patchCalls.length === 0 && /absolute directory path/.test(status.textContent));
+  path.value = '/work/extra';
+  rejectPatch = true;
+  add.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('failed folder PATCH never claims success or mutates visible list',
+    patchCalls.length === 1 && /Permission denied/.test(status.textContent)
+    && !/work\/extra/.test(scope.textContent));
+  rejectPatch = false;
+  partialPatch = true;
+  add.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('unconfirmed successful response does not claim folder authorization',
+    patchCalls.length === 2 && /not confirmed/.test(status.textContent)
+    && !/work\/extra/.test(scope.textContent));
+  partialPatch = false;
+  add.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('successful acknowledged folder addition updates native list',
+    patchCalls.length === 3 && /work\/extra/.test(scope.textContent)
+    && /Folder authorized/.test(status.textContent));
+  const remove = panel.root.querySelectorAll('.sessionFolderScopeRemove')[1];
+  remove?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('authorized folder removal issues remove and updates list',
+    patchCalls[3]?.action === 'remove' && patchCalls[3]?.folder === '/work/extra'
+    && !/work\/extra/.test(scope.textContent));
+  pendingRead = {};
+  refresh.fire('click');
+  await Promise.resolve();
+  check('folder refresh waits on backend response', typeof pendingRead.resolve === 'function');
+  await panel.open({ id: 'folder-session-b', live: true });
+  pendingRead.resolve({ ok: true, authorizedFolders: ['/stale/other-session'] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('stale folder fetch after session switch cannot leak prior session scope',
+    scope.style.display === 'none' && !/stale\/other-session/.test(scope.textContent));
+  panel.reset();
+  adapter.http = originalHttp;
+  api.sessionFolderScopeAvailable = originalCapability;
   api.transcript = originalTranscript;
 }
 

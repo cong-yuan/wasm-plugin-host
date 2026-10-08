@@ -61,8 +61,8 @@ return (function () {
     slots.mount('openhanako.conversation.hero', heroSlot);
 
     const folderBtn = h('button', { class: 'folderSelectBtn', type: 'button' },
-      svg(FOLDER), h('span', {}, t('input.selectWorkspace')), svg(FOLDER_SWAP));
-    markUnsupported(folderBtn, 'Workspace selection is not available in the standalone Studio bridge yet.');
+      svg(FOLDER), h('span', {}, 'Authorized folders'), svg(FOLDER_SWAP));
+    folderBtn.title = 'Manage authorized folders for this session';
     const memoryBtn = h('button', { class: 'memoryToggleBtn memoryToggleBtnDisabled', type: 'button' },
       svg(MEMORY), h('span', {}, t('welcome.memoryDisabled')));
     markUnsupported(memoryBtn,
@@ -97,9 +97,15 @@ return (function () {
     });
 
     const attach = h('button', { class: 'attach-btn', type: 'button', title: t('input.attachFiles') }, svg(PLUS));
+    const scopeBtn = h('button', { class: 'attach-btn sessionFolderScopeBtn', type: 'button', title: 'Session authorized folders', 'aria-expanded': 'false' }, svg(FOLDER));
     const slash = h('button', { class: 'attach-btn', type: 'button', title: t('input.commandMenu') }, svg(SLASH));
     const plan = h('button', { class: 'plan-mode-btn plan-mode-default', type: 'button' }, svg(PLAN));
     markUnsupported(attach, 'File attachments are not available in the standalone Studio bridge yet.');
+    const scopeAvailable = typeof api.sessionFolderScopeAvailable === 'function' && api.sessionFolderScopeAvailable();
+    if (!scopeAvailable) {
+      markUnsupported(scopeBtn, 'Studio does not expose authorized folder controls in this window.');
+      markUnsupported(folderBtn, 'Studio does not expose authorized folder controls in this window.');
+    }
     markUnsupported(slash, 'Slash commands require the server command dispatcher and are not available here yet.');
     markUnsupported(plan, 'Permission modes are unavailable until the Studio bridge can enforce them.');
     const trailing = h('span', { class: 'input-trailing-slot hana-slot' });
@@ -145,14 +151,156 @@ return (function () {
     }
 
     const controlBar = h('div', { class: 'input-bottom-bar' },
-      h('div', { class: 'input-actions' }, attach, slash, plan, trailing),
+      h('div', { class: 'input-actions' }, attach, scopeBtn, slash, plan, trailing),
       h('div', { class: 'input-controls' }, modelSelector, send));
 
     const wrapper = h('div', { class: 'input-wrapper' }, input, controlBar);
     const surface = h('div', { class: 'input-surface' },
       dock, h('div', { class: 'input-stack' }, wrapper));
+    // The native backend owns authorized-folder persistence and path validation.
+    // This editor is available only when the host advertises both commands.
+    const scopePath = h('input', {
+      class: 'sessionFolderScopePath', type: 'text',
+      placeholder: 'Absolute directory path', 'aria-label': 'Authorize directory path',
+    });
+    const scopeAdd = h('button', { class: 'sessionFolderScopeAdd', type: 'button' }, 'Add folder');
+    const scopeRefresh = h('button', { class: 'sessionFolderScopeRefresh', type: 'button' }, 'Refresh');
+    const scopeClose = h('button', { class: 'sessionFolderScopeClose', type: 'button' }, 'Close');
+    const scopeList = h('div', { class: 'sessionFolderScopeList' });
+    const scopeStatus = h('span', { class: 'sessionFolderScopeStatus', 'aria-live': 'polite' }, '');
+    const scopePanel = h('section', { class: 'sessionFolderScopePanel', 'aria-label': 'Authorized session folders' },
+      h('div', { class: 'sessionFolderScopeHeading' }, 'Authorized folders', scopeRefresh, scopeClose),
+      h('div', { class: 'sessionFolderScopeEditor' }, scopePath, scopeAdd),
+      scopeList, scopeStatus);
+    scopePanel.style.display = 'none';
+    let scopeGeneration = 0;
+    let scopePending = false;
+    const scopeIsCurrent = (id, epoch, version) => state.id === id
+      && state.epoch === epoch && scopeGeneration === version;
+    const scopeBusy = (busy) => {
+      scopePending = busy;
+      scopeAdd.disabled = busy;
+      scopeRefresh.disabled = busy;
+      scopePath.disabled = busy;
+    };
+    const scopeReset = () => {
+      scopeGeneration += 1;
+      scopeBusy(false);
+      clear(scopeList);
+      scopeStatus.textContent = '';
+      scopePath.value = '';
+      scopePanel.style.display = 'none';
+      scopeBtn.setAttribute('aria-expanded', 'false');
+      folderBtn.setAttribute('aria-expanded', 'false');
+    };
+    const scopeRender = (folders) => {
+      clear(scopeList);
+      if (!folders.length) {
+        scopeList.appendChild(h('div', { class: 'sessionFolderScopeEmpty' }, 'No extra authorized directories'));
+      }
+      for (const folder of folders) {
+        const remove = h('button', {
+          class: 'sessionFolderScopeRemove', type: 'button',
+          'aria-label': `Remove authorized folder ${folder}`,
+        }, 'Remove');
+        remove.onclick = () => scopeMutation('remove', folder);
+        scopeList.appendChild(h('div', { class: 'sessionFolderScopeRow' },
+          h('span', { class: 'sessionFolderScopeName' }, folder), remove));
+      }
+    };
+    const scopeValidate = (result, id) => {
+      if (!result || result.ok !== true
+        || (result.sessionId != null && result.sessionId !== id)
+        || !Array.isArray(result.authorizedFolders)
+        || result.authorizedFolders.some((value) => typeof value !== 'string' || !value.trim())) {
+        throw new Error(result?.error || 'Invalid authorized folders response');
+      }
+      return result.authorizedFolders;
+    };
+    const scopeLoad = async () => {
+      if (scopePending || !state.id || scopePanel.style.display === 'none') return;
+      const id = state.id;
+      const epoch = state.epoch;
+      const version = ++scopeGeneration;
+      scopeBusy(true);
+      scopeStatus.textContent = 'Loading folders…';
+      clear(scopeList);
+      try {
+        const result = await adapter.http('GET', `/api/sessions/authorized-folders?sessionId=${encodeURIComponent(id)}`);
+        const folders = scopeValidate(result, id);
+        if (!scopeIsCurrent(id, epoch, version)) return;
+        scopeRender(folders);
+        scopeStatus.textContent = '';
+      } catch (err) {
+        if (scopeIsCurrent(id, epoch, version)) {
+          clear(scopeList);
+          scopeStatus.textContent = err?.message || 'Unable to load authorized folders';
+        }
+      } finally {
+        if (scopeIsCurrent(id, epoch, version)) scopeBusy(false);
+      }
+    };
+    const scopeMutation = async (action, folder) => {
+      if (scopePending || !state.id || scopePanel.style.display === 'none') return;
+      const path = String(folder || '').trim();
+      if (!path || !(/^(\/|[a-zA-Z]:[\\/]|\\\\)/.test(path))) {
+        scopeStatus.textContent = 'Enter an absolute directory path';
+        return;
+      }
+      const id = state.id;
+      const epoch = state.epoch;
+      const version = ++scopeGeneration;
+      scopeBusy(true);
+      scopeStatus.textContent = action === 'add' ? 'Adding folder…' : 'Removing folder…';
+      try {
+        const result = await adapter.http('PATCH', '/api/sessions/authorized-folders', {
+          sessionId: id, action, folder: path,
+        });
+        const folders = scopeValidate(result, id);
+        if (!scopeIsCurrent(id, epoch, version)) return;
+        if ((action === 'add' && !folders.includes(path))
+          || (action === 'remove' && folders.includes(path))) {
+          throw new Error('Folder update was not confirmed by Studio');
+        }
+        scopeRender(folders);
+        if (action === 'add') scopePath.value = '';
+        scopeStatus.textContent = action === 'add' ? 'Folder authorized' : 'Folder removed';
+      } catch (err) {
+        if (scopeIsCurrent(id, epoch, version)) {
+          scopeStatus.textContent = err?.message || 'Folder update failed';
+        }
+      } finally {
+        if (scopeIsCurrent(id, epoch, version)) scopeBusy(false);
+      }
+    };
+    const toggleScopePanel = () => {
+      if (!scopeAvailable) return;
+      if (scopePanel.style.display !== 'none') {
+        scopeReset();
+        return;
+      }
+      if (!state.id || state.opening) {
+        conversationStatus.textContent = 'Open or create a session before editing its authorized folders';
+        return;
+      }
+      scopePanel.style.display = '';
+      scopeBtn.setAttribute('aria-expanded', 'true');
+      folderBtn.setAttribute('aria-expanded', 'true');
+      scopeLoad();
+    };
+    scopeBtn.onclick = toggleScopePanel;
+    folderBtn.onclick = toggleScopePanel;
+    scopeClose.onclick = scopeReset;
+    scopeRefresh.onclick = scopeLoad;
+    scopeAdd.onclick = () => scopeMutation('add', scopePath.value);
+    scopePath.onkeydown = (event) => {
+      if (event?.key === 'Enter' && !event?.isComposing) {
+        event.preventDefault?.();
+        scopeAdd.onclick();
+      }
+    };
     // ChatPage.tsx: <div className="input-area">
-    const inputArea = h('div', { class: 'input-area' }, surface);
+    const inputArea = h('div', { class: 'input-area' }, scopePanel, surface);
 
     const headerSlot = h('div', { class: 'conversation-header-slot hana-slot' });
     slots.mount('openhanako.conversation.header', headerSlot);
@@ -392,6 +540,7 @@ return (function () {
       const previousTurns = state.turns.slice();
       const wasBusy = state.busy;
       state.epoch += 1;
+      scopeReset();
       const openEpoch = state.epoch;
       closeModels();
       state.id = session.id;
@@ -618,6 +767,7 @@ return (function () {
         const previousId = state.id;
         const wasBusy = state.busy;
         state.epoch += 1;
+        scopeReset();
         state.id = null;
         state.turns = [];
         state.busy = false;

@@ -8870,6 +8870,51 @@ html[data-platform="linux"] .onboarding {
 }
 .attach-btn:disabled:hover,
 .plan-mode-btn:disabled:hover,
+/* Native session-scoped authorized directory editor. */
+.sessionFolderScopePanel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    border: 1px solid var(--border-subtle, rgba(0,0,0,0.12));
+    border-radius: 10px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 12px;
+}
+.sessionFolderScopeHeading, .sessionFolderScopeEditor, .sessionFolderScopeRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.sessionFolderScopeHeading { font-weight: 600; }
+.sessionFolderScopeHeading .sessionFolderScopeRefresh { margin-left: auto; }
+.sessionFolderScopePath {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid var(--border-subtle, rgba(0,0,0,0.12));
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+}
+.sessionFolderScopeRow { justify-content: space-between; padding: 3px 0; }
+.sessionFolderScopeName { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.sessionFolderScopePanel button {
+    border: 0;
+    border-radius: 6px;
+    padding: 4px 7px;
+    background: rgba(0,0,0,0.06);
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+}
+.sessionFolderScopePanel button:disabled { opacity: 0.5; cursor: wait; }
+.sessionFolderScopeEmpty, .sessionFolderScopeStatus { color: var(--text-muted); }
+.sessionFolderScopeStatus { min-height: 16px; }
+
 .folderSelectBtn:disabled:hover {
     color: var(--text-muted);
     border-color: rgba(var(--accent-rgb), 0.12);
