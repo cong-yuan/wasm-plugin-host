@@ -1563,6 +1563,7 @@
       "hideBackups": "閉じる",
       "restoreBtn": "復元",
       "noBackups": "バックアップはまだありません",
+      "restoreConfirm": "このバックアップを復元しますか？元のファイルの現在の変更は上書きされます。",
       "restoreSuccess": "復元しました",
       "restoreFailed": "復元に失敗しました"
     },

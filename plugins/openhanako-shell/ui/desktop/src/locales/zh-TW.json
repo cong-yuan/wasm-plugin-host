@@ -1563,6 +1563,7 @@
       "hideBackups": "收起",
       "restoreBtn": "還原",
       "noBackups": "暫無備份紀錄",
+      "restoreConfirm": "確定還原此備份嗎？原始檔案目前的修改將被覆寫。",
       "restoreSuccess": "已還原",
       "restoreFailed": "還原失敗"
     },

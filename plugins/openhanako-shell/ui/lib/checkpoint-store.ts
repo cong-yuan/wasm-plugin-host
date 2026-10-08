@@ -40,13 +40,19 @@ export class CheckpointStore {
       return null;
     }
 
-    if (stat.size > maxSizeKb * 1024) return null;
+    if (!stat.isFile() || stat.size > maxSizeKb * 1024) return null;
 
     const buf = fs.readFileSync(filePath);
     const sample = buf.subarray(0, 8192);
     if (sample.includes(0)) return null;
 
-    const content = buf.toString("utf-8");
+    let content: string;
+    try {
+      content = new TextDecoder("utf-8", { fatal: true }).decode(buf);
+    } catch {
+      // Unknown binary formats must not be saved as replacement-corrupted text.
+      return null;
+    }
 
     fs.mkdirSync(this._dir, { recursive: true });
     const ts = Date.now();
@@ -62,6 +68,7 @@ export class CheckpointStore {
       source: source || "llm",
       reason: reason || `tool-${tool}`,
       path: filePath,
+      resolvedParentPath: fs.realpathSync(path.dirname(filePath)),
       content,
       size: stat.size,
     });
@@ -111,6 +118,9 @@ export class CheckpointStore {
     if (typeof obj.path !== "string" || !path.isAbsolute(obj.path)) {
       throw new Error("checkpoint target path must be absolute");
     }
+    if (typeof obj.content !== "string") {
+      throw new Error("checkpoint content must be text");
+    }
 
     try {
       if (fs.lstatSync(obj.path).isSymbolicLink()) {
@@ -121,6 +131,13 @@ export class CheckpointStore {
     }
 
     fs.mkdirSync(path.dirname(obj.path), { recursive: true });
+    // Pin the canonical target parent at save time: if a directory is replaced
+    // by a symlink after the checkpoint was captured, never redirect restore.
+    // Older checkpoints without this field retain their legacy restore behavior.
+    if (obj.resolvedParentPath
+      && fs.realpathSync(path.dirname(obj.path)) !== obj.resolvedParentPath) {
+      throw new Error("checkpoint target directory changed since backup");
+    }
     fs.writeFileSync(obj.path, obj.content, "utf-8");
 
     return { restoredTo: obj.path };

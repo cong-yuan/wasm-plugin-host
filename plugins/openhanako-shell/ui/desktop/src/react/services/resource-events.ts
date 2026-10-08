@@ -24,7 +24,7 @@ type ResourceEvent = {
 type ResourceEventFetch = (
   path: string,
   opts?: RequestInit & { timeout?: number; throwOnHttpError?: boolean },
-) => Promise<{ json: () => Promise<any> }>;
+) => Promise<{ ok?: boolean; status?: number; json: () => Promise<any> }>;
 
 type ResourceEventClientOptions = {
   fetchImpl?: ResourceEventFetch;
@@ -49,8 +49,8 @@ export function createResourceEventClient({
 
   const handleEvent = (event: ResourceEvent | null | undefined): void => {
     if (!isResourceEvent(event)) return;
-    if (Number.isFinite(event.sequence) && Number(event.sequence) > lastSeenSequence) {
-      lastSeenSequence = Math.floor(Number(event.sequence));
+    if (Number.isSafeInteger(event.sequence) && Number(event.sequence) >= 0 && Number(event.sequence) > lastSeenSequence) {
+      lastSeenSequence = Number(event.sequence);
     }
   };
 
@@ -59,22 +59,30 @@ export function createResourceEventClient({
       method: 'GET',
       throwOnHttpError: false,
     });
+    if (res.ok === false) {
+      throw new Error(`Resource catch-up failed (HTTP ${res.status || 'unknown'})`);
+    }
     const data = await res.json();
-    if (data?.stale) {
+    if (!data || typeof data.stale !== 'boolean'
+      || !Number.isSafeInteger(data.latestSequence) || data.latestSequence < 0
+      || !Array.isArray(data.events)) {
+      throw new Error('Resource catch-up returned an invalid event batch');
+    }
+    if (data.stale) {
       await resubscribeWatches?.();
-      if (Number.isFinite(data.latestSequence) && Number(data.latestSequence) > lastSeenSequence) {
-        lastSeenSequence = Math.floor(Number(data.latestSequence));
+      if (data.latestSequence > lastSeenSequence) {
+        lastSeenSequence = data.latestSequence;
       }
       return data;
     }
 
     const handler = options.applyEvent || applyEvent;
-    for (const event of Array.isArray(data?.events) ? data.events : []) {
+    for (const event of data.events) {
       handleEvent(event);
       handler?.(event);
     }
-    if (Number.isFinite(data?.latestSequence) && Number(data.latestSequence) > lastSeenSequence) {
-      lastSeenSequence = Math.floor(Number(data.latestSequence));
+    if (data.latestSequence > lastSeenSequence) {
+      lastSeenSequence = data.latestSequence;
     }
     return data;
   };

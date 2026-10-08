@@ -31,6 +31,33 @@ describe("checkpoints route", () => {
     });
   });
 
+  it("does not report success when the user-edit snapshot was skipped", async () => {
+    const engine = { createUserEditCheckpoint: vi.fn(async () => null) };
+    const { createCheckpointsRoute } = await import("../server/routes/checkpoints.ts");
+    const app = new Hono();
+    app.route("/api", createCheckpointsRoute(engine));
+
+    const res = await app.request("/api/checkpoints/user-edit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filePath: "/tmp/missing.txt", reason: "edit-start" }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ ok: false, error: "checkpoint was not created" });
+  });
+
+  it("does not acknowledge a restore without an absolute restored target", async () => {
+    const engine = { restoreCheckpoint: vi.fn(async () => undefined) };
+    const { createCheckpointsRoute } = await import("../server/routes/checkpoints.ts");
+    const app = new Hono();
+    app.route("/api", createCheckpointsRoute(engine));
+
+    const res = await app.request("/api/checkpoints/1700000000_ab12/restore", { method: "POST" });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "checkpoint restore was not acknowledged" });
+  });
+
   it("rejects relative user-edit checkpoint paths", async () => {
     const engine = { createUserEditCheckpoint: vi.fn() };
     const { createCheckpointsRoute } = await import("../server/routes/checkpoints.ts");

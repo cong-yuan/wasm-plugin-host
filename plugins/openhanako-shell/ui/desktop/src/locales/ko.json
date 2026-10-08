@@ -1563,6 +1563,7 @@
       "hideBackups": "닫기",
       "restoreBtn": "복원",
       "noBackups": "아직 백업이 없습니다",
+      "restoreConfirm": "이 백업을 복원할까요? 원본 파일의 현재 변경 내용이 덮어쓰여집니다.",
       "restoreSuccess": "복원됨",
       "restoreFailed": "복원 실패"
     },

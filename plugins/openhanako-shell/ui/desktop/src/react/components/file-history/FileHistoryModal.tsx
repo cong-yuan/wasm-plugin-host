@@ -15,6 +15,7 @@ import {
   type FileHistoryFileEntry, type FileHistoryVersionEntry,
 } from '../../utils/file-history-api';
 import { diffLines, type DiffLine } from '../../utils/line-diff';
+import { refreshOpenPreviewDocumentsForFilePath } from '../../utils/preview-document-refresh';
 import styles from './FileHistoryModal.module.css';
 
 export function FileHistoryModal() {
@@ -126,14 +127,30 @@ export function FileHistoryModal() {
     if (!window.confirm(t('fileHistory.restoreConfirm'))) return;
     setStatus('restoring');
     try {
-      await restoreHistorySnapshot(agentId, selectedVersion);
+      const result = await restoreHistorySnapshot(agentId, selectedVersion);
+      if (result.relPath !== selectedPath) throw new Error('Unexpected restored file path');
       setStatus('restored');
-      const list = await fetchHistoryVersions(agentId, selectedPath);
-      setVersions(list);
+      // The just-restored file is now the selected snapshot. Clear the obsolete
+      // before-restore diff and refresh open previews using the existing
+      // version-aware file pipeline.
+      setCurrentText(snapshotText);
+      if (nativeRoot) {
+        const restoredPath = `${nativeRoot.replace(/\/+$/, '')}/${selectedPath}`;
+        void refreshOpenPreviewDocumentsForFilePath(restoredPath).catch(err => {
+          console.warn('[FileHistory] restored preview refresh failed:', err);
+        });
+      }
+      // Failure to refresh the timeline must not misreport a successful file write.
+      try {
+        const list = await fetchHistoryVersions(agentId, selectedPath);
+        setVersions(list);
+      } catch (err) {
+        console.warn('[FileHistory] post-restore history refresh failed:', err);
+      }
     } catch {
       setStatus('error');
     }
-  }, [agentId, selectedVersion, selectedPath, snapshotLoading, snapshotText, status, t]);
+  }, [agentId, selectedVersion, selectedPath, snapshotLoading, snapshotText, status, t, nativeRoot]);
 
   const visibleFiles = files.filter(f => !filter || f.relPath.includes(filter));
   const activeFiles = visibleFiles.filter(f => f.deletedAt == null);

@@ -1633,6 +1633,7 @@
       "hideBackups": "收起",
       "restoreBtn": "恢复",
       "noBackups": "暂无备份记录",
+      "restoreConfirm": "确定恢复此备份吗？原文件当前的修改将被覆盖。",
       "restoreSuccess": "已恢复",
       "restoreFailed": "恢复失败"
     },

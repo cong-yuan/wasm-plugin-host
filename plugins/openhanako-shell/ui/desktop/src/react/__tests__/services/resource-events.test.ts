@@ -113,6 +113,34 @@ describe('resource-events', () => {
     expect(client.lastSeenSequence()).toBe(6);
   });
 
+  it('rejects failed catch-up HTTP responses instead of treating them as empty event batches', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: 'resource_unavailable' }),
+    }));
+    const { createResourceEventClient } = await import('../../services/resource-events');
+    const client = createResourceEventClient({ fetchImpl });
+    client.handleEvent({ type: 'resource.changed', sequence: 9 });
+
+    await expect(client.catchUpAfterReconnect()).rejects.toThrow('HTTP 503');
+    expect(client.lastSeenSequence()).toBe(9);
+  });
+
+  it('rejects malformed/unsafe cursor values in catch-up responses', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ stale: false, latestSequence: Number.MAX_SAFE_INTEGER + 1, events: [] }),
+    }));
+    const { createResourceEventClient } = await import('../../services/resource-events');
+    const client = createResourceEventClient({ fetchImpl });
+    client.handleEvent({ type: 'resource.changed', sequence: 8 });
+
+    await expect(client.catchUpAfterReconnect()).rejects.toThrow('invalid event batch');
+    client.handleEvent({ type: 'resource.changed', sequence: Number.MAX_SAFE_INTEGER + 1 });
+    expect(client.lastSeenSequence()).toBe(8);
+  });
+
   it('requests ResourceIO catch-up when the renderer returns to the foreground', async () => {
     const listeners = new Map<string, () => void>();
     const windowObj = {

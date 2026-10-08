@@ -92,6 +92,37 @@ describe("CheckpointStore", () => {
     fs.rmSync(srcDir, { recursive: true, force: true });
   });
 
+  it("does not save invalid UTF-8 bytes disguised with a text extension", async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-invalid-utf8-"));
+    try {
+      const srcFile = path.join(srcDir, "binary.txt");
+      fs.writeFileSync(srcFile, Buffer.from([0xff, 0xfe, 0xfd]));
+      const id = await store.save({ sessionPath: null, tool: "edit", filePath: srcFile, maxSizeKb: 1024 });
+      expect(id).toBeNull();
+      expect(await store.list()).toEqual([]);
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not store directories as snapshots", async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-dir-"));
+    try {
+      const id = await store.save({ sessionPath: null, tool: "edit", filePath: srcDir, maxSizeKb: 1024 });
+      expect(id).toBeNull();
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses corrupt checkpoint payloads instead of writing non-text content", async () => {
+    fs.writeFileSync(path.join(dir, "1700000000_ab12.json"), JSON.stringify({
+      path: path.join(dir, "target.txt"), content: { unexpected: true },
+    }));
+    await expect(store.restore("1700000000_ab12")).rejects.toThrow("checkpoint content must be text");
+    expect(fs.existsSync(path.join(dir, "target.txt"))).toBe(false);
+  });
+
   it("save skips known binary extensions", async () => {
     const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-bin-"));
     const pngFile = path.join(srcDir, "image.png");
@@ -171,6 +202,35 @@ describe("CheckpointStore", () => {
   it("rejects unsafe checkpoint ids before constructing a filesystem path", async () => {
     await expect(store.restore("../outside")).rejects.toThrow("invalid checkpoint id");
     await expect(store.remove("../outside")).rejects.toThrow("invalid checkpoint id");
+  });
+
+  it("refuses to restore through a parent directory redirected after backup", async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-parent-swap-"));
+    try {
+      const originalDir = path.join(srcDir, "project");
+      const movedDir = path.join(srcDir, "moved");
+      const otherDir = path.join(srcDir, "outside");
+      fs.mkdirSync(originalDir);
+      fs.mkdirSync(otherDir);
+      const originalFile = path.join(originalDir, "note.txt");
+      const otherFile = path.join(otherDir, "note.txt");
+      fs.writeFileSync(originalFile, "original");
+      fs.writeFileSync(otherFile, "private");
+      const id = await store.save({
+        sessionPath: null,
+        tool: "edit",
+        filePath: originalFile,
+        maxSizeKb: 1024,
+      });
+      fs.renameSync(originalDir, movedDir);
+      fs.symlinkSync(otherDir, originalDir, "dir");
+
+      await expect(store.restore(id)).rejects.toThrow("target directory changed");
+      expect(fs.readFileSync(otherFile, "utf-8")).toBe("private");
+      expect(fs.readFileSync(path.join(movedDir, "note.txt"), "utf-8")).toBe("original");
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true });
+    }
   });
 
   it("refuses to restore through a symbolic-link target", async () => {

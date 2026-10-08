@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSettingsStore } from '../../store';
@@ -32,6 +32,9 @@ vi.mock('../../actions', () => ({
 vi.mock('../../api', () => ({
   hanaFetch: vi.fn(),
 }));
+vi.mock('../../../utils/preview-document-refresh', () => ({
+  refreshOpenPreviewDocumentsForFilePath: vi.fn(async () => {}),
+}));
 
 vi.mock('../../../hooks/use-i18n', () => ({
   useI18n: () => ({
@@ -55,10 +58,15 @@ vi.mock('../../../stores/session-actions', () => ({
   loadSessions: vi.fn(),
 }));
 
+import { hanaFetch } from '../../api';
+import { refreshOpenPreviewDocumentsForFilePath } from '../../../utils/preview-document-refresh';
+
 import { SecurityTab } from '../SecurityTab';
 
 describe('SecurityTab Windows sandbox network control', () => {
   beforeEach(() => {
+    vi.mocked(hanaFetch).mockReset();
+    vi.mocked(refreshOpenPreviewDocumentsForFilePath).mockClear();
     autoSaveConfigMock.mockResolvedValue(true);
     loadSettingsConfigMock.mockResolvedValue(undefined);
     useSettingsStore.setState({
@@ -86,6 +94,60 @@ describe('SecurityTab Windows sandbox network control', () => {
       toastType: '',
       toastVisible: false,
     } as never);
+  });
+
+  it('requires confirmation and refreshes the restored file only after an acknowledged checkpoint restore', async () => {
+    useSettingsStore.setState({
+      settingsConfig: {
+        sandbox: true,
+        sandbox_network: true,
+        file_backup: { enabled: true, retention_days: 1, max_file_size_kb: 1024 },
+      },
+    } as never);
+    vi.mocked(hanaFetch).mockImplementation(async (url: string) => new Response(
+      JSON.stringify(url === '/api/checkpoints'
+        ? { checkpoints: [{ id: 'checkpoint123', ts: Date.now(), tool: 'edit', path: '/tmp/note.md', size: 4 }] }
+        : { ok: true, restoredTo: '/tmp/note.md' }),
+      { status: 200 },
+    ));
+    const confirmMock = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(React.createElement(SecurityTab));
+    fireEvent.click(screen.getByText('settings.security.viewBackups'));
+    const restore = await screen.findByRole('button', { name: 'settings.security.restoreBtn' });
+    fireEvent.click(restore);
+    expect(confirmMock).toHaveBeenCalledWith('settings.security.restoreConfirm');
+    expect(vi.mocked(hanaFetch).mock.calls.some(([url]) => url.includes('/restore'))).toBe(false);
+
+    confirmMock.mockReturnValue(true);
+    fireEvent.click(restore);
+    await waitFor(() => expect(useSettingsStore.getState().toastMessage).toBe('settings.security.restoreSuccess'));
+    expect(vi.mocked(hanaFetch)).toHaveBeenCalledWith('/api/checkpoints/checkpoint123/restore', { method: 'POST' });
+    expect(vi.mocked(refreshOpenPreviewDocumentsForFilePath)).toHaveBeenCalledWith('/tmp/note.md');
+    confirmMock.mockRestore();
+  });
+
+  it('rejects a checkpoint restore that was not acknowledged for the selected target', async () => {
+    useSettingsStore.setState({
+      settingsConfig: {
+        sandbox: true,
+        sandbox_network: true,
+        file_backup: { enabled: true, retention_days: 1, max_file_size_kb: 1024 },
+      },
+    } as never);
+    vi.mocked(hanaFetch).mockImplementation(async (url: string) => new Response(
+      JSON.stringify(url === '/api/checkpoints'
+        ? { checkpoints: [{ id: 'checkpoint123', ts: Date.now(), tool: 'edit', path: '/tmp/note.md', size: 4 }] }
+        : { ok: true, restoredTo: '/tmp/other.md' }),
+      { status: 200 },
+    ));
+    const confirmMock = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(React.createElement(SecurityTab));
+    fireEvent.click(screen.getByText('settings.security.viewBackups'));
+    fireEvent.click(await screen.findByRole('button', { name: 'settings.security.restoreBtn' }));
+
+    await waitFor(() => expect(useSettingsStore.getState().toastMessage).toBe('settings.security.restoreFailed'));
+    expect(vi.mocked(refreshOpenPreviewDocumentsForFilePath)).not.toHaveBeenCalled();
+    confirmMock.mockRestore();
   });
 
   it('disables the sandbox network switch on Windows and keeps it visually on', () => {

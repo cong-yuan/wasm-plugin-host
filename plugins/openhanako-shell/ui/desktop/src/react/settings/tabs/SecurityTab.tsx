@@ -10,6 +10,7 @@ import { SettingsRow } from '../components/SettingsRow';
 import { ExpandableRow } from '../components/ExpandableRow';
 import { ArchivedSessionsModal } from '../../components/ArchivedSessionsModal';
 import styles from '../Settings.module.css';
+import { refreshOpenPreviewDocumentsForFilePath } from '../../utils/preview-document-refresh';
 
 interface Checkpoint {
   id: string;
@@ -85,6 +86,7 @@ export function SecurityTab() {
 
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [loading, setLoading] = useState(false);
+  const [restoringCheckpointId, setRestoringCheckpointId] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [proxyDraft, setProxyDraft] = useState<NetworkProxyConfig>(
     () => normalizeNetworkProxyDraft(settingsConfig?.network_proxy),
@@ -155,18 +157,29 @@ export function SecurityTab() {
   }, []);
 
   const handleRestore = useCallback(async (id: string) => {
+    if (restoringCheckpointId) return;
+    const checkpoint = checkpoints.find(item => item.id === id);
+    if (!checkpoint || !window.confirm(t('settings.security.restoreConfirm'))) return;
+    setRestoringCheckpointId(id);
     try {
-      const res = await hanaFetch(`/api/checkpoints/${id}/restore`, { method: 'POST' });
+      const res = await hanaFetch(`/api/checkpoints/${encodeURIComponent(id)}/restore`, { method: 'POST' });
       const data = await res.json();
-      if (data.ok) {
-        showToast(t('settings.security.restoreSuccess'), 'success');
-      } else {
-        showToast(t('settings.security.restoreFailed'), 'error');
+      if (!res.ok || data?.ok !== true || typeof data.restoredTo !== 'string'
+        || data.restoredTo !== checkpoint.path) {
+        throw new Error('Checkpoint restore not acknowledged for selected file');
       }
+      showToast(t('settings.security.restoreSuccess'), 'success');
+      // A restore changes bytes outside the editor: ask the existing version-aware
+      // preview refresh pipeline to reconcile the open document.
+      void refreshOpenPreviewDocumentsForFilePath(data.restoredTo).catch(err => {
+        console.warn('[SecurityTab] restored file preview refresh failed:', err);
+      });
     } catch {
       showToast(t('settings.security.restoreFailed'), 'error');
+    } finally {
+      setRestoringCheckpointId(null);
     }
-  }, [showToast]);
+  }, [checkpoints, restoringCheckpointId, showToast]);
 
   const formatTime = (ts: number) => {
     const d = new Date(ts);
@@ -258,7 +271,9 @@ export function SecurityTab() {
                     <span className={styles['settings-backup-path']}>{formatPath(cp.path)}</span>
                     <button
                       className={styles['settings-backup-restore-btn']}
-                      onClick={() => handleRestore(cp.id)}
+                      type="button"
+                      disabled={restoringCheckpointId !== null}
+                      onClick={() => { void handleRestore(cp.id); }}
                     >
                       {t('settings.security.restoreBtn')}
                     </button>

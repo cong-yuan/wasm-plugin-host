@@ -31,6 +31,9 @@ export function createCheckpointsRoute(engine) {
       const reason = typeof body.reason === "string" ? body.reason : "";
       if (!USER_EDIT_CHECKPOINT_REASONS.has(reason)) return c.json({ error: "invalid reason" }, 400);
       const checkpoint = await engine.createUserEditCheckpoint({ filePath, reason });
+      if (!checkpoint?.id) {
+        return c.json({ ok: false, error: "checkpoint was not created" }, 409);
+      }
       return c.json({ ok: true, checkpoint });
     } catch (err) {
       return c.json({ error: err.message }, 500);
@@ -42,6 +45,9 @@ export function createCheckpointsRoute(engine) {
       const id = safeCheckpointId(c.req.param("id"));
       if (!id) return c.json({ error: "invalid checkpoint id" }, 400);
       const result = await engine.restoreCheckpoint(id);
+      if (!result || typeof result.restoredTo !== "string" || !path.isAbsolute(result.restoredTo)) {
+        return c.json({ error: "checkpoint restore was not acknowledged" }, 500);
+      }
       return c.json({ ok: true, restoredTo: result.restoredTo });
     } catch (err) {
       if (err.code === "ENOENT") {

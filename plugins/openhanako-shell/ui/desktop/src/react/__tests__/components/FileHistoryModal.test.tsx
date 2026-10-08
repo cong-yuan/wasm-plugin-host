@@ -19,12 +19,15 @@ const mocks = vi.hoisted(() => ({
   restoreHistorySnapshot: vi.fn(async () => ({ ok: true, relPath: 'notes/a.md' })),
 }));
 vi.mock('../../utils/file-history-api', () => mocks);
+const refreshMocks = vi.hoisted(() => ({ refreshOpenPreviewDocumentsForFilePath: vi.fn(async () => {}) }));
+vi.mock('../../utils/preview-document-refresh', () => refreshMocks);
 
 import { FileHistoryModal } from '../../components/file-history/FileHistoryModal';
 import { useStore } from '../../stores';
 
 beforeEach(() => {
   vi.resetAllMocks();
+  refreshMocks.refreshOpenPreviewDocumentsForFilePath.mockResolvedValue(undefined);
   vi.stubGlobal('confirm', vi.fn(() => true));
   window.t = ((key: string) => key) as typeof window.t;
   useStore.setState({
@@ -136,6 +139,21 @@ describe('FileHistoryModal', () => {
     await waitFor(() => expect(screen.getByText('fileHistory.error')).toBeInTheDocument());
     expect(screen.getByTestId('fh-restore')).toBeDisabled();
     expect(mocks.restoreHistorySnapshot).not.toHaveBeenCalled();
+  });
+
+  it('keeps successful restore status if subsequent history hydration fails and refreshes open previews', async () => {
+    useStore.setState({ deskWorkspaceNativeRoot: '/tmp/workspace', deskBasePath: '/tmp/workspace' } as never);
+    mocks.fetchHistoryVersions
+      .mockResolvedValueOnce([{ id: 7, capturedAt: 1000, origin: 'event', opContext: 'agent_tool', rawSize: 5 }])
+      .mockRejectedValueOnce(new Error('history refresh unavailable'));
+    mocks.restoreHistorySnapshot.mockResolvedValueOnce({ ok: true, relPath: 'notes/a.md' });
+    render(<FileHistoryModal />);
+    fireEvent.click(await screen.findByText('notes/a.md'));
+    await waitFor(() => expect(screen.getByTestId('fh-restore')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('fh-restore'));
+    await waitFor(() => expect(screen.getByText('fileHistory.restoreDone')).toBeInTheDocument());
+    expect(screen.queryByText('fileHistory.error')).not.toBeInTheDocument();
+    expect(refreshMocks.refreshOpenPreviewDocumentsForFilePath).toHaveBeenCalledWith('/tmp/workspace/notes/a.md');
   });
 
   it('loads versions when a file is selected and restores on confirm', async () => {
