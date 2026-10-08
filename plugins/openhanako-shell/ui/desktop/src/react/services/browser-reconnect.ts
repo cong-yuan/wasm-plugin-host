@@ -10,6 +10,23 @@ type BrowserRuntimeStatus = {
   url: string | null;
 };
 
+// A later status request supersedes any older response, including when the
+// latest snapshot requires no state change.
+let latestReconcileRequest = 0;
+
+function differsOnlyByCollapse(
+  previous: ReturnType<typeof browserStateForPath>,
+  current: ReturnType<typeof browserStateForPath>,
+): boolean {
+  return previous.running === current.running
+    && previous.url === current.url
+    && previous.thumbnail === current.thumbnail
+    && previous.thumbnailCapturedAt === current.thumbnailCapturedAt
+    && previous.thumbnailUrl === current.thumbnailUrl
+    && previous.thumbnailFresh === current.thumbnailFresh
+    && previous.collapsed !== current.collapsed;
+}
+
 /**
  * The websocket can disconnect without delivering the final browser_status.
  * Reconcile the server's authoritative running/stopped sessions after reconnect.
@@ -23,6 +40,7 @@ export async function reconcileBrowserSessionsAfterReconnect(
   // Capture the per-session values at request start. An in-flight status fetch
   // must not compare against a later mutation of the same store object.
   const before = { ...initial, browserBySession: { ...(initial.browserBySession || {}) } };
+  const requestId = ++latestReconcileRequest;
   const response = await hanaFetch('/api/browser/session-states', {
     method: 'GET',
     throwOnHttpError: false,
@@ -45,7 +63,7 @@ export async function reconcileBrowserSessionsAfterReconnect(
       url: (raw as any).url,
     };
   }
-  if (!isCurrentConnection()) return;
+  if (!isCurrentConnection() || requestId !== latestReconcileRequest) return;
 
   const paths = new Set<string>(
     Object.entries(statuses).filter(([, status]) => status.running).map(([path]) => path),
@@ -58,10 +76,12 @@ export async function reconcileBrowserSessionsAfterReconnect(
   if (before.currentSessionPath) paths.add(before.currentSessionPath);
 
   for (const path of paths) {
-    if (!isCurrentConnection()) return;
+    if (!isCurrentConnection() || requestId !== latestReconcileRequest) return;
     const original = browserStateForPath(before, path);
     const current = browserStateForPath(useStore.getState(), path);
-    if (current !== original) continue; // A live websocket event already updated it.
+    // Live WS updates win over the snapshot. A local collapse toggle alone
+    // doesn't change browser runtime authority, so keep reconciling it.
+    if (current !== original && !differsOnlyByCollapse(original, current)) continue;
     const remote = statuses[path];
     if (!remote?.running) {
       if (!current.running) continue;

@@ -219,6 +219,45 @@ describe('resource-events', () => {
     expect(hanaFetch.mock.calls.filter(([url]) => url === '/api/resource-io/subscriptions/sub-2')).toHaveLength(1);
   });
 
+  it('does not acknowledge a websocket resource event when its handler throws', async () => {
+    hanaFetch.mockImplementation(async path => {
+      if (path.startsWith('/api/resource-io/events?')) {
+        return { ok: true, json: async () => ({ stale: false, latestSequence: 10, events: [] }) };
+      }
+      return { ok: true, json: async () => ({ ok: true }) };
+    });
+    const { dispatchServerMessageAndRecordResourceCursor, catchUpResourceEventsAfterReconnect } =
+      await import('../../services/resource-events');
+    const frame = { type: 'resource.changed', sequence: 10 };
+    expect(() => dispatchServerMessageAndRecordResourceCursor(frame, () => {
+      throw new Error('projection failed');
+    })).toThrow('projection failed');
+
+    await catchUpResourceEventsAfterReconnect();
+    expect(hanaFetch).toHaveBeenCalledWith(
+      '/api/resource-io/events?since=0', expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('advances the websocket cursor only after successful message dispatch', async () => {
+    hanaFetch.mockImplementation(async path => {
+      if (path.startsWith('/api/resource-io/events?')) {
+        return { ok: true, json: async () => ({ stale: false, latestSequence: 10, events: [] }) };
+      }
+      return { ok: true, json: async () => ({ ok: true }) };
+    });
+    const { dispatchServerMessageAndRecordResourceCursor, catchUpResourceEventsAfterReconnect } =
+      await import('../../services/resource-events');
+    const handled = vi.fn();
+    const frame = { type: 'resource.changed', sequence: 10 };
+    dispatchServerMessageAndRecordResourceCursor(frame, handled);
+    expect(handled).toHaveBeenCalledWith(frame);
+    await catchUpResourceEventsAfterReconnect();
+    expect(hanaFetch).toHaveBeenCalledWith(
+      '/api/resource-io/events?since=10', expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
   it('requests catch-up after reconnect with the last seen resource event sequence', async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: true,

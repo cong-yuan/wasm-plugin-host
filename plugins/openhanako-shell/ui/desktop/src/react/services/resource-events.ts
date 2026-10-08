@@ -308,6 +308,19 @@ export function recordResourceEventCursor(event: ResourceEvent | null | undefine
   resourceEventClient.handleEvent(event);
 }
 
+/**
+ * Process a WebSocket frame before acknowledging its resource cursor.
+ * If projection fails synchronously, leave the cursor unchanged so reconnect
+ * catch-up can replay the event. Non-resource frames leave the cursor alone.
+ */
+export function dispatchServerMessageAndRecordResourceCursor(
+  event: ResourceEvent,
+  dispatch: (message: ResourceEvent) => void,
+): void {
+  dispatch(event);
+  recordResourceEventCursor(event);
+}
+
 export function catchUpResourceEventsAfterReconnect(applyEvent?: (event: ResourceEvent) => void): Promise<unknown> {
   return resourceEventClient.catchUpAfterReconnect({ applyEvent });
 }

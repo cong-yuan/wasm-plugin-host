@@ -104,6 +104,47 @@ describe('browser reconnect reconciliation', () => {
     expect(mocks.apply).not.toHaveBeenCalled();
   });
 
+  it('ignores an older snapshot if a newer request completed without changes', async () => {
+    let resolveOld!: (response: unknown) => void;
+    mocks.state.currentSessionPath = '/session/a.jsonl';
+    mocks.state.browserBySession = {
+      '/session/a.jsonl': { running: false, url: null, thumbnail: null, collapsed: false },
+    };
+    mocks.fetch.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }));
+    mocks.fetch.mockResolvedValueOnce(ok({}));
+
+    const oldRequest = reconcileBrowserSessionsAfterReconnect();
+    await reconcileBrowserSessionsAfterReconnect();
+    resolveOld(ok({ '/session/a.jsonl': { running: true, url: 'https://obsolete.test' } }));
+    await oldRequest;
+
+    expect(mocks.state.browserBySession['/session/a.jsonl'].running).toBe(false);
+    expect(mocks.apply).not.toHaveBeenCalled();
+  });
+
+  it('honors a local collapse action while still reconciling the browser runtime', async () => {
+    let respond!: (response: unknown) => void;
+    mocks.state.currentSessionPath = '/session/a.jsonl';
+    mocks.state.browserBySession = {
+      '/session/a.jsonl': {
+        running: true, url: 'https://old.test', thumbnail: 'OLD',
+        thumbnailCapturedAt: 13, thumbnailUrl: 'https://old.test',
+        thumbnailFresh: true, collapsed: false,
+      },
+    };
+    mocks.fetch.mockImplementation(() => new Promise(resolve => { respond = resolve; }));
+    const pending = reconcileBrowserSessionsAfterReconnect();
+    mocks.state.browserBySession = {
+      '/session/a.jsonl': { ...mocks.state.browserBySession['/session/a.jsonl'], collapsed: true },
+    };
+    respond(ok({ '/session/a.jsonl': { running: true, url: 'https://new.test' } }));
+    await pending;
+
+    expect(mocks.state.browserBySession['/session/a.jsonl']).toMatchObject({
+      running: true, url: 'https://new.test', thumbnail: null, collapsed: true,
+    });
+  });
+
   it('ignores a snapshot belonging to a superseded websocket', async () => {
     mocks.state.currentSessionPath = '/session/a.jsonl';
     mocks.fetch.mockResolvedValue(ok({

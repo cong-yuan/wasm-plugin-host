@@ -12,7 +12,7 @@ import { requestStreamResume, injectHandlers, injectWebSocketGetter } from './st
 import {
   bindResourceEventForegroundCatchUp,
   catchUpResourceEventsAfterReconnect,
-  recordResourceEventCursor,
+  dispatchServerMessageAndRecordResourceCursor,
 } from './resource-events';
 import { useStore } from '../stores';
 import { setStatus } from '../utils/ui-helpers';
@@ -158,8 +158,7 @@ async function openConnectionWebSocket(connection: ServerConnection): Promise<vo
   _ws.onmessage = (event: MessageEvent) => {
     try {
       const msg = JSON.parse(event.data);
-      recordResourceEventCursor(msg);
-      handleServerMessage(msg);
+      dispatchServerMessageAndRecordResourceCursor(msg, handleServerMessage);
     } catch (err) {
       console.error('[ws] message parse error:', err);
     }
