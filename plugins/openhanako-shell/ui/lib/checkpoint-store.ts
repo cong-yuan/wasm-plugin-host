@@ -138,7 +138,35 @@ export class CheckpointStore {
       && fs.realpathSync(path.dirname(obj.path)) !== obj.resolvedParentPath) {
       throw new Error("checkpoint target directory changed since backup");
     }
-    fs.writeFileSync(obj.path, obj.content, "utf-8");
+    // Write the replacement completely in the same directory before swapping
+    // it into place. A write/fsync failure must leave the original untouched.
+    // wx and an unpredictable name also prevent colliding with another restore.
+    const targetMode = (() => {
+      try { return fs.lstatSync(obj.path).mode & 0o777; }
+      catch (err) {
+        if (err?.code === "ENOENT") return 0o600;
+        throw err;
+      }
+    })();
+    const tempPath = path.join(
+      path.dirname(obj.path),
+      `.${path.basename(obj.path)}.checkpoint-${randomBytes(8).toString("hex")}.tmp`,
+    );
+    let fd: number | null = null;
+    try {
+      fd = fs.openSync(tempPath, "wx", targetMode);
+      fs.writeFileSync(fd, obj.content, "utf-8");
+      fs.fchmodSync(fd, targetMode);
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+      fd = null;
+      fs.renameSync(tempPath, obj.path);
+    } finally {
+      if (fd != null) fs.closeSync(fd);
+      try { fs.unlinkSync(tempPath); } catch (err) {
+        if (err?.code !== "ENOENT") throw err;
+      }
+    }
 
     return { restoredTo: obj.path };
   }

@@ -122,7 +122,7 @@ export class LocalFsProvider {
   async writeExpectedVersion(ref: ResourceRef | unknown, content: string | Buffer, expectedVersion: ResourceVersion): Promise<ResourceWriteExpectedVersionResult> {
     const filePath = this.resolvePath(ref);
     this.assertAllowed(filePath, "write");
-    const currentVersion = statFileVersionOrNull(filePath);
+    const currentVersion = statFileVersionOrNull(filePath, Boolean(expectedVersion?.sha256));
     if (!currentVersion || !fileVersionsMatch(currentVersion, expectedVersion)) {
       return {
         ok: false,
@@ -371,17 +371,26 @@ function versionFromStat(stat: fs.Stats): ResourceVersion {
   };
 }
 
-function statFileVersionOrNull(filePath: string): ResourceVersion | null {
+function statFileVersionOrNull(filePath: string, includeHash = false): ResourceVersion | null {
   try {
     const stat = fs.statSync(filePath);
     if (!stat.isFile()) return null;
-    return versionFromStat(stat);
-  } catch {
-    return null;
+    return {
+      ...versionFromStat(stat),
+      ...(includeHash ? { sha256: crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex") } : {}),
+    };
+  } catch (err) {
+    if (err?.code === "ENOENT") return null;
+    throw err;
   }
 }
 
 function fileVersionsMatch(current: ResourceVersion, expected: ResourceVersion): boolean {
+  // Empty/stale-less tokens must not silently disable optimistic concurrency.
+  if (!expected || typeof expected !== "object"
+    || !["mtimeMs", "size", "sha256", "etag", "sequence"].some(key => expected[key] != null)) {
+    return false;
+  }
   if (expected.mtimeMs != null && current.mtimeMs !== expected.mtimeMs) return false;
   if (expected.size != null && current.size !== expected.size) return false;
   if (expected.sha256 && current.sha256 !== expected.sha256) return false;

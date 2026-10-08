@@ -184,6 +184,43 @@ describe("LocalFsProvider", () => {
     });
   });
 
+  it("detects same-size content changes with sha256 optimistic-concurrency tokens", async () => {
+    const { cwd, provider } = makeProvider();
+    const filePath = path.join(cwd, "draft.md");
+    fs.writeFileSync(filePath, "old");
+    const originalHash = await import("crypto").then(({ createHash }) =>
+      createHash("sha256").update("old").digest("hex"));
+
+    const first = await provider.writeExpectedVersion(
+      { kind: "local-file", path: "draft.md" }, "new", { sha256: originalHash },
+    );
+    expect(first).toMatchObject({ changeType: "modified" });
+    expect(fs.readFileSync(filePath, "utf-8")).toBe("new");
+
+    const stale = await provider.writeExpectedVersion(
+      { kind: "local-file", path: "draft.md" }, "bad", { sha256: originalHash },
+    );
+    expect(stale).toMatchObject({ ok: false, conflict: true });
+    expect(stale.version).toEqual(expect.objectContaining({ size: 3, sha256: expect.any(String) }));
+    expect(fs.readFileSync(filePath, "utf-8")).toBe("new");
+  });
+
+  it("rejects empty and unsupported expected-version tokens instead of falling back to unconditional write", async () => {
+    const { cwd, provider } = makeProvider();
+    const filePath = path.join(cwd, "draft.md");
+    fs.writeFileSync(filePath, "old");
+
+    const empty = await provider.writeExpectedVersion(
+      { kind: "local-file", path: "draft.md" }, "new", {} as any,
+    );
+    expect(empty).toMatchObject({ ok: false, conflict: true });
+    const unsupported = await provider.writeExpectedVersion(
+      { kind: "local-file", path: "draft.md" }, "new", { etag: "opaque-unknown" },
+    );
+    expect(unsupported).toMatchObject({ ok: false, conflict: true });
+    expect(fs.readFileSync(filePath, "utf-8")).toBe("old");
+  });
+
   it("supports expected-version writes, rename, move, and trash as ResourceIO authority operations", async () => {
     const { cwd, realCwd, trashRoot, provider } = makeProvider();
     const source = path.join(cwd, "draft.md");

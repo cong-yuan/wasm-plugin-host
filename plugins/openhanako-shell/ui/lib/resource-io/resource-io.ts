@@ -1,5 +1,5 @@
 import type { ResourceEventBus } from "./resource-event-bus.ts";
-import { capabilityDenied, crossProviderCopyUnsupported, crossProviderMoveUnsupported, providerNotAvailable } from "./errors.ts";
+import { ResourceIOError, capabilityDenied, crossProviderCopyUnsupported, crossProviderMoveUnsupported, providerNotAvailable } from "./errors.ts";
 import { normalizeResourceRef, providerIdForResourceRef } from "./resource-refs.ts";
 import type {
   MaterializeResult,
@@ -68,6 +68,7 @@ export class ResourceIO {
   async write(input: unknown, content: string | Buffer, options: ResourceOperationContext = {}): Promise<ResourceMutationResult> {
     const ref = normalizeResourceRef(input);
     const result = await this.callProvider<ResourceMutationResult>(ref, "write", options, ref, content);
+    this.requireMutationAcknowledgement("write", ref, result, options);
     this.auditAllowed("write", result, options);
     this.emitChanged(result, options);
     return result;
@@ -79,6 +80,7 @@ export class ResourceIO {
     if (isWriteConflict(result)) {
       this.auditConflict("writeExpectedVersion", result, options);
     } else {
+      this.requireMutationAcknowledgement("writeExpectedVersion", ref, result, options);
       this.auditAllowed("writeExpectedVersion", result, options);
       this.emitChanged(result, options);
     }
@@ -221,6 +223,24 @@ export class ResourceIO {
       }
       throw err;
     }
+  }
+
+  requireMutationAcknowledgement(
+    operation: "write" | "writeExpectedVersion",
+    ref: ResourceRef,
+    result: unknown,
+    options: ResourceOperationContext,
+  ): void {
+    if (result && typeof result === "object" && (result as any).ok !== false
+      && typeof (result as any).resourceKey === "string"
+      && (result as any).resource && typeof (result as any).resource === "object"
+      && ((result as any).changeType === "created" || (result as any).changeType === "modified")) return;
+    const error = new ResourceIOError(`ResourceIO ${operation} was not acknowledged by the provider`, {
+      code: "resource_mutation_not_acknowledged",
+      status: 502,
+    });
+    this.auditDenied(operation, providerIdForResourceRef(ref), options, error);
+    throw error;
   }
 
   emitChanged(result: ResourceMutationResult, options: ResourceOperationContext): void {

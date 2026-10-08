@@ -60,6 +60,55 @@ describe("ResourceIO audit", () => {
     }));
   });
 
+  it("does not audit a failed provider write as allowed or emit a change event", async () => {
+    const audit = { record: vi.fn() };
+    const changed = vi.fn();
+    const provider = {
+      id: "local_fs" as const,
+      capabilities: () => ({ write: true, writeExpectedVersion: true }),
+      write: vi.fn(async () => ({ ok: false, error: "not persisted" })),
+      writeExpectedVersion: vi.fn(async () => ({ ok: false, conflict: false })),
+    };
+    const resourceIO = new ResourceIO({
+      // Deliberately violate the provider contract to exercise runtime fail-closed behavior.
+      providers: { local_fs: provider as any },
+      audit,
+      eventBus: { changed } as any,
+    });
+
+    const ref = { kind: "local-file" as const, path: "/repo/test.md" };
+    await expect(resourceIO.write(ref, "new data")).rejects.toMatchObject({
+      code: "resource_mutation_not_acknowledged",
+      status: 502,
+    });
+    await expect(resourceIO.writeExpectedVersion(ref, "new data", { mtimeMs: 1, size: 3 }))
+      .rejects.toMatchObject({ code: "resource_mutation_not_acknowledged", status: 502 });
+    expect(changed).not.toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalledTimes(2);
+    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: "denied",
+      operation: "write",
+      code: "resource_mutation_not_acknowledged",
+    }));
+    expect(audit.record).not.toHaveBeenCalledWith(expect.objectContaining({ outcome: "allowed" }));
+  });
+
+  it("rejects a provider's malformed successful write envelope without emitting events", async () => {
+    const changed = vi.fn();
+    const provider = {
+      id: "local_fs" as const,
+      capabilities: () => ({ write: true }),
+      write: vi.fn(async () => ({ ok: true })),
+    };
+    const resourceIO = new ResourceIO({
+      providers: { local_fs: provider as any },
+      eventBus: { changed } as any,
+    });
+    await expect(resourceIO.write({ kind: "local-file", path: "/repo/a.md" }, "data"))
+      .rejects.toMatchObject({ code: "resource_mutation_not_acknowledged" });
+    expect(changed).not.toHaveBeenCalled();
+  });
+
   it("records denied read-side operations with principal context", async () => {
     const audit = makeAuditSink();
     const resourceIO = new ResourceIO({

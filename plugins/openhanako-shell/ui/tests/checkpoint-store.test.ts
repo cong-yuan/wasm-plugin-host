@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -159,6 +159,55 @@ describe("CheckpointStore", () => {
     expect(fs.readFileSync(srcFile, "utf-8")).toBe("original content");
 
     fs.rmSync(srcDir, { recursive: true, force: true });
+  });
+
+  it("preserves the original file when the atomic replace fails, and removes temp files", async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-atomic-fail-"));
+    try {
+      const target = path.join(srcDir, "note.md");
+      fs.writeFileSync(target, "before backup");
+      const id = await store.save({
+        sessionPath: null,
+        tool: "edit",
+        filePath: target,
+        maxSizeKb: 1024,
+      });
+      fs.writeFileSync(target, "updated after backup");
+      const rename = vi.spyOn(fs, "renameSync").mockImplementation(() => {
+        throw new Error("replace failed");
+      });
+      try {
+        await expect(store.restore(id)).rejects.toThrow("replace failed");
+      } finally {
+        rename.mockRestore();
+      }
+      expect(fs.readFileSync(target, "utf-8")).toBe("updated after backup");
+      expect(fs.readdirSync(srcDir)).toEqual(["note.md"]);
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps original mode bits after an atomic restore", async () => {
+    if (process.platform === "win32") return;
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-mode-"));
+    try {
+      const target = path.join(srcDir, "secrets.txt");
+      fs.writeFileSync(target, "private");
+      fs.chmodSync(target, 0o600);
+      const id = await store.save({
+        sessionPath: null,
+        tool: "edit",
+        filePath: target,
+        maxSizeKb: 1024,
+      });
+      fs.writeFileSync(target, "changed");
+      await store.restore(id);
+      expect(fs.readFileSync(target, "utf-8")).toBe("private");
+      expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true });
+    }
   });
 
   it("restore recreates directory if deleted", async () => {
