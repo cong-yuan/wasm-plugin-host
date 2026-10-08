@@ -34,6 +34,74 @@ function fakeMcp(overrides: any = {}) {
 }
 
 describe("MCP first-class routes", () => {
+  it("exports a redacted connector configuration without runtime state or secrets", async () => {
+    const mcp = fakeMcp({
+      getState: vi.fn(() => ({
+        enabled: true,
+        connectors: [{
+          id: "github",
+          name: "GitHub",
+          description: "repo tools",
+          transport: "streamable-http",
+          url: "https://mcp.example.com",
+          command: "node",
+          args: ["server.js"],
+          cwd: "/tmp/mcp",
+          registryUrl: "https://registry.example.com",
+          timeout: 30,
+          enabled: true,
+          authType: "bearer",
+          authorizationToken: "********",
+          oauthClientId: "client-1",
+          oauthClientSecret: "********",
+          env: { TOKEN: "********" },
+          headers: { Authorization: "********" },
+          tools: [{ name: "secret_tool" }],
+          status: "running",
+          error: "",
+        }],
+      })),
+    });
+
+    const res = await createApp(mcp).request("/api/mcp/connectors/export");
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.schemaVersion).toBe(1);
+    expect(data.connectors).toEqual([{
+      id: "github",
+      name: "GitHub",
+      description: "repo tools",
+      transport: "streamable-http",
+      url: "https://mcp.example.com",
+      command: "node",
+      args: ["server.js"],
+      cwd: "/tmp/mcp",
+      registryUrl: "https://registry.example.com",
+      timeout: 30,
+      enabled: true,
+      authType: "bearer",
+      oauthClientId: "client-1",
+    }]);
+    expect(JSON.stringify(data)).not.toContain("authorizationToken");
+    expect(JSON.stringify(data)).not.toContain("oauthClientSecret");
+    expect(JSON.stringify(data)).not.toContain("TOKEN");
+    expect(JSON.stringify(data)).not.toContain("secret_tool");
+    expect(JSON.stringify(data)).not.toContain("running");
+  });
+
+  it("exports the same safe configuration through the legacy servers alias", async () => {
+    const mcp = fakeMcp({
+      getState: vi.fn(() => ({ connectors: [{ id: "acme", name: "Acme", transport: "stdio", command: "acme" }] })),
+    });
+    const res = await createApp(mcp).request("/api/mcp/servers/export");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      schemaVersion: 1,
+      connectors: [{ id: "acme", name: "Acme", transport: "stdio", command: "acme" }],
+    });
+  });
+
   it("serves runtime state at /api/mcp/state", async () => {
     const mcp = fakeMcp();
     const res = await createApp(mcp).request("/api/mcp/state");

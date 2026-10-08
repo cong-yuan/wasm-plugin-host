@@ -12,6 +12,7 @@ import {
   EMPTY_MCP_STATE,
   addMcpConnector,
   addMcpConnectorsBulk,
+  exportMcpConnectors,
   cancelMcpOAuth,
   loadMcpState,
   logoutMcpOAuth,
@@ -130,6 +131,21 @@ export function McpTab() {
     const results = await addMcpConnectorsBulk(connectors);
     await loadState();
     return results;
+  };
+
+  const exportConnectors = async () => {
+    try {
+      const data = await exportMcpConnectors();
+      const payload = JSON.stringify(data, null, 2);
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
+      await navigator.clipboard.writeText(payload);
+      showToast(t('settings.mcp.exportCopied'), 'success');
+    } catch (err: unknown) {
+      showToast(
+        t('settings.mcp.exportFailed') + ': ' + (err instanceof Error ? err.message : String(err)),
+        'error',
+      );
+    }
   };
 
   const connectorAction = (connectorId: string, action: 'start' | 'stop' | 'refresh-tools') =>
@@ -280,6 +296,14 @@ export function McpTab() {
             onClick={() => { setAddOpen(open => !open); setImportOpen(false); }}
           >
             {t('settings.mcp.addConnector')}
+          </button>
+          <button
+            className={styles['pv-add-form-btn']}
+            type="button"
+            onClick={exportConnectors}
+            disabled={loadingState}
+          >
+            {t('settings.mcp.exportJson')}
           </button>
           <button
             className={styles['pv-add-form-btn']}

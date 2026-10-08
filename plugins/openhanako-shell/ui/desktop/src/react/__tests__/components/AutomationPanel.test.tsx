@@ -45,6 +45,63 @@ describe('AutomationPanel', () => {
     vi.restoreAllMocks();
   });
 
+  it('runs a saved automation immediately and refreshes the task list', async () => {
+    let runCount = 0;
+    vi.mocked(hanaFetch).mockImplementation(async (url, options) => {
+      if (url === '/api/models') {
+        return new Response(JSON.stringify({ models: [] }), { status: 200 });
+      }
+      if (url === '/api/desk/cron' && options?.method === 'POST') {
+        const body = JSON.parse(String(options.body || '{}'));
+        if (body.action === 'run') {
+          runCount += 1;
+          return new Response(JSON.stringify({
+            ok: true,
+            status: 'success',
+            job: {
+              id: 'job-1',
+              label: 'Morning task',
+              type: 'cron',
+              schedule: '0 9 * * *',
+              enabled: true,
+              nextRunAt: '2026-10-09T01:00:00.000Z',
+              prompt: 'say hi',
+              actorAgentId: 'hanako',
+            },
+          }), { status: 200 });
+        }
+      }
+      return new Response(JSON.stringify({
+        jobs: [{
+          id: 'job-1',
+          label: 'Morning task',
+          type: 'cron',
+          schedule: '0 9 * * *',
+          enabled: true,
+          nextRunAt: '2026-10-09T01:00:00.000Z',
+          prompt: 'say hi',
+          actorAgentId: 'hanako',
+        }],
+      }), { status: 200 });
+    });
+
+    render(<AutomationPanel />);
+    const row = await screen.findByRole('button', { name: /Morning task/ });
+    fireEvent.click(row);
+    const runButton = await screen.findByRole('button', { name: 'automation.runNow' });
+    fireEvent.click(runButton);
+
+    await waitFor(() => {
+      expect(runCount).toBe(1);
+      expect(addToast).toHaveBeenCalledWith('automation.runSuccess', 'success');
+    });
+    expect(hanaFetch).toHaveBeenCalledWith('/api/desk/cron', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ action: 'run', id: 'job-1' }),
+      throwOnHttpError: false,
+    }));
+  });
+
   it('shows the structured POST error and keeps the panel usable', async () => {
     render(<AutomationPanel />);
     await waitFor(() => expect(hanaFetch).toHaveBeenCalledWith('/api/desk/cron', {

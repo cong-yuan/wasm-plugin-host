@@ -56,6 +56,101 @@ export function createCronScheduler({ cronStore, executeJob, abortJob, onJobDone
     _checkPromise = p;
     await p;
   }
+  async function executeWithTimeout(job) {
+    let timer;
+    try {
+      return await Promise.race([
+        executeJob(job),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            abortJob?.(job);
+            reject(new Error(`execution timeout (${formatTimeoutMs(effectiveExecutionTimeoutMs)})`));
+          }, effectiveExecutionTimeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Execute one persisted job immediately without changing its scheduled cursor.
+   * A manual run is an explicit user action, so it must not move the next
+   * scheduled occurrence or disable an `at` job. It still uses the same
+   * executor, timeout, schema guard and per-job lock as scheduled execution.
+   */
+  async function runJobNow(jobId, storeOverride = null) {
+    const runStore = storeOverride
+      || (typeof cronStore.captureCurrent === "function" ? cronStore.captureCurrent() : cronStore);
+    const job = typeof runStore.getJob === "function" ? runStore.getJob(jobId) : null;
+    if (!job) return { ok: false, status: "not_found", jobId };
+
+    const startedAt = new Date().toISOString();
+    if (Number.isInteger(job.schemaVersion) && job.schemaVersion !== AUTOMATION_SCHEMA_VERSION) {
+      runStore.logRun(job.id, {
+        status: "skipped",
+        startedAt,
+        finishedAt: startedAt,
+        reason: "unsupported_automation_schema",
+        schemaVersion: job.schemaVersion,
+        manual: true,
+      });
+      return {
+        ok: false,
+        status: "skipped",
+        reason: "unsupported_automation_schema",
+        schemaVersion: job.schemaVersion,
+        job,
+      };
+    }
+
+    try {
+      const executionResult = await executeWithTimeout(job);
+      const finishedAt = new Date().toISOString();
+      runStore.logRun(job.id, {
+        ...(executionResult && typeof executionResult === "object" && !Array.isArray(executionResult)
+          ? executionResult
+          : {}),
+        status: "success",
+        startedAt,
+        finishedAt,
+        manual: true,
+      });
+      return {
+        ok: true,
+        status: "success",
+        job,
+        ...(executionResult && typeof executionResult === "object" && !Array.isArray(executionResult)
+          ? executionResult
+          : {}),
+      };
+    } catch (err) {
+      const finishedAt = new Date().toISOString();
+      if (err?.skipped) {
+        runStore.logRun(job.id, {
+          status: "skipped",
+          startedAt,
+          finishedAt,
+          reason: err.message,
+          manual: true,
+        });
+        return { ok: false, status: "skipped", reason: err.message, job };
+      }
+      runStore.logRun(job.id, {
+        status: "error",
+        startedAt,
+        finishedAt,
+        error: err?.message || String(err),
+        manual: true,
+      });
+      return {
+        ok: false,
+        status: "error",
+        error: err?.message || String(err),
+        job,
+      };
+    }
+  }
 
   async function _doCheck() {
     try {
@@ -111,23 +206,7 @@ export function createCronScheduler({ cronStore, executeJob, abortJob, onJobDone
         const startedAt = new Date().toISOString();
 
         try {
-          let executionResult;
-          {
-            let timer;
-            try {
-              executionResult = await Promise.race([
-                executeJob(job),
-                new Promise((_, reject) => {
-                  timer = setTimeout(() => {
-                    abortJob?.(job);
-                    reject(new Error(`execution timeout (${formatTimeoutMs(effectiveExecutionTimeoutMs)})`));
-                  }, effectiveExecutionTimeoutMs);
-                }),
-              ]);
-            } finally {
-              clearTimeout(timer);
-            }
-          }
+          const executionResult = await executeWithTimeout(job);
           const finishedAt = new Date().toISOString();
 
           // 记录成功
@@ -211,5 +290,5 @@ export function createCronScheduler({ cronStore, executeJob, abortJob, onJobDone
     }
   }
 
-  return { start, stop, checkJobs };
+  return { start, stop, checkJobs, runJobNow };
 }

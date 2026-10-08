@@ -46,6 +46,8 @@ export function AutomationCard({
   onToggleEnabled,
   onRemove,
   onUpdate,
+  onRunNow,
+  running = false,
 }: {
   job: CronJob;
   availableModels: ModelOption[];
@@ -54,6 +56,8 @@ export function AutomationCard({
   onToggleEnabled: (id: string) => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, fields: Record<string, unknown>) => Promise<void> | void;
+  onRunNow: (id: string) => Promise<void> | void;
+  running?: boolean;
 }) {
   const t = window.t ?? ((p: string) => p);
   const agents = useStore(s => s.agents);
@@ -189,8 +193,9 @@ export function AutomationCard({
             </label>
           ) : null}
           <div className={styles.actions}>
+            <button className={styles.textButton} type="button" disabled={running} onClick={() => void onRunNow(job.id)}>{running ? t('automation.running') : t('automation.runNow')}</button>
             <button className={styles.textButton} type="button" disabled={!dirty} onClick={save}>{t('common.confirm')}</button>
-            <button className={`${styles.textButton} ${styles.dangerButton}`} type="button" onClick={() => onRemove(job.id)}>{t('automation.delete')}</button>
+            <button className={`${styles.textButton} ${styles.dangerButton}`} type="button" disabled={running} onClick={() => onRemove(job.id)}>{t('automation.delete')}</button>
           </div>
         </div>
       </Collapse>

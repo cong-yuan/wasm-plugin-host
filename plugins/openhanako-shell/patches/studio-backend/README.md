@@ -77,6 +77,8 @@ Checkpoint commands keep the checkpoint directory on the host and expose only sa
 
 The bridge validates `filePath` as absolute and `reason` as `edit-start` / `autosave-interval`; checkpoint IDs are restricted to a path-safe token. The host must additionally enforce the authenticated workspace/session scope before reading or writing checkpoint data.
 
+MCP connector configuration remains Hana-owned. `GET /api/mcp/connectors/export` (and legacy `/api/mcp/servers/export`) returns a schema-versioned, redacted configuration suitable for copy/import. Credentials, env/header values, runtime state, and discovered tools are intentionally omitted; credentials must be entered again after import.
+
 ResourceIO core commands receive logical resource references. `operationContext` is audit metadata only; host authorization must come from the authenticated plugin/session binding, not from `principal` or identity fields supplied by iframe JSON:
 
 - `resource_io_stat({ resource })` → ResourceIO stat result

@@ -70,6 +70,7 @@ export function AutomationPanel() {
   const [openJobs, setOpenJobs] = useState<Record<string, boolean>>({});
   const [addingManualJob, setAddingManualJob] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [runningJobIds, setRunningJobIds] = useState<Set<string>>(new Set());
 
   const loadData = useCallback(async () => {
     try {
@@ -137,6 +138,36 @@ export function AutomationPanel() {
     }
     await loadData();
   }, [addToast, loadData, t]);
+
+  const runJobNow = useCallback(async (jobId: string) => {
+    if (runningJobIds.has(jobId)) return;
+    setRunningJobIds(prev => new Set(prev).add(jobId));
+    try {
+      const res = await hanaFetch('/api/desk/cron', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'run', id: jobId }),
+        throwOnHttpError: false,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.status !== 'success') {
+        const detail = normalizeSessionRouteError(data).message || data?.error || data?.reason;
+        addToast(detail ? `${t('automation.runFailed')}: ${detail}` : t('automation.runFailed'), 'error');
+        return;
+      }
+      addToast(t('automation.runSuccess'), 'success');
+      await loadData();
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      addToast(`${t('automation.runFailed')}: ${detail}`, 'error');
+    } finally {
+      setRunningJobIds(prev => {
+        const next = new Set(prev);
+        next.delete(jobId);
+        return next;
+      });
+    }
+  }, [addToast, loadData, runningJobIds, t]);
 
   const addManualJob = useCallback(async () => {
     if (addingManualJob) return;
@@ -281,6 +312,8 @@ export function AutomationPanel() {
                       onToggleEnabled={toggleJob}
                       onRemove={removeJob}
                       onUpdate={updateJob}
+                      onRunNow={runJobNow}
+                      running={runningJobIds.has(job.id)}
                     />
                   ))}
                 </div>

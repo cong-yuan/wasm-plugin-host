@@ -46,6 +46,7 @@ describe("Scheduler studio cron", () => {
         start: vi.fn(),
         stop: vi.fn().mockResolvedValue(undefined),
         checkJobs: vi.fn(),
+        runJobNow: vi.fn(),
       };
       schedulers.push(scheduler);
       return scheduler;
@@ -71,6 +72,33 @@ describe("Scheduler studio cron", () => {
       expect(createCronSchedulerMock).toHaveBeenCalledTimes(1);
       expect(createCronSchedulerMock.mock.calls[0][0].cronStore).toBe(studioStore);
       expect(schedulers[0].start).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs a manual Studio cron job through the bound Studio store", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-scheduler-cron-manual-"));
+    try {
+      const store = { forStudio: vi.fn((studioId) => studioId === "studio-a" ? { id: "bound-store" } : null) };
+      const engine = {
+        agentsDir: path.join(root, "agents"),
+        agents: new Map(),
+        getStudioCronStore: () => store,
+        getHeartbeatMaster: () => false,
+      };
+      const scheduler = new Scheduler({ hub: { engine, eventBus: { emit: vi.fn() } } });
+      scheduler.start();
+
+      const cron = schedulers[0];
+      cron.runJobNow.mockResolvedValue({ ok: true, status: "success" });
+
+      await expect(scheduler.runCronJobNow("studio-a", "job-1")).resolves.toEqual({
+        ok: true,
+        status: "success",
+      });
+      expect(store.forStudio).toHaveBeenCalledWith("studio-a");
+      expect(cron.runJobNow).toHaveBeenCalledWith("job-1", { id: "bound-store" });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

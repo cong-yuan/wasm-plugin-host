@@ -38,6 +38,42 @@ export function createMcpRoute(engine) {
     return `<!doctype html><meta charset="utf-8"><title>${escapeHtml(title)}</title><body style="font-family:system-ui,-apple-system,sans-serif;padding:32px;line-height:1.5;color:#333;background:#faf8f2"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(body)}</p></body>`;
   }
 
+  sub.get("/connectors/export", async (c) => {
+    const rt = runtime();
+    if (!rt) return c.json({ error: "not initialized" }, 503);
+    try {
+      const state = rt.getState();
+      const connectors = Array.isArray(state?.connectors)
+        ? state.connectors.map(toExportableConnector)
+        : [];
+      return c.json({
+        schemaVersion: 1,
+        exportedAt: new Date().toISOString(),
+        connectors,
+      });
+    } catch (err) {
+      return c.json({ error: err?.message || "MCP connector export failed" }, 500);
+    }
+  });
+
+  sub.get("/servers/export", async (c) => {
+    const rt = runtime();
+    if (!rt) return c.json({ error: "not initialized" }, 503);
+    try {
+      const state = rt.getState();
+      const connectors = Array.isArray(state?.connectors)
+        ? state.connectors.map(toExportableConnector)
+        : [];
+      return c.json({
+        schemaVersion: 1,
+        exportedAt: new Date().toISOString(),
+        connectors,
+      });
+    } catch (err) {
+      return c.json({ error: err?.message || "MCP connector export failed" }, 500);
+    }
+  });
+
   sub.get("/state", currentState);
 
   // Grant one tool invocation for the rest of this session. The capability
@@ -384,6 +420,37 @@ export function createMcpRoute(engine) {
   // lookup that would now miss.
   app.route("/plugins/mcp", sub);
   return app;
+}
+
+function toExportableConnector(connector) {
+  const exportable = {};
+  const fields = [
+    "id",
+    "name",
+    "description",
+    "transport",
+    "url",
+    "command",
+    "args",
+    "cwd",
+    "registryUrl",
+    "timeout",
+    "enabled",
+    "authType",
+    "oauthClientId",
+    "permissionMode",
+    "toolPermissions",
+    "trustReadOnlyHint",
+    "pinnedTools",
+  ];
+  for (const field of fields) {
+    if (connector?.[field] !== undefined) {
+      exportable[field] = connector[field];
+    }
+  }
+  // Runtime state, discovered tools, and every secret are intentionally omitted.
+  // A config export is safe to paste/import; credentials must be re-entered.
+  return exportable;
 }
 
 function escapeHtml(value) {

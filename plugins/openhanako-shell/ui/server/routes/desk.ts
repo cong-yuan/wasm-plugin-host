@@ -1208,6 +1208,39 @@ export function createDeskRoute(engine, hub) {
         return c.json({ ok: true, job, jobs: store.listJobs() });
       }
 
+      case "run": {
+        if (!params.id) return c.json({ error: "id required" });
+        const scheduler = hub?.scheduler;
+        if (!scheduler || typeof scheduler.runCronJobNow !== "function") {
+          return deskRouteError(c, "cron_scheduler_unavailable", "Cron scheduler not initialized", 503);
+        }
+        let result;
+        try {
+          result = await scheduler.runCronJobNow(studioId, params.id);
+        } catch (err) {
+          if (err?.code === "cron_store_unavailable") {
+            return cronStoreRouteFailure(c, err);
+          }
+          if (err?.code === "cron_scheduler_unavailable") {
+            return deskRouteError(c, "cron_scheduler_unavailable", "Cron scheduler not initialized", 503);
+          }
+          return deskRouteError(c, "cron_run_failed", "Unable to run automation task", 500);
+        }
+        if (result?.status === "not_found") return c.json({ error: "not found" }, 404);
+        if (result?.status === "skipped") {
+          return c.json({ ok: false, status: "skipped", reason: result.reason, job: result.job }, 409);
+        }
+        if (result?.status === "error") {
+          return c.json({
+            ok: false,
+            status: "error",
+            error: result.error || "automation task failed",
+            job: result.job,
+          }, 500);
+        }
+        return c.json(result);
+      }
+
       case "update": {
         if (!params.id) return c.json({ error: "id required" });
         const { id, ...fields } = params;

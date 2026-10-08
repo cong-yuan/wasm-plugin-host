@@ -168,6 +168,53 @@ describe("cron-scheduler", () => {
     expect(done).toEqual([{ id: "job_3", result: { status: "skipped" } }]);
   });
 
+  it("手动立即执行成功时记录 manual run，但不推进 nextRunAt", async () => {
+    const originalNextRunAt = new Date(Date.now() + 3600_000).toISOString();
+    const job = {
+      id: "job_manual",
+      label: "手动任务",
+      enabled: false,
+      nextRunAt: originalNextRunAt,
+    };
+    const { store, calls } = createStore(job);
+    const scheduler = createCronScheduler({
+      cronStore: store,
+      executeJob: async () => ({ executorKind: "agent_session" }),
+    } as any);
+
+    const result = await scheduler.runJobNow(job.id);
+
+    expect(result).toMatchObject({ ok: true, status: "success", job });
+    expect(job.nextRunAt).toBe(originalNextRunAt);
+    expect(calls.marks).toEqual([]);
+    expect(calls.runs).toHaveLength(1);
+    expect(calls.runs[0].run).toMatchObject({
+      status: "success",
+      manual: true,
+      executorKind: "agent_session",
+    });
+  });
+
+  it("手动执行不存在任务时不调用 executor", async () => {
+    const executeJob = vi.fn();
+    const store = {
+      getJob: vi.fn(() => null),
+      logRun: vi.fn(),
+    };
+    const scheduler = createCronScheduler({
+      cronStore: store,
+      executeJob,
+    } as any);
+
+    await expect(scheduler.runJobNow("missing")).resolves.toEqual({
+      ok: false,
+      status: "not_found",
+      jobId: "missing",
+    });
+    expect(executeJob).not.toHaveBeenCalled();
+    expect(store.logRun).not.toHaveBeenCalled();
+  });
+
   it("执行超过上限时 abort job 并记录 timeout 错误", async () => {
     vi.useFakeTimers();
     vi.spyOn(console, "log").mockImplementation(() => {});

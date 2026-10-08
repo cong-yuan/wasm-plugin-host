@@ -74,6 +74,23 @@ export class Scheduler {
     return this._cronScheduler ?? null;
   }
 
+  /** 手动立即执行一个 Studio automation，不改变 nextRunAt。 */
+  async runCronJobNow(studioId, jobId) {
+    if (!this._cronScheduler || typeof this._cronScheduler.runJobNow !== "function") {
+      const err = new Error("Studio cron scheduler is not initialized");
+      (err as any).code = "cron_scheduler_unavailable";
+      throw err;
+    }
+    const service = this._engine.getStudioCronStore?.();
+    const store = typeof service?.forStudio === "function" ? service.forStudio(studioId) : null;
+    if (!store) {
+      const err = new Error("Studio cron store is unavailable");
+      (err as any).code = "cron_store_unavailable";
+      throw err;
+    }
+    return this._cronScheduler.runJobNow(jobId, store);
+  }
+
   // ──────────── 生命周期 ────────────
 
   start() {

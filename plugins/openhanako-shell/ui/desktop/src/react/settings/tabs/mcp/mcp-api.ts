@@ -52,6 +52,15 @@ export async function setMcpEnabled(enabled: boolean): Promise<void> {
   }
 }
 
+export async function exportMcpConnectors(): Promise<{
+  schemaVersion: number;
+  exportedAt: string;
+  connectors: McpConnectorInput[];
+}> {
+  const res = await hanaFetch('/api/mcp/connectors/export');
+  return jsonOrError(res);
+}
+
 export async function addMcpConnector(input: McpConnectorInput): Promise<void> {
   const res = await hanaFetch('/api/mcp/connectors', {
     method: 'POST',

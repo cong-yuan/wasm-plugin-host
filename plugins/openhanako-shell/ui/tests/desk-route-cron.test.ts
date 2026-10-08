@@ -30,6 +30,7 @@ function createBoundStoreService(store, studioId = TEST_STUDIO_ID) {
 function createApp(engine, {
   runtimeStudioId = TEST_STUDIO_ID,
   authPrincipal = null,
+  scheduler = null,
 } = {}) {
   return import("../server/routes/desk.ts").then(({ createDeskRoute }) => {
     const routeEngine = {
@@ -67,7 +68,9 @@ function createApp(engine, {
         await next();
       });
     }
-    app.route("/api", createDeskRoute(routeEngine, { scheduler: { getHeartbeat: vi.fn() } }));
+    app.route("/api", createDeskRoute(routeEngine, {
+      scheduler: scheduler || { getHeartbeat: vi.fn() },
+    }));
     return app;
   });
 }
@@ -79,6 +82,35 @@ describe("desk cron route", () => {
     for (const root of roots.splice(0)) {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("runs an automation immediately without resolving the focused agent", async () => {
+    const runCronJobNow = vi.fn(async (studioId, jobId) => ({
+      ok: true,
+      status: "success",
+      job: { id: jobId, studioId },
+    }));
+    const app = await createApp(
+      {
+        getStudioCronStore: () => createBoundStoreService({ studioId: TEST_STUDIO_ID }),
+        listAgents: () => [],
+      },
+      { scheduler: { getHeartbeat: vi.fn(), runCronJobNow } },
+    );
+
+    const res = await app.request("/api/desk/cron", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "run", id: "job-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      ok: true,
+      status: "success",
+      job: { id: "job-1", studioId: TEST_STUDIO_ID },
+    });
+    expect(runCronJobNow).toHaveBeenCalledWith(TEST_STUDIO_ID, "job-1");
   });
 
   it("lists the studio cron store independent of the focused agent", async () => {

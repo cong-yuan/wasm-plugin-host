@@ -89,8 +89,8 @@
 
 按实际需求逐项决定哪些继续由 Hana Server 提供、哪些映射到 Studio：
 
-- automation scheduler
-- MCP / connectors
+- automation scheduler — Hana-owned `StudioCronService` + Studio-wide scheduler now support CRUD, suggestion receipt, `agent_session` execution, stable-session scope, permission/revision guards, and UI `Run now`. Manual execution reuses the scheduler timeout/lock/schema guard, records `manual: true`, and does not advance `nextRunAt` or disable one-shot jobs.
+- MCP / connectors — connector configuration export is now available from the first-class and legacy routes. Exports intentionally contain only non-sensitive reusable config; tokens, secrets, env/header values, runtime status, and discovered tools are excluded. Settings exposes one-click JSON copy and credentials must be re-entered on import.
 - plugins / widgets / pages
 - channels / DM
 - memories
