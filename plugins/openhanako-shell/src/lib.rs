@@ -130,6 +130,14 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
         "set_llm_config",
         "fetch_llm_models",
         "sync_llm_adapters",
+        "upload_blob",
+        "send_message_with_images",
+        "complete_session_todos",
+        "fresh_compact_session",
+        "continue_deleted_agent_session",
+        "get_session_summary",
+        "get_session_folder_scope",
+        "patch_session_authorized_folders",
     ];
 
     let decl = serde_json::json!({
