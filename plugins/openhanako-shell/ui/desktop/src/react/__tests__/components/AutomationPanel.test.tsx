@@ -57,7 +57,7 @@ describe('AutomationPanel', () => {
           runCount += 1;
           return new Response(JSON.stringify({
             ok: true,
-            status: 'success',
+            status: 'dispatched',
             job: {
               id: 'job-1',
               label: 'Morning task',
@@ -93,7 +93,7 @@ describe('AutomationPanel', () => {
 
     await waitFor(() => {
       expect(runCount).toBe(1);
-      expect(addToast).toHaveBeenCalledWith('automation.runSuccess', 'success');
+      expect(addToast).toHaveBeenCalledWith('Task sent to Agent; turn completion is not yet confirmed', 'success');
     });
     expect(hanaFetch).toHaveBeenCalledWith('/api/desk/cron', expect.objectContaining({
       method: 'POST',

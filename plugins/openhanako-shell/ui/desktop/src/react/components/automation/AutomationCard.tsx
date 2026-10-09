@@ -151,7 +151,7 @@ export function AutomationCard({
             {job.lastError ? <span className={styles.meta} role="status"
               title={job.lastError}>⚠ {job.lastError.slice(0, 140)}</span> : null}
             {!job.lastError && job.lastRunAt ? <span className={styles.meta}
-              title={job.lastRunAt}>Last completed {new Date(job.lastRunAt).toLocaleString(undefined, { hour12: false })}</span> : null}
+              title={job.lastRunAt}>Last dispatched {new Date(job.lastRunAt).toLocaleString(undefined, { hour12: false })}</span> : null}
           </span>
         </span>
         <span className={styles.meta}>{job.enabled ? t('common.on') : t('common.off')}</span>

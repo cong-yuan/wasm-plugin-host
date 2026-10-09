@@ -270,7 +270,15 @@
 
 ### Phase C local reliability and migration (2026-10-09)
 
-- GitHub Actions CI no longer triggers on pushes or pull requests; development checks run via the local Mac Runner only. The workflow file retains a manual-only entry that is not invoked by these iterations.
+- GitHub Actions CI no longer triggers on pushes or pull requests; development checks run via the local Mac Runner only. The CI workflow file was removed entirely in the follow-up batch, including its manual trigger.
 - Studio's Stage B scheduler now records separate attempt/success/error statuses, isolates invalid schedules, consumes due one-shot tasks without stopping other jobs, holds per-job execution permits across async sends, resumes persisted Agents when dispatching, and syncs state before atomic replacement. Jobs claimed just before a hard crash may be skipped to avoid duplicate agent prompts; there is no exactly-once distributed guarantee.
 - The existing automation card exposes native error or completion status. A project migration preview/import interface moves legacy browser catalog and valid session assignments into an **empty** Studio native catalog after explicit two-click confirmation and CAS validation, retaining the original local browser copy.
 - See `PHASE_C_LOCAL_RELIABILITY.md` for verification, operational limits, and deployment checks.
+
+### Stage C follow-up: no GitHub CI, atomic dispatch and attachment safety (2026-10-09)
+
+- Removed `.github/workflows/ci.yml` **entirely**. There are no CI workflows in the plugin repo; this avoids even manual GitHub Actions test runs. Added executable `scripts/verify-openhanako-local.sh` to run plugin JS regression, React TypeScript and renderer production build, and optional sibling Studio Cargo + vendored runtime tests **on the local developer machine only**.
+- Studio scheduler now atomically reserves a due job under the same lock used by manual `run-now`, then commits the next-run time before spawning. This closes a race that could lose a due occurrence when manual execution stole the lock between claiming and dispatching. Reservation lifetime covers the eventual asynchronous dispatch; targeted Rust tests verify manual calls cannot steal or duplicate reserved runs.
+- Studio managed attachment upload and list/read/delete paths now reject symlinked `session-files` roots **and** per-session namespace directories. Uploaded files use `create_new` plus sync rather than replacing a preexisting path. Targeted native tests exercise simulated symlink directory escapes and preserved ordinary upload behavior.
+- Native automation `run-now` now accurately acknowledges **dispatch to Agent**, rather than claiming the whole model/tool turn completed; the automation UI shows `Last dispatched` and distinguishes an accepted dispatch from actual eventual task completion.
+- Remaining acceptance: verify installed macOS Studio's sandboxed shell, GUI restart and scheduled automation delivery on a real host. Rust/DOM tests are not a substitute for OS sandbox GUI acceptance or a model completion signal.

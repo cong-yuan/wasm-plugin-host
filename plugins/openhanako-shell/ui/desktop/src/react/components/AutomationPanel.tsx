@@ -150,12 +150,12 @@ export function AutomationPanel() {
         throwOnHttpError: false,
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.status !== 'success') {
+      if (!res.ok || data?.ok !== true || data?.status !== 'dispatched') {
         const detail = normalizeSessionRouteError(data).message || data?.error || data?.reason;
         addToast(detail ? `${t('automation.runFailed')}: ${detail}` : t('automation.runFailed'), 'error');
         return;
       }
-      addToast(t('automation.runSuccess'), 'success');
+      addToast('Task sent to Agent; turn completion is not yet confirmed', 'success');
       await loadData();
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);

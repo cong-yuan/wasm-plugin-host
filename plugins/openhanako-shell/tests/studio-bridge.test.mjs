@@ -2573,13 +2573,13 @@ check('host bridge correlates requestId',
     if (payload.action === 'update') job = { ...job, ...payload };
     return { ok: true, job: clone(job) };
   };
-  api.runAutomationJob = async (id) => ({ ok: true, status: 'success', jobId: id, agentId: 'agent-1' });
+  api.runAutomationJob = async (id) => ({ ok: true, status: 'dispatched', jobId: id, agentId: 'agent-1' });
   const schedulerList = await adapter.http('GET', '/api/desk/cron');
   const enabled = await adapter.http('POST', '/api/desk/cron', { action: 'toggle', id: job.id });
   const ran = await adapter.http('POST', '/api/desk/cron', { action: 'run', id: job.id });
   check('automation scheduler routes native enablement and run-now acknowledgments',
     schedulerList?.schedulerAvailable === true && schedulerList.jobs[0].enabled === false
-    && enabled.job.enabled === true && ran.status === 'success');
+    && enabled.job.enabled === true && ran.status === 'dispatched');
   failedScheduler = true;
   const failedJob = await adapter.http('POST', '/api/desk/cron', { action: 'toggle', id: job.id });
   check('scheduler cannot display enabled on a failed native mutation',

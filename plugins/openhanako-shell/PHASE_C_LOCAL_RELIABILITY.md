@@ -2,7 +2,7 @@
 
 ## GitHub CI policy
 
-The repository's `.github/workflows/ci.yml` no longer has `push` or `pull_request` triggers. It retains only an explicitly manual `workflow_dispatch` entry, which this development flow does not invoke. All compilation, regression tests, and renderer builds happen **on the connected Mac through tunl**, never on a GitHub-hosted Actions runner. Normal `git push origin master` will not automatically launch CI from this workflow. A separate Studio repository has no `.github/workflows` workflow configured at this point.
+The repository's `.github/workflows/ci.yml` **has been deleted entirely** at the user's request. This removes the previous manual `workflow_dispatch` entry as well as automated triggers. The `dsh-wasm-studio` repository has no GitHub Actions workflow configured either. All checks are run on the user's Mac through the connected tunl Runner, using `scripts/verify-openhanako-local.sh` (including the targeted local AutomationPanel Vitest regression), or the equivalent local commands. No GitHub-hosted CI jobs, remote runners or workflow dispatch actions are called.
 
 ## Changes
 
