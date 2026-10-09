@@ -35,6 +35,8 @@ return (function () {
     let workspaceQuery = '';
     let workspaceState = { kind: 'idle' };
     let workspaceEdit = null; // {name, subdir, version, content, original, create, saving, error}
+    let workspaceMutation = null; // native rename/move/safe-delete intent
+    let workspaceNotice = '';
     let latestData = { tools: [], plugins: [], runtime: { mode: 'unknown', sessions: [] } };
 
     // <div className={styles.workspaceHeader}> + workspaceTitle
@@ -118,7 +120,12 @@ return (function () {
 
     const editIsDirty = () => workspaceEdit && (workspaceEdit.create || workspaceEdit.content !== workspaceEdit.original);
     const guardEdit = () => {
-      if (!workspaceEdit) return false;
+      if (workspaceMutation?.busy) {
+        workspaceMutation.error = 'Native file operation is still in progress';
+        renderData(latestData);
+        return true;
+      }
+      if (!workspaceEdit) { workspaceMutation = null; return false; }
       if (!editIsDirty() && !workspaceEdit.saving) { workspaceEdit = null; return false; }
       workspaceEdit.error = workspaceEdit.saving
         ? 'A native save is in progress; finish before navigating'
@@ -194,7 +201,7 @@ return (function () {
     }
 
     // The default native workspace root is resolved and scoped by the host.
-    // This UI never passes absolute filesystem paths or performs mutations.
+    // Mutations require native capability, explicit version and scope-checked root coordinates.
     const validName = (name) => typeof name === 'string' && name.length > 0
       && name !== '.' && name !== '..' && !/[\/\\\0-\x1f]/.test(name);
     const workspaceCurrent = (version, subdir) => !disposed
@@ -228,6 +235,7 @@ return (function () {
     };
     const openWorkspaceFile = async (name) => {
       if (guardEdit()) return;
+      workspaceNotice = '';
       if (!validName(name) || !api.workbenchReadFileAvailable?.()) {
         workspaceState = { kind: 'unavailable', text: 'Native file reading is unsupported by this Studio host' };
         renderData(latestData);
@@ -283,12 +291,13 @@ return (function () {
     };
     const changeWorkspacePath = (subdir) => {
       if (guardEdit()) return;
+      workspaceNotice = '';
       workspaceVersion += 1;
       workspacePath = subdir;
       loadWorkspace();
     };
     const beginWorkspaceEdit = ({ name, content, fileVersion = null, create = false }) => {
-      if (!validName(name) || !api.workbenchWriteFileAvailable?.()
+      if (workspaceMutation || !validName(name) || !api.workbenchWriteFileAvailable?.()
         || (!create && (typeof fileVersion !== 'string' || !fileVersion.trim()))
         || typeof content !== 'string' || content.length > 256000) return false;
       workspaceEdit = {
@@ -340,6 +349,76 @@ return (function () {
         if (!disposed && workspaceEdit === edit && workspaceVersion === version) renderData(latestData);
       }
     };
+    const startWorkspaceMutation = (action) => {
+      if (workspaceState.kind !== 'preview' || workspaceMutation || workspaceEdit) return;
+      const { name, fileVersion } = workspaceState;
+      const supported = {
+        rename: api.workbenchRenameFileAvailable?.(),
+        move: api.workbenchMoveFileAvailable?.(),
+        safeDelete: api.workbenchDeleteFileAvailable?.(),
+      }[action];
+      if (!supported || !validName(name) || typeof fileVersion !== 'string' || !fileVersion.trim()) return;
+      workspaceMutation = { action, name, subdir: workspacePath, fileVersion,
+        value: action === 'rename' ? name : '', confirm: false, busy: false, error: '' };
+      renderData(latestData);
+    };
+    const cancelWorkspaceMutation = () => {
+      if (workspaceMutation?.busy) return;
+      workspaceMutation = null;
+      renderData(latestData);
+    };
+    const applyWorkspaceMutation = async () => {
+      const mutation = workspaceMutation;
+      if (!mutation || mutation.busy || disposed) return;
+      const value = mutation.value.trim();
+      if (mutation.action === 'rename' && (!validName(value) || value === mutation.name)) {
+        mutation.error = 'Enter a different valid filename';
+        renderData(latestData);
+        return;
+      }
+      if (mutation.action === 'move' && (value === mutation.subdir
+        || (value && !validRelativePath(value)))) {
+        mutation.error = 'Enter a different safe workspace-relative destination';
+        renderData(latestData);
+        return;
+      }
+      if (mutation.action === 'safeDelete' && !mutation.confirm) {
+        mutation.confirm = true;
+        mutation.error = 'Confirm moving this file into the native safe-delete trash';
+        renderData(latestData);
+        return;
+      }
+      const requestVersion = workspaceVersion;
+      mutation.busy = true;
+      mutation.error = 'Applying native file operation…';
+      renderData(latestData);
+      try {
+        const response = await adapter.http('POST', '/api/workbench/actions', {
+          action: mutation.action, rootId: 'default', subdir: mutation.subdir,
+          ...(mutation.action === 'rename' ? { oldName: mutation.name, newName: value }
+            : mutation.action === 'move' ? { name: mutation.name, destSubdir: value }
+              : { name: mutation.name }),
+          expectedVersion: mutation.fileVersion,
+        });
+        if (!response || response.ok !== true || response.action !== mutation.action
+          || typeof response.version !== 'string' || !response.version.trim()
+          || (mutation.action === 'safeDelete' && (typeof response.trashId !== 'string' || !response.trashId.trim()))) {
+          throw new Error(response?.error || 'Studio did not acknowledge the native file operation');
+        }
+        if (disposed || workspaceMutation !== mutation || workspaceVersion !== requestVersion) return;
+        workspaceMutation = null;
+        workspaceNotice = mutation.action === 'safeDelete' ? 'Moved file into native safe-delete trash'
+          : mutation.action === 'rename' ? `Renamed to ${value}` : `Moved file to workspace /${value}`;
+        loadWorkspace();
+      } catch (error) {
+        if (disposed || workspaceMutation !== mutation || workspaceVersion !== requestVersion) return;
+        mutation.error = error?.error || error?.message || 'Native file operation failed';
+        mutation.confirm = false;
+      } finally {
+        mutation.busy = false;
+        if (!disposed && workspaceMutation === mutation && workspaceVersion === requestVersion) renderData(latestData);
+      }
+    };
     const renderWorkspace = () => {
       clear(workspaceBrowser);
       const refresh = h('button', { class: 'railWorkspaceRefresh', type: 'button' }, 'Refresh');
@@ -368,6 +447,7 @@ return (function () {
       workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceHeader' },
         h('span', {}, `Workspace /${workspacePath}`), back, refresh));
       workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSearchRow' }, searchInput, searchButton));
+      if (workspaceNotice) workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSaveStatus', 'aria-live': 'polite' }, workspaceNotice));
       if (workspaceState.kind === 'files' && api.workbenchWriteFileAvailable?.()) {
         const newName = h('input', { class: 'railWorkspaceNewName', type: 'text',
           'aria-label': 'New workspace filename', placeholder: 'new-file.txt' });
@@ -415,6 +495,45 @@ return (function () {
         workspaceBrowser.appendChild(backToList);
         workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceName' }, workspaceState.name));
         if (workspaceState.saved) workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSaveStatus', 'aria-live': 'polite' }, 'File saved to Studio'));
+        if (!workspaceMutation && workspaceState.fileVersion) {
+          const actions = h('div', { class: 'railWorkspaceFileActions' });
+          for (const [action, label, available] of [
+            ['rename', 'Rename', api.workbenchRenameFileAvailable?.()],
+            ['move', 'Move', api.workbenchMoveFileAvailable?.()],
+            ['safeDelete', 'Safe delete', api.workbenchDeleteFileAvailable?.()],
+          ]) {
+            if (!available) continue;
+            const button = h('button', { class: 'railWorkspaceMutationStart', type: 'button' }, label);
+            button.onclick = () => startWorkspaceMutation(action);
+            actions.appendChild(button);
+          }
+          workspaceBrowser.appendChild(actions);
+        }
+        if (workspaceMutation) {
+          const mutation = workspaceMutation;
+          const controls = h('div', { class: 'railWorkspaceMutationPanel' });
+          controls.appendChild(h('div', { class: 'railWorkspaceName' },
+            mutation.action === 'safeDelete' ? `Move ${mutation.name} to trash?` : `${mutation.action} ${mutation.name}`));
+          if (mutation.action !== 'safeDelete') {
+            const field = h('input', { class: 'railWorkspaceMutationInput', type: 'text',
+              'aria-label': mutation.action === 'rename' ? 'New filename' : 'Destination subdirectory' });
+            field.value = mutation.value;
+            field.disabled = mutation.busy;
+            field.oninput = () => { mutation.value = String(field.value || ''); };
+            controls.appendChild(field);
+          }
+          const apply = h('button', { class: 'railWorkspaceMutationApply', type: 'button' },
+            mutation.action === 'safeDelete' && mutation.confirm ? 'Confirm safe delete' :
+              mutation.action === 'rename' ? 'Apply rename' : mutation.action === 'move' ? 'Move file' : 'Safe delete');
+          apply.disabled = mutation.busy;
+          apply.onclick = applyWorkspaceMutation;
+          const cancel = h('button', { class: 'railWorkspaceMutationCancel', type: 'button' }, 'Cancel');
+          cancel.disabled = mutation.busy;
+          cancel.onclick = cancelWorkspaceMutation;
+          controls.appendChild(h('div', { class: 'railWorkspaceEditorActions' }, apply, cancel));
+          if (mutation.error) controls.appendChild(h('div', { class: 'railWorkspaceSaveStatus', 'aria-live': 'polite' }, mutation.error));
+          workspaceBrowser.appendChild(controls);
+        }
         if (api.workbenchWriteFileAvailable?.() && workspaceState.fileVersion && workspaceState.content.length <= 256000) {
           const editButton = h('button', { class: 'railWorkspaceEditButton', type: 'button' }, 'Edit text');
           editButton.onclick = () => beginWorkspaceEdit(workspaceState);
@@ -569,7 +688,7 @@ return (function () {
     function update(data) {
       latestData = data || latestData;
       // Runtime polls must not replace a focused native textarea mid-edit.
-      if (state.tab === 'workspace' && workspaceState.kind === 'edit') return;
+      if (state.tab === 'workspace' && (workspaceState.kind === 'edit' || workspaceMutation)) return;
       renderData(latestData);
     }
 

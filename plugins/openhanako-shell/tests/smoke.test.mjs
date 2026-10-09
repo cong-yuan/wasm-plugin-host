@@ -2757,6 +2757,107 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.workbenchWriteFileAvailable = oldWrite;
 }
 
+// Native workspace rename, scoped move and native safe trash require
+// expected versions and do not apply optimistic updates on backend errors.
+{
+  const railModule = studio.require('panels/rail');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const flags = ['workbenchListFilesAvailable', 'workbenchReadFileAvailable',
+    'workbenchRenameFileAvailable', 'workbenchMoveFileAvailable', 'workbenchDeleteFileAvailable'];
+  const originals = flags.map((name) => api[name]);
+  flags.forEach((name) => { api[name] = () => true; });
+  const calls = [];
+  let failMutation = false;
+  let holdMutation = false;
+  let finishNative = null;
+  adapter.http = async (method, path, body) => {
+    if (path.startsWith('/api/workbench/files'))
+      return { rootId: 'default', subdir: '', files: [{ name: 'sample.txt', isDir: false }] };
+    if (path.startsWith('/api/workbench/content'))
+      return { __httpStatus: 200, __httpHeaders: { 'Content-Type': 'text/plain', 'X-Hana-File-Version': 'r1' }, __httpBody: 'Text' };
+    if (path === '/api/workbench/actions') {
+      calls.push(body);
+      if (holdMutation) return new Promise((resolve) => { finishNative = resolve; });
+      return failMutation ? { ok: false, error: 'native conflict' }
+        : { ok: true, action: body.action, version: 'r2', trashId: 'trash-42' };
+    }
+    return oldHttp(method, path, body);
+  };
+  const rail = railModule.render();
+  const browse = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    rail.root.querySelector('.railWorkspaceFile')?.fire('click');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+  await browse();
+  const action = (label) => rail.root.querySelectorAll('.railWorkspaceMutationStart')
+    .find((button) => button.textContent === label)?.fire('click');
+  action('Rename');
+  const renameInput = rail.root.querySelector('.railWorkspaceMutationInput');
+  renameInput.value = 'renamed.txt';
+  renameInput.fire('input');
+  failMutation = true;
+  rail.root.querySelector('.railWorkspaceMutationApply')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('native rename conflict retains form and original revision',
+    calls.length === 1 && calls[0].action === 'rename'
+    && calls[0].oldName === 'sample.txt' && calls[0].newName === 'renamed.txt'
+    && calls[0].expectedVersion === 'r1'
+    && /native conflict/.test(rail.root.textContent || ''));
+  failMutation = false;
+  rail.root.querySelector('.railWorkspaceMutationApply')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('acknowledged rename returns to file listing', calls.length === 2
+    && /Renamed to renamed.txt/.test(rail.root.textContent || ''));
+  await browse();
+  action('Move');
+  const moveInput = rail.root.querySelector('.railWorkspaceMutationInput');
+  moveInput.value = '../other';
+  moveInput.fire('input');
+  rail.root.querySelector('.railWorkspaceMutationApply')?.fire('click');
+  check('workspace move refuses traversal before native call',
+    calls.length === 2 && /safe workspace-relative/.test(rail.root.textContent || ''));
+  const safeMove = rail.root.querySelector('.railWorkspaceMutationInput');
+  safeMove.value = 'docs/archive';
+  safeMove.fire('input');
+  rail.root.querySelector('.railWorkspaceMutationApply')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('workspace move delegates relative path and version',
+    calls.length === 3 && calls[2].action === 'move' && calls[2].destSubdir === 'docs/archive'
+    && calls[2].expectedVersion === 'r1');
+  await browse();
+  action('Safe delete');
+  rail.root.querySelector('.railWorkspaceMutationApply')?.fire('click');
+  check('safe delete first click does not contact backend',
+    calls.length === 3 && /Confirm safe delete/.test(rail.root.textContent || ''));
+  rail.root.querySelector('.railWorkspaceMutationApply')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('safe delete goes through acknowledged native trash',
+    calls.length === 4 && calls[3].action === 'safeDelete'
+    && calls[3].expectedVersion === 'r1'
+    && /native safe-delete trash/.test(rail.root.textContent || ''));
+  await browse();
+  action('Safe delete');
+  rail.root.querySelector('.railWorkspaceMutationApply')?.fire('click');
+  holdMutation = true;
+  rail.root.querySelector('.railWorkspaceMutationApply')?.fire('click');
+  await Promise.resolve();
+  rail.root.querySelector('.railWorkspaceMutationApply')?.fire('click');
+  rail.root.querySelectorAll('.tab')[0]?.fire('click');
+  check('pending native trash prevents duplicate call and tab navigation',
+    calls.length === 5 && rail.root.querySelector('.railWorkspaceMutationCancel')?.disabled === true
+    && rail.root.querySelector('.railWorkspaceBrowser')?.style.display !== 'none');
+  finishNative?.({ ok: true, action: 'safeDelete', version: 'r2', trashId: 'trash-43' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  holdMutation = false;
+  check('pending native trash resumes after confirmed acknowledgement',
+    /native safe-delete trash/.test(rail.root.textContent || ''));
+  rail.dispose();
+  adapter.http = oldHttp;
+  flags.forEach((name, index) => { api[name] = originals[index]; });
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));

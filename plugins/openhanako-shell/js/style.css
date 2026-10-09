@@ -11857,3 +11857,14 @@ html[data-platform="linux"] .onboarding {
 .railWorkspaceCreate:disabled, .railWorkspaceEditButton:disabled, .railWorkspaceSave:disabled, .railWorkspaceDiscard:disabled { opacity: 0.45; cursor: not-allowed; }
 .railWorkspaceEditor { display: block; width: 100%; min-height: 180px; box-sizing: border-box; resize: vertical; font: 11px/1.5 monospace; background: transparent; color: var(--text-primary); border: 1px solid rgba(0,0,0,0.15); border-radius: 6px; padding: 6px; }
 .railWorkspaceSaveStatus { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
+
+/* Explicit native workspace file move/rename/trash actions. */
+.railWorkspaceFileActions, .railWorkspaceMutationPanel { display: flex; flex-wrap: wrap; gap: 5px; }
+.railWorkspaceMutationPanel { flex-direction: column; }
+.railWorkspaceMutationStart, .railWorkspaceMutationApply, .railWorkspaceMutationCancel {
+    border: 0; border-radius: 5px; padding: 5px 7px; font: inherit;
+    font-size: 11px; color: var(--text-primary); background: rgba(0,0,0,0.06); cursor: pointer;
+}
+.railWorkspaceMutationStart:hover, .railWorkspaceMutationApply:hover, .railWorkspaceMutationCancel:hover { background: rgba(0,0,0,0.1); }
+.railWorkspaceMutationStart:disabled, .railWorkspaceMutationApply:disabled, .railWorkspaceMutationCancel:disabled { opacity: 0.45; cursor: not-allowed; }
+.railWorkspaceMutationInput { min-width: 0; box-sizing: border-box; width: 100%; border: 1px solid rgba(0,0,0,0.15); border-radius: 5px; padding: 5px; font: inherit; font-size: 11px; color: var(--text-primary); background: transparent; }
