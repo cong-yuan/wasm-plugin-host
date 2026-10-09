@@ -16,6 +16,7 @@ echo '[local] Automation React component regression'
 (cd "$PLUGIN/ui" && ./node_modules/.bin/vitest run \
   desktop/src/react/__tests__/components/AutomationPanel.test.tsx \
   desktop/src/react/components/chat/__tests__/TrajectoryView.test.tsx \
+  desktop/src/react/components/chat/__tests__/SessionTodoPeek.test.tsx \
   desktop/src/react/components/app/__tests__/ChatPage.trajectory.test.tsx)
 echo '[local] OpenHanako TypeScript'
 npm --prefix "$PLUGIN/ui" run typecheck

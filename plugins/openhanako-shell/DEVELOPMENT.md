@@ -311,3 +311,9 @@
 - New Studio native `session_trajectory` command projects true persisted/live `SessionEvent` seq/time/type/turn/step, tool calls/results, output/usage, paired durations and timestamp-derived TTFT/decode metrics (if recorded), rejecting invented metrics and omitting embedded base64 payloads. New OpenHanako native bridge route is fail-closed for old hosts. Initial React/bridge/native tests cover the end-to-end contracts.
 - Exact source paths, behavior and release caveats: [`TRAJECTORY_NATIVE_VIEW.md`](TRAJECTORY_NATIVE_VIEW.md). The earlier `TURN_DETAILS_DESIGN.md` remains a **different** compact Chat mode and is not this Trajectory feature. GUI desktop acceptance and optional sophisticated zoom/virtualization/subtool views remain future work.
 - Local-only verification: `scripts/verify-openhanako-local.sh` includes all new Trajectory-focused React tests and Studio Rust tests. **No GitHub CI**.
+
+### Repair: clickable trajectory tabs and restored native checklist (2026-10-09)
+
+- Resolved the original chat `.sessionShell` absolute-cover pointer interception by placing a small OpenHanako-styled, positioned Chat/Trajectory switch above the session canvas. Trajectory is an independently positioned panel, and the old chat scroll/composer layout is unchanged. The switch uses existing design tokens and supports keyboard access.
+- Restored a session-scoped top-right checklist peek and native `session_todos` persisted TodoWrite snapshot with live delta updates. The existing right Workspace todo card remains; both use the same keyed `todosBySession` state and completion command.
+- Rationale, regression paths and testing: [`UI_TRAJECTORY_TODO_REPAIR.md`](UI_TRAJECTORY_TODO_REPAIR.md). No GitHub CI.

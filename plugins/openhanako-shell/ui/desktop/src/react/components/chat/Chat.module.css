@@ -28,6 +28,31 @@
     pointer-events: none;
 }
 
+/* Inside ChatPage's view header, the segmented tabs occupy the center and
+   the todo list occupies the right. Keep the runtime indicator on the left
+   instead of obscuring the trajectory tab and its pointer hit target. */
+:global(.chat-area.has-panels[data-conversation-views="true"]) .bridgeStatus {
+    left: var(--space-16);
+    top: var(--space-16);
+    z-index: 28;
+    transform: none;
+    max-width: min(34%, 280px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+@media(max-width:680px){
+    :global(.chat-area.has-panels[data-conversation-views="true"]) .bridgeStatus-connected {
+        display: none;
+    }
+    :global(.chat-area.has-panels[data-conversation-views="true"]) .bridgeStatus-error,
+    :global(.chat-area.has-panels[data-conversation-views="true"]) .bridgeStatus-pending,
+    :global(.chat-area.has-panels[data-conversation-views="true"]) .bridgeStatus-streaming {
+        top: 55px;
+        max-width: min(85%, 360px);
+    }
+}
+
 .bridgeStatus-connected {
     opacity: 0.68;
 }

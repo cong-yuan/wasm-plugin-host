@@ -2672,6 +2672,34 @@ check('host bridge correlates requestId',
   api.getTrajectory=previousTrajectory;
 }
 
+// TodoWrite persists as a standalone native event, not necessarily a tool call.
+// Hydration must not erase a checklist when no ToolCall is present.
+{
+  const originalTranscript=api.transcript;
+  const originalTodoAvailable=api.sessionTodosAvailable;
+  const originalTodoGetter=api.getSessionTodos;
+  const originalSessions=api.sessions;
+  api.sessions=async()=>[{id:'native-todos',live:true,title:'Native todos'}];
+  api.transcript=async()=>[{role:'user',text:'List steps',tool_calls:[],tool_results:[]}];
+  api.sessionTodosAvailable=()=>true;
+  api.getSessionTodos=async(agentId)=>({ok:true,source:'session-event',revision:7,
+    todos:[{content:'Run tests',activeForm:'Running tests',status:'in_progress'}]});
+  const native=await adapter.http('GET','/api/sessions/messages?sessionId=native-todos');
+  check('native TodoWrite survives hydration without a transcript ToolCall',
+    native?.todos?.length===1 && native.todos[0].status==='in_progress');
+  api.getSessionTodos=async()=>({ok:true,source:'session-event',revision:8,todos:[]});
+  const cleared=await adapter.http('GET','/api/sessions/messages?sessionId=native-todos');
+  check('explicit cleared native todo snapshot remains cleared',
+    Array.isArray(cleared.todos)&&cleared.todos.length===0);
+  api.sessionTodosAvailable=()=>false;
+  const legacy=await adapter.http('GET','/api/sessions/messages?sessionId=native-todos');
+  check('older native Studio host keeps an empty compatible fallback',Array.isArray(legacy.todos));
+  api.transcript=originalTranscript;
+  api.sessionTodosAvailable=originalTodoAvailable;
+  api.getSessionTodos=originalTodoGetter;
+  api.sessions=originalSessions;
+}
+
 detach();
 check('detach removes the message listener', messageHandlers.length === 0);
 

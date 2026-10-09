@@ -55,3 +55,10 @@
     color: var(--text);
     background: var(--overlay-subtle);
 }
+
+/* In ChatPage, its own view switch and checklist occupy the top 50px.
+   Move in-chat Find below them; the preview find box remains unchanged. */
+:global(.chat-area.has-panels[data-conversation-views="true"]) .findBox {
+    top: 59px;
+    z-index: 36;
+}

@@ -581,6 +581,19 @@ return (function () {
     const before = await readTranscript(agentId);
     const beforeCount = before.length;
     const state = { text: '', reasoning: '', thinking: false, tools: new Map() };
+    let latestTodoRevision = null;
+    const pollTodos = async () => {
+      if (!nativeCommandAvailable('session_todos')) return;
+      try {
+        const snapshot=await invokeNative('session_todos',{agentId});
+        if (!snapshot || snapshot.ok !== true || snapshot.source !== 'session-event'
+          || !Array.isArray(snapshot.todos) || !Number.isInteger(snapshot.revision)) return;
+        if (snapshot.revision !== latestTodoRevision) {
+          latestTodoRevision=snapshot.revision;
+          onProgress({kind:'todo_update',todos:snapshot.todos});
+        }
+      }catch (_) { /* old Studio and in-flight session races are nonfatal */ }
+    };
     let stopped = false;
 
     // Primary path: Studio push (assistant/chunk → studio://chat-partial).
@@ -612,6 +625,9 @@ return (function () {
     };
 
     const pollOnce = async () => {
+      // Session TodoWrite is a native event, not necessarily an assistant
+      // message. Poll even when no transcript rows were appended yet.
+      await pollTodos();
       if (!listenOk) await pollLivePartial();
       const rows = await readTranscript(agentId);
       // ONLY consider assistants appended after this turn started.
@@ -841,6 +857,8 @@ return (function () {
         mimeType: mimeType || null,
       });
     },
+    sessionTodosAvailable: () => nativeCommandAvailable('session_todos'),
+    getSessionTodos: async (agentId) => invokeNative('session_todos', {agentId}),
     completeSessionTodosAvailable: () => nativeCommandAvailable('complete_session_todos'),
     completeSessionTodos: async (agentId) => {
       if (!tauri.available()) return null;

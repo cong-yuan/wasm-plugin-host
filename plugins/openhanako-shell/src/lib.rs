@@ -112,6 +112,7 @@ pub extern "C" fn plugin_describe(out: i32, cap: i32) -> i64 {
         "list_agents",
         "transcript",
         "session_trajectory",
+        "session_todos",
         "chat_partial",
         "send_message",
         "studio_status",

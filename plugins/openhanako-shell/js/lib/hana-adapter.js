@@ -3770,10 +3770,20 @@ return (function () {
       const liveId = await ensureLive(sessionId);
       const rows = await api.transcript(liveId);
       const results = toolResultsFromTranscript(rows);
+      let todos = todosFromTranscript(rows,results);
+      if (api.sessionTodosAvailable?.()) {
+        try {
+          const state=await api.getSessionTodos(liveId);
+          if (state?.ok === true && state.source === 'session-event'
+            && Array.isArray(state.todos)) todos=state.todos;
+        }catch (error) {
+          if (error?.code !== 'capability_unavailable') throw error;
+        }
+      }
       return {
         messages: historyMessages(rows, results),
         blocks: [],
-        todos: todosFromTranscript(rows, results),
+        todos,
         sessionFiles: [],
         hasMore: false,
         revision: 'studio-' + liveId,
@@ -4046,6 +4056,9 @@ return (function () {
                 sessionPath: livePath,
                 segments: Array.isArray(progress.segments) ? progress.segments : [],
               });
+            } else if (kind === 'todo_update') {
+              push({type:'todo_update',sessionId:liveId,sessionPath:livePath,
+                todos:Array.isArray(progress.todos)?progress.todos:[]});
             } else if (kind === 'tool_start') {
               push({
                 type: 'tool_start',
