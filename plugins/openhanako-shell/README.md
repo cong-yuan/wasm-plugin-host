@@ -1,5 +1,7 @@
 # openhanako-shell
 
+> **当前开发/维护入口（2026-10-09）：** 请先看 [`DEVELOPMENT.md`](DEVELOPMENT.md) 的最新版状态和 [`OPEN_ISSUES.md`](OPEN_ISSUES.md) 的未闭环任务。本 README 下方的命令表包含早期垂直切片的历史契约，不能据此判断新版 Studio 是否已有 Agent 控制、持久化项目和调度等命令。所有测试只在本机执行，不使用 GitHub CI。运行根目录的 `scripts/verify-openhanako-local.sh` 可覆盖 Studio Rust 单元/集成测试与插件主要回归。
+
 Studio 启动窗里嵌 **真实 openhanako 前端**（iframe），并声明 WASM 槽位表面。聊天垂直切片走父页面里的 Tauri agent 命令：iframe 跨源，不能自己 `invoke`。
 
 ## 架构

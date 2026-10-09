@@ -23,6 +23,8 @@ if [[ -f "$STUDIO_ROOT/src-tauri/Cargo.toml" ]]; then
   echo '[local] Studio host compile and unit tests'
   cargo check --manifest-path "$STUDIO_ROOT/src-tauri/Cargo.toml" --all-targets
   cargo test --manifest-path "$STUDIO_ROOT/src-tauri/Cargo.toml" --lib
+  echo '[local] Studio integration: sessions, plugin tools, approvals and restart'
+  cargo test --manifest-path "$STUDIO_ROOT/src-tauri/Cargo.toml" --test session_branch --test studio -- --test-threads=2
   echo '[local] Vendored dsh-rs unit tests'
   cargo test --manifest-path "$STUDIO_ROOT/vendor/dsh-rs/Cargo.toml" --lib
 else

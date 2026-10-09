@@ -2,18 +2,16 @@
 
 > 目标：把 OpenHanako 的核心聊天体验可靠地接到 Studio backend。原则是优先接真实能力；底层没有的能力必须 fail-closed，不能用“假成功”掩盖缺口。
 
-## 当前状态
+## 当前状态（2026-10-09，已按当前 Studio 源码复核）
 
-已经完成的主链路：
+**请先阅读 [`OPEN_ISSUES.md`](OPEN_ISSUES.md)**，它是当前未闭环任务和验收标准的权威清单。下方 Phase 1–5 及其附录保留为**历史实施记录**；其中“当前没有命令”“无 scheduler”“shell 未限制”等表述指当时构建状态，不能直接作为最新版 Studio 能力表。
 
-- 会话列表 / 新建 / 切换 / 恢复
-- 流式 thinking / text / tool 事件
-- 模型列表、默认模型与会话内模型切换
-- archive / restore / rename / delete
-- pin / pin-order / session projects（当前为本地持久化；catalog project 已支持 workspacePath 映射）
-- 用户资料、appearance、sidebar UI、quick chat、notifications（当前为本地持久化）
-- automation 草稿 CRUD；Studio 无 scheduler 时明确拒绝启用
-- 权限模式在 Studio 无底层控制命令时 fail-closed 到 `ask`
+- **核心聊天与会话**：会话列表/新建/切换/恢复、thinking/text/tool 流式事件、模型切换、retry/fork、archive/restore/rename/delete、会话搜索、摘要、compact、TODO、会话授权目录已接入并有自动化测试。
+- **原生 Agent 控制（Stage A）**：当前宿主提供 thinking 控制（限兼容模型）、`ask/read_only/operate/auto` 的工具边界、明确审批/拒绝、Agent 配置 CAS、主 Agent 选择和显式开关的 Memory。旧版宿主仍需能力协商，不能静默假成功。
+- **原生项目及自动化（Stage B/C）**：Studio 持久化项目目录和会话归属；自动化可创建禁用草稿、启用后按 `at/every/cron` 调度，保存派发/失败/中断状态。**调度仅在 Studio 进程运行时工作，`dispatched` 不等于 Agent 工作完成**；旧浏览器目录只能显式导入空原生目录。
+- **文件/附件**：Workbench 增删改查、File History、Checkpoints、ResourceIO 核心请求命令及 Unix/macOS 上基于目录描述符的托管附件读写/删除已实现。ResourceIO watch/ticket 等更广扩展并非全部 Studio 原生命令。
+- **局部未接线**：独立手写 Shell 的自动化入口、欢迎页 Memory 和权限模式入口仍被禁用；Hana 的 MCP/Channels/Browser/媒体等完整接口仍依赖完整 Hana Server，不能宣称 Studio 原生覆盖。历史流式工具交替顺序和断线恢复仍需闭环。
+- **验证**：本机 `scripts/verify-openhanako-local.sh` 包含插件 JavaScript、目标 React 测试、TypeScript、Renderer 构建、Studio Rust 单元与 `session_branch`/`studio` 集成测试及 vendored dsh-rs 测试。**不使用 GitHub CI**。真实桌面 GUI / macOS `sandbox-exec` 允许执行路径仍需物理验收。
 
 ## Phase 1 — Core Chat Completion
 
@@ -28,7 +26,7 @@
    - Studio `fork_session` 按目标 turn 的稳定事件边界创建真实 child session；返回新的 `sessionId/sessionPath`。
    - Studio `retry_session_turn` 在 idle session 上定位目标 turn，保留目标前缀、重建同一 session id，再提交原始或编辑后的 user input；busy / 非法 entry / role 不匹配均 fail closed。
    - OpenHanako 侧 `tests/studio-bridge.test.mjs` 已覆盖 retry/fork command 投影，UI `message-turn-actions` 已在 retry 后重新 hydrate authoritative transcript。
-   - 宿主已有 `src-tauri/tests/session_branch.rs` 专门覆盖 branch 语义；当前开发机 shell 缺少 `cargo`，因此本轮无法重新执行宿主 Rust test，环境恢复后应补跑 `cargo test --test session_branch`。
+   - 宿主已有 `src-tauri/tests/session_branch.rs` 专门覆盖 branch 语义；当时的 shell 没有 `cargo`；现已通过本机 Rust 工具链运行 `session_branch` 集成测试。
 
 2. **Fresh compact / cleanup / todo complete** — P1 / 部分完成
    - `/api/sessions/cleanup`：已按本地归档元数据的 `archivedAt` + `maxAgeDays` 选择候选，并通过真实 `dispose_agent` 永久删除；返回实际 `deleted/failed`。
@@ -48,7 +46,7 @@
 
 - `/api/preferences/models`：GET 读取 Studio `get_llm_config` 的当前 provider/model 作为 utility fallback；utility_large / vision / vision_enabled / search provider 已有受校验的本地 overlay 持久化，刷新后可恢复；secret API key 仍不落 localStorage。
 - provider model metadata：`/api/providers/:provider/models/:model` 的 PUT/PATCH/DELETE 已从 soft-ack 改为真实 local overlay 写入/删除，并在 provider config、discovered-models 两条读取链路回显。
-- `/api/session-thinking-level`：已从固定 `off` 改为显式 `medium + locked + capability_unavailable`，避免 UI 误以为 Studio 支持切换；宿主补真实 session thinking 原语后再接。
+- `/api/session-thinking-level`：早期版本固定返回 `medium + locked`；最新版 Stage A 使用原生 session thinking 控制并按模型是否支持 reasoning 做能力锁定，旧宿主仍 fail-closed。
 - `/api/upload-blob`：Studio 已补真实 `upload_blob` 宿主命令；base64 bytes 由 Tauri host 落到 `session-files/<sessionId>`（无 session 时进入隔离的 `pending` namespace），20 MiB 上限、session id 校验、文件名净化；普通附件继续以可信 `fileId → dest` 路径上下文交给 agent。`openhanako-shell` 的 plugin capability registry 现在也显式声明 upload / image / compaction / todo / summary / folder-scope 全套 native commands，不再出现 API 已接、宿主 capability allowlist 漏掉导致实际调用被拒的漂移。
 - Native image path：桌面提交的 `images[]` 不再只停留在 WebSocket payload；Studio 新增 `send_message_with_images`，把图片转成持久化的 `ContentBlock::Image { url: data:, detail }`，OpenAI-compatible adapter 映射为原生 `image_url` content block。session JSONL 自包含图片数据，避免依赖本机临时路径。
 - `/api/capabilities`：UI 可读取真实 `uploadBlob` / `sessionTodoMutation` / `thinkingLevel` 等 capability；Studio host 更新后 uploadBlob 与 todo mutation 会开放，旧/缺少 Tauri bridge 的环境继续 fail closed。
@@ -62,10 +60,7 @@
 ## Phase 3 — Studio-native Agent
 
 - 多 Agent 列表：GET `/api/agents` 现在读取 Studio `list_agents`；mock 模式也使用单独的 `studio` agent fixture，不再把 session rows 冒充 agents。`isPrimary` 只对明确的 `studio` Agent 投影为 true，不再按返回顺序猜 primary。
-- agent switch：Studio 当前没有 primary-agent switch 命令，已改为带 `capability_unavailable` 的 fail-closed 响应，不伪造切换成功。
-- agent config：GET 已投影 Studio 当前 provider/model，并明确标注 modelSwitch 与暂不支持的 thinking/permission/primary-agent 控制；真实 per-agent config 持久化仍待宿主能力。
-- permission mode / read-only / operate / auto：继续保持 `ask` locked，待宿主控制面。
-- 对 Studio backend 缺失的控制面先补宿主命令，再接 UI。
+- **历史状态（已被 Stage A 后续实现取代）**：早期缺少 primary-agent switch、原生 per-Agent config 和 permission mode，故将控制锁定在 `ask`。这些命令目前已在 `dsh-wasm-studio/src-tauri/src/stage_a_impl.rs` 落实，并由桥接按宿主能力验证真实回执。尚需统一本插件独立手写 Shell 的旧入口和已实现的 React/右栏控制面。
 
 ## Phase 4 — Workspace
 
