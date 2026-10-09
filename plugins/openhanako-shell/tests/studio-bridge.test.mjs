@@ -460,13 +460,13 @@ await adapter.http('DELETE', '/api/session-projects/folders/' + encodeURICompone
 
 const thinkingLevelLocked = await adapter.http('GET', '/api/session-thinking-level');
 check('thinking level is explicitly locked when Studio has no control',
-  thinkingLevelLocked?.thinkingLevel === 'medium'
+  thinkingLevelLocked?.thinkingLevel === null
   && thinkingLevelLocked?.locked === true
   && thinkingLevelLocked?.code === 'capability_unavailable');
 const thinkingLevelWriteLocked = await adapter.http('POST', '/api/session-thinking-level', { level: 'high' });
 check('thinking level writes fail closed without Studio control',
   thinkingLevelWriteLocked?.ok === false
-  && thinkingLevelWriteLocked?.locked === true
+  && thinkingLevelWriteLocked?.code === 'capability_unavailable'
   && thinkingLevelWriteLocked?.code === 'capability_unavailable');
 
 const permissionDefault = await adapter.http('GET', '/api/preferences/session-permission-default');
@@ -1104,8 +1104,7 @@ const lockedSessionPermission = await adapter.http('POST', '/api/session-permiss
 });
 check('session permission writes fail closed instead of faking read-only enforcement',
   lockedSessionPermission?.ok === false
-  && lockedSessionPermission?.locked === true
-  && lockedSessionPermission?.mode === 'ask');
+  && lockedSessionPermission?.code === 'capability_unavailable');
 
 const iframeBridgeSource = readFileSync(
   join(ROOT, 'ui/desktop/src/react/studio-backend/studio-backend-bridge.ts'),
@@ -1113,6 +1112,8 @@ const iframeBridgeSource = readFileSync(
 );
 check('iframe bridge intercepts session permission mode requests',
   iframeBridgeSource.includes("pathname === '/api/session-permission-mode'"));
+check('iframe bridge routes native memory toggles',
+  iframeBridgeSource.includes("pathname === '/api/session-memory-enabled'"));
 check('iframe bridge intercepts appearance preference requests',
   iframeBridgeSource.includes("pathname === '/api/preferences/appearance'"));
 check('iframe bridge intercepts sidebar UI preference requests',
@@ -1578,7 +1579,7 @@ check('agent list comes from the agent surface rather than duplicating sessions'
   && agentsResponse.agents[0]?.isPrimary === true);
 const agentConfig = await adapter.http('GET', '/api/agents/studio/config');
 check('agent config reports the current Studio model and unsupported controls',
-  agentConfig?.source === 'studio'
+  agentConfig?.source === 'studio-global-readonly'
   && agentConfig?.chat?.agentId === 'studio'
   && agentConfig?.capabilities?.modelSwitch === true
   && agentConfig?.capabilities?.thinkingLevel === false
@@ -2290,6 +2291,114 @@ check('host bridge correlates requestId',
   check('busy prompt still reports streamed envelope', turn.streamed === true);
 }
 
+
+// Stage A bridge contract: host controls are never synthesized from local prefs.
+// A native mutation must ACK the requested agent, field, and revised config.
+{
+  const originalHostAction = studio.hostAction;
+  const calls = [];
+  let badAck = false;
+  let denied = false;
+  studio.hostAction = async (action) => {
+    calls.push(action);
+    if (denied) throw new Error('runtime refused control change');
+    const { command, args = {} } = action;
+    if (command === 'get_agent_control_capabilities') return { ok: true, capabilities: {
+      thinkingLevel: true, permissionMode: true, memoryToggle: true,
+      primaryAgentSwitch: true, agentConfigWrite: true,
+    } };
+    if (command === 'get_session_runtime_controls') return {
+      ok: true, agentId: args.agentId, level: 'medium', mode: 'ask', enabled: false,
+    };
+    if (command === 'set_session_thinking_level') return {
+      ok: true, agentId: badAck ? 'another-agent' : args.agentId, level: args.level,
+    };
+    if (command === 'set_session_permission_mode') return {
+      ok: true, agentId: args.agentId, mode: badAck ? 'ask' : args.mode,
+    };
+    if (command === 'set_session_memory_enabled') return {
+      ok: true, agentId: args.agentId, enabled: badAck ? !args.enabled : args.enabled,
+    };
+    if (command === 'get_primary_agent') return { ok: true, agentId: 'a1' };
+    if (command === 'switch_primary_agent') return {
+      ok: true, agentId: badAck ? 'a2' : args.agentId,
+    };
+    if (command === 'get_agent_config') return {
+      ok: true, agentId: args.agentId, revision: 'r1', config: { model: 'mock-1' },
+    };
+    if (command === 'patch_agent_config') return {
+      ok: true, agentId: args.agentId, revision: badAck ? args.revision : 'r2',
+      config: { ...args.patch },
+    };
+    throw new Error('unknown ' + command);
+  };
+  const advertised = await adapter.http('GET', '/api/capabilities');
+  check('Stage A capabilities unlock only after authenticated host evidence',
+    advertised.capabilities.thinkingLevel === true
+    && advertised.capabilities.permissionMode === true
+    && advertised.capabilities.memoryToggle === true
+    && advertised.capabilities.primaryAgentSwitch === true
+    && advertised.capabilities.agentConfigWrite === true);
+  const sessionId = 'native-stage-a';
+  const getControls = await adapter.http('GET', '/api/session-thinking-level?sessionId=' + sessionId);
+  check('native session control get verifies identity and runtime values',
+    getControls?.ok === true && getControls.agentId === sessionId
+    && getControls.level === 'medium' && getControls.enabled === false);
+  const thinking = await adapter.http('POST', '/api/session-thinking-level', { sessionId, level: 'high' });
+  const permission = await adapter.http('POST', '/api/session-permission-mode', { sessionId, mode: 'read-only' });
+  const memory = await adapter.http('POST', '/api/session-memory-enabled', { sessionId, enabled: true });
+  const thinkingFromPath = await adapter.http('GET',
+    '/api/session-thinking-level?sessionPath=studio%3A%2F%2Fnative-stage-a');
+  check('native thinking, permission and memory writes require exact acknowledged values',
+    thinking?.ok === true && permission?.ok === true && memory?.ok === true
+    && thinkingFromPath?.thinkingLevel === 'medium'
+    && calls.some((item) => item.command === 'set_session_memory_enabled' && item.args.agentId === sessionId));
+  const primary = await adapter.http('GET', '/api/agents/primary');
+  const switched = await adapter.http('POST', '/api/agents/switch', { agentId: 'a2' });
+  check('native primary agent queries and switches are confirmed by target ID',
+    primary?.agentId === 'a1' && switched?.agentId === 'a2' && switched.ok === true);
+  const config = await adapter.http('GET', '/api/agents/a2/config');
+  const patch = await adapter.http('PATCH', '/api/agents/a2/config', {
+    revision: 'r1', patch: { model: 'mock-2', memoryEnabled: false },
+  });
+  check('per-agent config requires durable revision and fresh mutation readback',
+    config?.ok === true && config.revision === 'r1'
+    && patch?.ok === true && patch.revision === 'r2' && patch.config.memoryEnabled === false);
+  const invalidMode = await adapter.http('POST', '/api/session-permission-mode', {
+    sessionId, mode: 'admin',
+  });
+  const invalidPatch = await adapter.http('PATCH', '/api/agents/a2/config', {
+    revision: 'r1', patch: { systemPrompt: 'unsafe unsupported field' },
+  });
+  const unsafeLegacyPut = await adapter.http('PUT', '/api/agents/a2/config', { memory: { enabled: true } });
+  check('invalid permission and arbitrary config keys are rejected before host dispatch',
+    invalidMode?.code === 'invalid_control' && invalidPatch?.code === 'invalid_config'
+    && unsafeLegacyPut?.code === 'invalid_config');
+  badAck = true;
+  const wrongThinking = await adapter.http('POST', '/api/session-thinking-level', { sessionId, level: 'high' });
+  const wrongMemory = await adapter.http('POST', '/api/session-memory-enabled', { sessionId, enabled: false });
+  const wrongPrimary = await adapter.http('POST', '/api/agents/switch', { agentId: 'a1' });
+  const stalePatch = await adapter.http('PATCH', '/api/agents/a2/config', {
+    revision: 'r1', patch: { memoryEnabled: true },
+  });
+  check('misdirected and stale native ACKs cannot masquerade as control changes',
+    [wrongThinking, wrongMemory, wrongPrimary, stalePatch].every((item) =>
+      item?.ok === false && item.code === 'invalid_native_ack'));
+  denied = true;
+  const deniedPermission = await adapter.http('POST', '/api/session-permission-mode', {
+    sessionId, mode: 'auto',
+  });
+  check('native permission enforcement rejection is surfaced, not downgraded to local state',
+    deniedPermission?.ok === false && deniedPermission?.code === 'native_control_failed');
+  studio.hostAction = originalHostAction;
+  const absent = await adapter.http('GET', '/api/capabilities');
+  check('Stage A controls stay disabled when the native host is absent',
+    absent.capabilities.thinkingLevel === false
+    && absent.capabilities.permissionMode === false
+    && absent.capabilities.memoryToggle === false
+    && absent.capabilities.primaryAgentSwitch === false
+    && absent.capabilities.agentConfigWrite === false);
+}
 
 detach();
 check('detach removes the message listener', messageHandlers.length === 0);

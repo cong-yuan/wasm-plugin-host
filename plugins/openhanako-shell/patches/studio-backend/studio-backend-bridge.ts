@@ -278,6 +278,7 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/session-permission-mode') return true;
   if (pathname === '/api/preferences/models') return true;
   if (pathname === '/api/session-thinking-level') return true;
+  if (pathname === '/api/session-memory-enabled') return true;
   if (pathname === '/api/user-profile') return true;
   if (pathname === '/api/desk/cron') return true;
   if (pathname === '/api/providers/fetch-models') return true;

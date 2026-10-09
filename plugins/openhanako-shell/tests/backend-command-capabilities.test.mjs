@@ -27,6 +27,16 @@ if (missing.length) {
 }
 
 const requiredNative = [
+  // Stage A host-controlled settings must never be implemented as a JS-only overlay.
+  'get_agent_control_capabilities',
+  'get_session_runtime_controls',
+  'set_session_thinking_level',
+  'set_session_permission_mode',
+  'set_session_memory_enabled',
+  'get_primary_agent',
+  'switch_primary_agent',
+  'get_agent_config',
+  'patch_agent_config',
   'upload_blob',
   'send_message_with_images',
   'complete_session_todos',

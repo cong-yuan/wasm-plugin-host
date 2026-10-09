@@ -1680,40 +1680,8 @@ return (function () {
         current: api.DEFAULT_MODEL,
       };
     }
-    if (pathname === '/api/session-thinking-level' && verb === 'GET') {
-      return {
-        thinkingLevel: 'medium',
-        level: 'medium',
-        locked: true,
-        supportedLevels: ['medium'],
-        code: 'capability_unavailable',
-        error: 'studio backend does not expose a session thinking-level control yet',
-      };
-    }
-    if (pathname === '/api/session-thinking-level' && verb === 'POST') {
-      return {
-        ok: false,
-        thinkingLevel: 'medium',
-        level: 'medium',
-        locked: true,
-        supportedLevels: ['medium'],
-        code: 'capability_unavailable',
-        error: 'studio backend does not expose a session thinking-level control yet',
-      };
-    }
     if (pathname === '/api/desk/cron') {
       return handleAutomationHttp(verb, body);
-    }
-    if (pathname === '/api/agents/primary' && verb === 'GET') {
-      return { id: ASSISTANT_ID, name: ASSISTANT_NAME };
-    }
-    if (pathname === '/api/agents/switch' && verb === 'POST') {
-      return {
-        ok: false,
-        agentId: ASSISTANT_ID,
-        code: 'capability_unavailable',
-        error: 'studio backend does not expose primary-agent switching yet',
-      };
     }
     if (pathname === '/api/models/auxiliary-vision' && verb === 'GET') {
       const llm = await api.getLlmConfig();
@@ -1736,6 +1704,20 @@ return (function () {
         : { available: false, models: [], code: 'capability_unavailable', error: 'no model is marked as image-capable' };
     }
     if (pathname === '/api/capabilities' && verb === 'GET') {
+      // Ask the authenticated host, not the existence of a frontend callback.
+      // Old Studio versions are always treated as unavailable.
+      let stageA = {};
+      if (api.stageAControlCapabilitiesAvailable?.()) {
+        try {
+          const response = await api.getAgentControlCapabilities();
+          const caps = response?.capabilities;
+          if (response?.ok === true && caps && typeof caps === 'object'
+            && ['thinkingLevel', 'permissionMode', 'memoryToggle',
+              'primaryAgentSwitch', 'agentConfigWrite'].every((key) => typeof caps[key] === 'boolean')) {
+            stageA = caps;
+          }
+        } catch (_) { /* legacy host or missing native command: fail closed */ }
+      }
       let visionAvailable = false;
       try {
         const llm = await api.getLlmConfig();
@@ -1765,9 +1747,11 @@ return (function () {
           modelMetadata: true,
           vision: visionAvailable,
           uploadBlob: typeof api.uploadBlobAvailable === 'function' && api.uploadBlobAvailable(),
-          thinkingLevel: false,
-          permissionMode: false,
-          primaryAgentSwitch: false,
+          thinkingLevel: stageA.thinkingLevel === true,
+          permissionMode: stageA.permissionMode === true,
+          memoryToggle: stageA.memoryToggle === true,
+          primaryAgentSwitch: stageA.primaryAgentSwitch === true,
+          agentConfigWrite: stageA.agentConfigWrite === true,
           sessionSearch: true,
           sessionProjects: true,
           runtimeIncremental: true,
@@ -2161,6 +2145,129 @@ return (function () {
       sessionPath: typeof payload?.sessionPath === 'string' ? payload.sessionPath : null,
       requestId: typeof payload?.requestId === 'string' ? payload.requestId : null,
     });
+
+    // Stage A native control plane. A backend error, missing capability, stale
+    // session, or unacknowledged result is NEVER accepted as a state mutation.
+    const stageAUnsupported = (command) => ({
+      ok: false, code: 'capability_unavailable', command, __httpStatus: 501,
+      error: `Studio native control ${command} is not available in this host`,
+    });
+    const stageAFailure = (error, command) => ({
+      ok: false, code: error?.code === 'capability_unavailable' ? 'capability_unavailable' : 'native_control_failed',
+      command, error: error?.message || String(error),
+    });
+    const stageAInvoke = async (command, available, invoke, validate) => {
+      if (!available) return stageAUnsupported(command);
+      try {
+        const result = await invoke();
+        if (!result || result.ok !== true || result.error || !validate(result)) {
+          return { ok: false, code: 'invalid_native_ack', command,
+            error: result?.error || `Studio did not acknowledge ${command}` };
+        }
+        return result;
+      } catch (error) { return stageAFailure(error, command); }
+    };
+    const stageASession = () => idFrom(body?.sessionId || body?.sessionPath || body?.agentId
+      || query.sessionId || query.sessionPath || query.agentId);
+    const sessionControlRoutes = {
+      '/api/session-thinking-level': {
+        command: 'set_session_thinking_level', field: 'level',
+        valid: (value) => ['off', 'low', 'medium', 'high', 'extra-high'].includes(value),
+        invoke: (agentId, value) => api.setSessionThinkingLevel(agentId, value),
+      },
+      '/api/session-permission-mode': {
+        command: 'set_session_permission_mode', field: 'mode',
+        valid: (value) => ['ask', 'read_only', 'read-only', 'operate', 'auto'].includes(value),
+        invoke: (agentId, value) => api.setSessionPermissionMode(agentId, value),
+      },
+      '/api/session-memory-enabled': {
+        command: 'set_session_memory_enabled', field: 'enabled',
+        valid: (value) => typeof value === 'boolean',
+        invoke: (agentId, value) => api.setSessionMemoryEnabled(agentId, value),
+      },
+    };
+    if (Object.prototype.hasOwnProperty.call(sessionControlRoutes, pathname) && ['GET', 'POST'].includes(verb)) {
+      const agentId = stageASession();
+      if (!agentId) return { ...stageAUnsupported('get_session_runtime_controls'), locked: true, thinkingLevel: null, level: null };
+      if (verb === 'GET') {
+        if (!api.sessionControlsAvailable?.()) return {
+          ...stageAUnsupported('get_session_runtime_controls'), locked: true,
+          level: null, thinkingLevel: null, mode: null, enabled: null,
+        };
+        const controls = await stageAInvoke('get_session_runtime_controls', true,
+          () => api.getSessionRuntimeControls(agentId),
+          (r) => r.agentId === agentId && typeof r.level === 'string'
+            && typeof r.mode === 'string' && typeof r.enabled === 'boolean');
+        return controls.ok === true ? { ...controls, thinkingLevel: controls.level, locked: false } : controls;
+      }
+      const control = sessionControlRoutes[pathname];
+      const incoming = body?.[control.field];
+      const value = control.field === 'mode' && incoming === 'read-only' ? 'read_only' : incoming;
+      if (!control.valid(value)) {
+        return { ok: false, code: 'invalid_control', error: `Invalid ${control.field}` };
+      }
+      const result = await stageAInvoke(control.command, api.sessionControlsAvailable?.(),
+        () => control.invoke(agentId, value),
+        (r) => r.agentId === agentId && r[control.field] === value);
+      return result.ok === true && control.field === 'level'
+        ? { ...result, thinkingLevel: result.level } : result;
+    }
+    if (pathname === '/api/agents/primary' && verb === 'GET') {
+      return stageAInvoke('get_primary_agent', api.primaryAgentAvailable?.(),
+        () => api.getPrimaryAgent(), (r) => typeof r.agentId === 'string' && !!r.agentId);
+    }
+    if (pathname === '/api/agents/switch' && verb === 'POST') {
+      const agentId = idFrom(body?.agentId);
+      if (!agentId) return { ok: false, code: 'invalid_agent', error: 'agentId required' };
+      return stageAInvoke('switch_primary_agent', api.primaryAgentAvailable?.(),
+        () => api.switchPrimaryAgent(agentId), (r) => r.agentId === agentId);
+    }
+    const configRoute = pathname.match(/^\/api\/agents\/([^/]+)\/config$/);
+    if (configRoute && ['GET', 'PATCH', 'PUT'].includes(verb)) {
+      const agentId = idFrom(decodeURIComponent(configRoute[1]));
+      if (!agentId) return { ok: false, code: 'invalid_agent', error: 'agentId required' };
+      if (verb === 'GET') {
+        const readonlyConfig = async () => {
+          const llm = await api.getLlmConfig();
+          const current = llm?.current || {};
+          return { ok: false, source: 'studio-global-readonly',
+            code: 'capability_unavailable', chat: { agentId,
+              provider: current.provider || api.DEFAULT_PROVIDER,
+              model: current.model || api.DEFAULT_MODEL },
+            memory: { enabled: null }, user: { name: loadUserPrefs().name },
+            capabilities: { modelSwitch: true, thinkingLevel: false,
+              permissionMode: false, memoryToggle: false,
+              primaryAgentSwitch: false, agentConfigWrite: false },
+          };
+        };
+        if (!api.agentConfigAvailable?.()) return readonlyConfig();
+        const nativeConfig = await stageAInvoke('get_agent_config', true,
+          () => api.getAgentConfig(agentId),
+          (r) => r.agentId === agentId && typeof r.revision === 'string'
+            && !!r.revision && r.config && typeof r.config === 'object' && !Array.isArray(r.config));
+        return nativeConfig.code === 'capability_unavailable' ? readonlyConfig() : nativeConfig;
+      }
+      const allowed = new Set(['provider', 'model', 'thinkingLevel', 'permissionMode', 'memoryEnabled']);
+      const patch = body?.patch;
+      const revision = body?.revision;
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch)
+        || !Object.keys(patch).length || Object.keys(patch).some((key) => !allowed.has(key))
+        || typeof revision !== 'string' || !revision.trim()) {
+        return { ok: false, code: 'invalid_config', error: 'Expected validated patch and nonempty revision' };
+      }
+      if ((patch.provider !== undefined && (typeof patch.provider !== 'string' || !patch.provider.trim()))
+        || (patch.model !== undefined && (typeof patch.model !== 'string' || !patch.model.trim()))
+        || (patch.thinkingLevel !== undefined && !['off', 'low', 'medium', 'high', 'extra-high'].includes(patch.thinkingLevel))
+        || (patch.permissionMode !== undefined && !['ask', 'read_only', 'read-only', 'operate', 'auto'].includes(patch.permissionMode))
+        || (patch.memoryEnabled !== undefined && typeof patch.memoryEnabled !== 'boolean')) {
+        return { ok: false, code: 'invalid_config', error: 'Unsupported agent config values' };
+      }
+      return stageAInvoke('patch_agent_config', api.agentConfigAvailable?.(),
+        () => api.patchAgentConfig(agentId, patch, revision),
+        (r) => r.agentId === agentId && typeof r.revision === 'string' && !!r.revision
+          && r.revision !== revision && r.config && typeof r.config === 'object'
+          && Object.keys(patch).every((key) => r.config[key] === patch[key]));
+    }
 
     if (pathname === '/api/health' && verb === 'GET') {
       const configured = await configuredModelFallback();
@@ -2910,28 +3017,6 @@ return (function () {
           live: row.live !== false,
           status: row.status || 'idle',
         })),
-      };
-    }
-
-    if (/^\/api\/agents\/[^/]+\/config$/.test(pathname) && verb === 'GET') {
-      const agentId = decodeURIComponent(pathname.split('/')[3] || '');
-      const llm = await api.getLlmConfig();
-      const current = llm && llm.current && typeof llm.current === 'object' ? llm.current : {};
-      return {
-        chat: {
-          provider: typeof current.provider === 'string' ? current.provider : api.DEFAULT_PROVIDER,
-          model: typeof current.model === 'string' ? current.model : api.DEFAULT_MODEL,
-          agentId,
-        },
-        memory: { enabled: true },
-        user: { name: loadUserPrefs().name },
-        capabilities: {
-          modelSwitch: true,
-          thinkingLevel: false,
-          permissionMode: false,
-          primaryAgentSwitch: false,
-        },
-        source: 'studio',
       };
     }
 

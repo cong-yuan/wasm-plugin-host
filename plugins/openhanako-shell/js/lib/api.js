@@ -85,7 +85,7 @@ return (function () {
   // can distinguish a missing capability from a real session failure.
   const isCommandUnavailableError = (error) => {
     const message = error && error.message ? error.message : String(error || '');
-    return /unknown (?:backend )?command|command (?:not found|unavailable|unsupported|not registered)|unsupported command|no such command/i.test(message);
+    return /unknown (?:backend )?command|command (?:not found|unavailable|unsupported|not registered)|unsupported command|no such command|^unknown [a-z_][a-z0-9_]*$/i.test(message);
   };
   const unavailableNativeCommands = new Set();
   let capabilityBinding = typeof tauri.bindingIdentity === 'function' ? tauri.bindingIdentity() : null;
@@ -846,6 +846,21 @@ return (function () {
       if (!tauri.available()) return null;
       return invokeNative('continue_deleted_agent_session', { agentId });
     },
+    // Stage A control plane: only authenticated Studio native commands may
+    // report state changes. Never emulate runtime control with localStorage.
+    stageAControlCapabilitiesAvailable: () => nativeCommandAvailable('get_agent_control_capabilities'),
+    getAgentControlCapabilities: async () => invokeNative('get_agent_control_capabilities', {}),
+    sessionControlsAvailable: () => nativeCommandAvailable('get_session_runtime_controls'),
+    getSessionRuntimeControls: async (agentId) => invokeNative('get_session_runtime_controls', { agentId }),
+    setSessionThinkingLevel: async (agentId, level) => invokeNative('set_session_thinking_level', { agentId, level }),
+    setSessionPermissionMode: async (agentId, mode) => invokeNative('set_session_permission_mode', { agentId, mode }),
+    setSessionMemoryEnabled: async (agentId, enabled) => invokeNative('set_session_memory_enabled', { agentId, enabled }),
+    primaryAgentAvailable: () => nativeCommandAvailable('get_primary_agent') && nativeCommandAvailable('switch_primary_agent'),
+    getPrimaryAgent: async () => invokeNative('get_primary_agent', {}),
+    switchPrimaryAgent: async (agentId) => invokeNative('switch_primary_agent', { agentId }),
+    agentConfigAvailable: () => nativeCommandAvailable('get_agent_config') && nativeCommandAvailable('patch_agent_config'),
+    getAgentConfig: async (agentId) => invokeNative('get_agent_config', { agentId }),
+    patchAgentConfig: async (agentId, patch, revision) => invokeNative('patch_agent_config', { agentId, patch, revision }),
     sessionSummaryAvailable: () => nativeCommandAvailable('get_session_summary'),
     getSessionSummary: async (agentId) => {
       if (!tauri.available()) return null;
