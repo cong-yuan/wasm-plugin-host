@@ -11793,3 +11793,24 @@ html[data-platform="linux"] .onboarding {
 }
 .nativeSlashOption:disabled { opacity: 0.45; cursor: not-allowed; }
 .nativeSlashStatus { font-size: 11px; color: var(--text-muted); }
+
+/* Native, read-only session file history browser in the companion rail. */
+.railHistoryHeader { display: flex; gap: 6px; align-items: center; justify-content: space-between; font-size: 11px; }
+.railHistoryRefresh, .railHistoryBack, .railHistoryFile, .railHistoryVersion {
+    display: block;
+    max-width: 100%;
+    font: inherit;
+    font-size: 11px;
+    text-align: left;
+    color: var(--text-primary);
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    padding: 5px 6px;
+    cursor: pointer;
+}
+.railHistoryFile, .railHistoryVersion { width: 100%; overflow-wrap: anywhere; }
+.railHistoryFile:hover, .railHistoryVersion:hover,
+.railHistoryRefresh:hover, .railHistoryBack:hover { background: rgba(0,0,0,0.06); }
+.railHistoryPath { font-size: 11px; overflow-wrap: anywhere; color: var(--text-muted); }
+.railHistorySnapshot { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; font-size: 11px; }

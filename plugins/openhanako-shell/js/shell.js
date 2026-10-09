@@ -42,14 +42,14 @@ return (function () {
 
     let side;
     const chat = conversation.render({
-      onOpened: (id) => { state.selected = id; side.refresh(id); },
-      onCreated: (id) => { state.selected = id; side.refresh(id); },
+      onOpened: (id) => { state.selected = id; right.setSession(id); side.refresh(id); },
+      onCreated: (id) => { state.selected = id; right.setSession(id); side.refresh(id); },
       onChanged: () => scheduleRuntimeRefresh(),
     });
 
     side = sidebar.render({
       selected: state.selected,
-      onNew: () => { state.selected = null; chat.reset(); side.refresh(null); },
+      onNew: () => { state.selected = null; right.setSession(null); chat.reset(); side.refresh(null); },
       onCollapse: toggleSidebar,
       onSelect: (session) => chat.open(session),
       onNewChatModelChanged: () => chat.refreshPendingModel(),

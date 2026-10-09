@@ -5,6 +5,8 @@
 return (function () {
   const { h, svg, clear } = studio.require('lib/dom');
   const slots = studio.require('lib/slots');
+  const adapter = studio.require('lib/hana-adapter');
+  const api = studio.require('lib/api');
   const { t } = studio.require('lib/i18n');
 
   // function Chevron({ open }) — upstream markup, both branches.
@@ -24,7 +26,10 @@ return (function () {
   ];
 
   function render() {
-    const state = { tab: 'workspace', jianOpen: false };
+    const state = { tab: 'workspace', jianOpen: false, sessionId: null };
+    let historyVersion = 0;
+    let historyView = { kind: 'idle' };
+    let disposed = false;
     let latestData = { tools: [], plugins: [], runtime: { mode: 'unknown', sessions: [] } };
 
     // <div className={styles.workspaceHeader}> + workspaceTitle
@@ -117,6 +122,7 @@ return (function () {
         btn.setAttribute('aria-selected', String(selected));
       }
       renderData(latestData);
+      if (state.tab === 'session-files') loadHistory();
     }
 
     function renderData(data) {
@@ -128,9 +134,8 @@ return (function () {
       clear(fileList);
 
       if (state.tab === 'session-files') {
-        content.setAttribute('data-content-state', 'unavailable');
-        fileList.appendChild(h('div', { class: 'emptyState railUnavailableState' },
-          'Session files are not available in the standalone Studio bridge yet.'));
+        content.setAttribute('data-content-state', historyView.kind);
+        renderHistory();
         return;
       }
 
@@ -168,6 +173,127 @@ return (function () {
       }
     }
 
+    const isCurrentHistory = (version, sessionId) => !disposed
+      && state.tab === 'session-files' && state.sessionId === sessionId
+      && historyVersion === version;
+    const setHistory = (view, version, sessionId) => {
+      if (!isCurrentHistory(version, sessionId)) return;
+      historyView = view;
+      renderData(latestData);
+    };
+    const requestHistory = async (path) => {
+      const response = await adapter.http('GET', path);
+      if (!response || response.ok === false || response.error) {
+        throw new Error(response?.error || 'Session file history is unavailable');
+      }
+      return response;
+    };
+    const loadHistory = async () => {
+      const sessionId = state.sessionId;
+      const version = ++historyVersion;
+      if (!sessionId) {
+        setHistory({ kind: 'empty', text: 'Open a session to view its tracked file history' }, version, sessionId);
+        return;
+      }
+      if (!api.fileHistoryListFilesAvailable?.()) {
+        setHistory({ kind: 'unavailable', text: 'This Studio host does not support native file history' }, version, sessionId);
+        return;
+      }
+      setHistory({ kind: 'loading', text: 'Loading tracked file history…' }, version, sessionId);
+      try {
+        const response = await requestHistory(`/api/file-history/files?agentId=${encodeURIComponent(sessionId)}`);
+        if (!Array.isArray(response.files) || response.files.some((row) =>
+          !row || typeof row.relPath !== 'string' || !row.relPath.trim())) {
+          throw new Error('Invalid file history list from Studio');
+        }
+        setHistory({ kind: 'files', files: response.files }, version, sessionId);
+      } catch (error) {
+        setHistory({ kind: 'error', text: error?.message || 'File history loading failed' }, version, sessionId);
+      }
+    };
+    const openVersions = async (relPath) => {
+      const sessionId = state.sessionId;
+      const version = ++historyVersion;
+      if (!api.fileHistoryListVersionsAvailable?.()) {
+        setHistory({ kind: 'unavailable', text: 'History versions are not supported by this Studio host' }, version, sessionId);
+        return;
+      }
+      setHistory({ kind: 'loading', text: `Loading versions for ${relPath}…` }, version, sessionId);
+      try {
+        const response = await requestHistory(`/api/file-history/versions?agentId=${encodeURIComponent(sessionId)}&relPath=${encodeURIComponent(relPath)}`);
+        if (!Array.isArray(response.versions) || response.versions.some((row) =>
+          !row || !Number.isSafeInteger(row.id) || row.id < 0)) {
+          throw new Error('Invalid file history versions from Studio');
+        }
+        setHistory({ kind: 'versions', relPath, versions: response.versions }, version, sessionId);
+      } catch (error) {
+        setHistory({ kind: 'error', text: error?.message || 'History versions loading failed' }, version, sessionId);
+      }
+    };
+    const openSnapshot = async (relPath, snapshotId) => {
+      const sessionId = state.sessionId;
+      const version = ++historyVersion;
+      if (!api.fileHistoryGetSnapshotAvailable?.()) {
+        setHistory({ kind: 'unavailable', text: 'Snapshot reading is unsupported by this Studio host' }, version, sessionId);
+        return;
+      }
+      setHistory({ kind: 'loading', text: 'Loading historical snapshot…' }, version, sessionId);
+      try {
+        const response = await requestHistory(`/api/file-history/snapshot?agentId=${encodeURIComponent(sessionId)}&id=${encodeURIComponent(snapshotId)}`);
+        if (response.relPath !== relPath || typeof response.content !== 'string') {
+          throw new Error('Invalid or mismatched snapshot response');
+        }
+        setHistory({ kind: 'snapshot', relPath, content: response.content }, version, sessionId);
+      } catch (error) {
+        setHistory({ kind: 'error', text: error?.message || 'Snapshot reading failed' }, version, sessionId);
+      }
+    };
+    const renderHistory = () => {
+      const refresh = h('button', { class: 'railHistoryRefresh', type: 'button' }, 'Refresh');
+      refresh.onclick = loadHistory;
+      fileList.appendChild(h('div', { class: 'railHistoryHeader' },
+        h('span', {}, 'Tracked file history (read-only)'), refresh));
+      if (historyView.kind === 'files') {
+        if (!historyView.files.length) fileList.appendChild(h('div', { class: 'emptyState' }, 'No tracked files for this session'));
+        for (const row of historyView.files) {
+          const button = h('button', { class: 'railHistoryFile', type: 'button' },
+            `${row.relPath} (${Number.isSafeInteger(row.snapshotCount) ? row.snapshotCount : 0} versions)`);
+          button.onclick = () => openVersions(row.relPath);
+          fileList.appendChild(button);
+        }
+      } else if (historyView.kind === 'versions') {
+        const back = h('button', { class: 'railHistoryBack', type: 'button' }, 'Back to files');
+        back.onclick = loadHistory;
+        fileList.appendChild(back);
+        fileList.appendChild(h('div', { class: 'railHistoryPath' }, historyView.relPath));
+        if (!historyView.versions.length) fileList.appendChild(h('div', { class: 'emptyState' }, 'No snapshots available'));
+        for (const row of historyView.versions) {
+          const button = h('button', { class: 'railHistoryVersion', type: 'button' },
+            `Snapshot ${row.id}${row.origin ? ` · ${row.origin}` : ''}`);
+          button.onclick = () => openSnapshot(historyView.relPath, row.id);
+          fileList.appendChild(button);
+        }
+      } else if (historyView.kind === 'snapshot') {
+        const back = h('button', { class: 'railHistoryBack', type: 'button' }, 'Back to files');
+        back.onclick = loadHistory;
+        fileList.appendChild(back);
+        fileList.appendChild(h('div', { class: 'railHistoryPath' }, historyView.relPath));
+        fileList.appendChild(h('pre', { class: 'railHistorySnapshot' },
+          historyView.content.slice(0, 16000) + (historyView.content.length > 16000 ? '\n… preview truncated' : '')));
+      } else {
+        fileList.appendChild(h('div', { class: 'emptyState railHistoryStatus', 'aria-live': 'polite' },
+          historyView.text || 'No history loaded'));
+      }
+    };
+    const setSession = (sessionId) => {
+      const nextId = typeof sessionId === 'string' && sessionId ? sessionId : null;
+      if (state.sessionId === nextId) return;
+      state.sessionId = nextId;
+      historyVersion += 1;
+      historyView = { kind: 'idle' };
+      if (state.tab === 'session-files') loadHistory();
+    };
+
     function update(data) {
       latestData = data || latestData;
       renderData(latestData);
@@ -180,8 +306,8 @@ return (function () {
 
     return {
       root,
-      update,
-      dispose: () => { if (typeof unsubscribeSlots === 'function') unsubscribeSlots(); },
+      update, setSession,
+      dispose: () => { disposed = true; historyVersion += 1; if (typeof unsubscribeSlots === 'function') unsubscribeSlots(); },
     };
   }
 

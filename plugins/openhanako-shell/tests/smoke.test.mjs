@@ -449,9 +449,9 @@ check('jian drawer opens',
   root.querySelector('.jianDrawer').getAttribute('data-open') === 'true');
 root.querySelectorAll('.tab')[0].fire('click');
 check('tab switches', root.querySelectorAll('.tabActive').length === 1);
-check('session files tab explains standalone limitation',
-  root.querySelector('.content')?.getAttribute('data-content-state') === 'unavailable'
-  && /not available in the standalone Studio bridge/i.test(root.querySelector('.fileList')?.textContent || ''));
+check('session files tab states missing session and retains read-only history control',
+  root.querySelector('.content')?.getAttribute('data-content-state') === 'empty'
+  && /Open a session/.test(root.querySelector('.fileList')?.textContent || ''));
 root.querySelectorAll('.tab')[1].fire('click');
 check('workspace tab restores runtime/tool diagnostics',
   root.querySelector('.content')?.getAttribute('data-content-state') === 'workspace'
@@ -2409,6 +2409,103 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.completeSessionTodosAvailable = oldTodos;
   api.sessionFolderScopeAvailable = oldScope;
   api.sendWithProgress = oldSend;
+}
+
+// The rail's read-only file-history UI uses native session-scoped responses,
+// version/snapshot drilldown, and discards cross-session stale responses.
+{
+  const railModule = studio.require('panels/rail');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const oldList = api.fileHistoryListFilesAvailable;
+  const oldVersions = api.fileHistoryListVersionsAvailable;
+  const oldSnapshot = api.fileHistoryGetSnapshotAvailable;
+  api.fileHistoryListFilesAvailable = () => true;
+  api.fileHistoryListVersionsAvailable = () => true;
+  api.fileHistoryGetSnapshotAvailable = () => true;
+  let holdFirstList = false;
+  let releaseFirstList = null;
+  let failHistory = false;
+  let incorrectSnapshot = false;
+  const paths = [];
+  adapter.http = async (method, path, body) => {
+    if (method === 'GET' && path.startsWith('/api/file-history/')) {
+      paths.push(path);
+      if (path.startsWith('/api/file-history/files')) {
+        if (failHistory) return { ok: false, error: 'history denied' };
+        if (holdFirstList && path.includes('agentId=history-one')) {
+          return new Promise((resolve) => { releaseFirstList = resolve; });
+        }
+        return { files: [{ relPath: path.includes('history-two') ? 'second.md' : 'first.md', snapshotCount: 1 }] };
+      }
+      if (path.startsWith('/api/file-history/versions')) {
+        return { versions: [{ id: 42, capturedAt: 100, origin: 'save' }] };
+      }
+      if (path.startsWith('/api/file-history/snapshot')) {
+        return { relPath: incorrectSnapshot ? 'other.md' : 'first.md', content: 'Historical content from Studio' };
+      }
+    }
+    return oldHttp(method, path, body);
+  };
+  const rail = railModule.render();
+  rail.setSession('history-one');
+  rail.root.querySelectorAll('.tab')[0]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('right rail fetches actual file history for selected session',
+    rail.root.querySelectorAll('.railHistoryFile').length === 1
+    && /first.md/.test(rail.root.querySelector('.railHistoryFile')?.textContent || '')
+    && paths.some((path) => path.includes('agentId=history-one')));
+  rail.root.querySelector('.railHistoryFile')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('file history lists authoritative versions',
+    /Snapshot 42/.test(rail.root.querySelector('.railHistoryVersion')?.textContent || ''));
+  rail.root.querySelector('.railHistoryVersion')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('file history snapshot is read only text',
+    /Historical content from Studio/.test(rail.root.querySelector('.railHistorySnapshot')?.textContent || ''));
+  rail.root.querySelector('.railHistoryBack')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  holdFirstList = true;
+  rail.root.querySelector('.railHistoryRefresh')?.fire('click');
+  await Promise.resolve();
+  check('stale session file fetch begins asynchronously', typeof releaseFirstList === 'function');
+  rail.setSession('history-two');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  releaseFirstList?.({ files: [{ relPath: 'stale-secret.md', snapshotCount: 1 }] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('old session file history cannot repaint new session',
+    /second.md/.test(rail.root.querySelector('.railHistoryFile')?.textContent || '')
+    && !/stale-secret/.test(rail.root.textContent || ''));
+  // Validate snapshot ownership; never show a different file's contents.
+  holdFirstList = false;
+  rail.setSession('history-one');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  rail.root.querySelector('.railHistoryFile')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  incorrectSnapshot = true;
+  rail.root.querySelector('.railHistoryVersion')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('snapshot path mismatch never exposes another file content',
+    rail.root.querySelector('.railHistorySnapshot') == null
+    && /mismatched snapshot/.test(rail.root.textContent || ''));
+  incorrectSnapshot = false;
+  failHistory = true;
+  rail.root.querySelector('.railHistoryRefresh')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('backend error payload cannot masquerade as empty file list',
+    rail.root.querySelector('.content')?.getAttribute('data-content-state') === 'error'
+    && /history denied/.test(rail.root.textContent || ''));
+  api.fileHistoryListFilesAvailable = () => false;
+  rail.setSession('history-two');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('file history fails closed when Studio lacks native capability',
+    rail.root.querySelector('.content')?.getAttribute('data-content-state') === 'unavailable');
+  check('session file history never calls mutation APIs', paths.every((path) => path.startsWith('/api/file-history/')));
+  rail.dispose();
+  adapter.http = oldHttp;
+  api.fileHistoryListFilesAvailable = oldList;
+  api.fileHistoryListVersionsAvailable = oldVersions;
+  api.fileHistoryGetSnapshotAvailable = oldSnapshot;
 }
 
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
