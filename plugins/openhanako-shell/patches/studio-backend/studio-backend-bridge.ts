@@ -279,6 +279,8 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/preferences/models') return true;
   if (pathname === '/api/session-thinking-level') return true;
   if (pathname === '/api/session-memory-enabled') return true;
+  if (pathname === '/api/session-attachments' || pathname === '/api/session-attachments/content'
+      || pathname === '/api/session-attachments/remove') return true;
   if (pathname === '/api/tool-approvals' || pathname === '/api/tool-approvals/decision') return true;
   if (pathname === '/api/shared-memory' || pathname === '/api/shared-memory/remove') return true;
   if (pathname === '/api/user-profile') return true;

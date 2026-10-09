@@ -11932,3 +11932,11 @@ html[data-platform="linux"] .onboarding {
 .railSharedFact span { flex: 1; min-width: 0; }
 .railMemoryDeleteFact { color: var(--text-primary); background: rgba(0,0,0,.07); border: 0; border-radius: 4px; font: inherit; font-size: 11px; cursor: pointer; }
 .railMemoryDeleteFact:disabled { opacity: .5; cursor: not-allowed; }
+.railAttachmentPanel { display:flex; flex-direction:column; gap:6px; padding:8px; border-bottom:1px solid rgba(0,0,0,.12); min-width:0; font-size:11px; }
+.railAttachmentHeader, .railAttachmentRow { display:flex; align-items:center; gap:6px; justify-content:space-between; }
+.railAttachmentRow { flex-wrap:wrap; border:1px solid rgba(0,0,0,.1); border-radius:5px; padding:5px; }
+.railAttachmentRow span { flex:1; min-width:85px; overflow-wrap:anywhere; }
+.railAttachmentRefresh, .railAttachmentPreview, .railAttachmentRemove { border:0; border-radius:4px; padding:4px 6px; background:rgba(0,0,0,.07); color:var(--text-primary); font:inherit; cursor:pointer; }
+.railAttachmentRefresh:disabled, .railAttachmentPreview:disabled, .railAttachmentRemove:disabled { opacity:.5; cursor:default; }
+.railAttachmentDownload { overflow-wrap:anywhere; }
+.railAttachmentStatus { font-size:11px; color:var(--text-muted); }

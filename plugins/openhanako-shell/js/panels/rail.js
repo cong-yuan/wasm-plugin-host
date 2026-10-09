@@ -57,6 +57,10 @@ return (function () {
     let sharedDeleteIntent = null;
     let sharedBusy = false;
     const memoryDrafts = new Map();
+    let attachmentState = { files: [], status: '', preview: null };
+    let attachmentVersion = 0;
+    let attachmentBusy = false;
+    let attachmentDeleteIntent = null;
 
     // <div className={styles.workspaceHeader}> + workspaceTitle
     const title = h('div', { class: 'workspaceTitle' }, t('desk.title'));
@@ -65,6 +69,8 @@ return (function () {
       'aria-label': 'Pending native tool approvals', 'aria-live': 'polite' });
     const memoryPanel = h('section', { class: 'railNativeMemoryPanel',
       'aria-label': 'Agent memory notes' });
+    const attachmentPanel = h('section', { class: 'railAttachmentPanel',
+      'aria-label': 'Managed session attachments' });
     const headerSlot = h('div', { class: 'rail-header-slot' });
     slots.mount('openhanako.rail.header', headerSlot);
 
@@ -211,7 +217,7 @@ return (function () {
       class: 'universal-card workspaceCard',
       'data-right-workspace-card': '',
       'data-jian-open': 'false',
-    }, header, headerSlot, approvalPanel, memoryPanel, tabs, content, drawer, jianToggle);
+    }, header, headerSlot, approvalPanel, memoryPanel, attachmentPanel, tabs, content, drawer, jianToggle);
 
     // <div className={styles.shell}>
     const shell = h('div', { class: 'workspaceShell' }, card);
@@ -583,6 +589,116 @@ return (function () {
       } finally {
         job.busy = false;
         if (!disposed && workspaceUpload === job && workspaceVersion === version) renderData(latestData);
+      }
+    };
+    const renderAttachments = () => {
+      clear(attachmentPanel);
+      if (!state.sessionId || !api.sessionAttachmentsAvailable?.()) {
+        attachmentPanel.style.display = 'none';
+        return;
+      }
+      attachmentPanel.style.display = '';
+      const refresh = h('button', { type: 'button', class: 'railAttachmentRefresh' }, 'Refresh');
+      refresh.disabled = attachmentBusy;
+      refresh.onclick = loadAttachments;
+      attachmentPanel.appendChild(h('div', { class: 'railAttachmentHeader' },
+        h('strong', {}, `Session attachments (${attachmentState.files.length})`), refresh));
+      for (const item of attachmentState.files) {
+        const row = h('div', { class: 'railAttachmentRow' },
+          h('span', {}, `${item.name} · ${item.size} bytes`));
+        const preview = h('button', { type: 'button', class: 'railAttachmentPreview' }, 'View / download');
+        preview.disabled = attachmentBusy;
+        preview.onclick = () => showAttachment(item);
+        const remove = h('button', { type: 'button', class: 'railAttachmentRemove' },
+          attachmentDeleteIntent === item.id ? 'Confirm removal' : 'Remove');
+        remove.disabled = attachmentBusy;
+        remove.onclick = () => removeAttachment(item);
+        row.appendChild(preview);
+        row.appendChild(remove);
+        attachmentPanel.appendChild(row);
+      }
+      if (attachmentState.preview) {
+        const preview = attachmentState.preview;
+        const link = h('a', { class: 'railAttachmentDownload', download: preview.name,
+          href: `data:application/octet-stream;base64,${preview.base64}` }, `Download ${preview.name}`);
+        attachmentPanel.appendChild(link);
+      }
+      if (attachmentState.status) attachmentPanel.appendChild(h('div',
+        { class: 'railAttachmentStatus', 'aria-live': 'polite' }, attachmentState.status));
+    };
+    const loadAttachments = async () => {
+      if (!state.sessionId || !api.sessionAttachmentsAvailable?.() || attachmentBusy || disposed) return;
+      const agentId = state.sessionId;
+      const version = ++attachmentVersion;
+      try {
+        const result = await adapter.http('GET',
+          `/api/session-attachments?sessionId=${encodeURIComponent(agentId)}`);
+        if (disposed || attachmentVersion !== version || state.sessionId !== agentId) return;
+        if (result?.ok !== true || result.sessionId !== agentId || !Array.isArray(result.files))
+          throw new Error(result?.error || 'Managed attachments unavailable');
+        attachmentState = { files: result.files, status: '', preview: null };
+        attachmentDeleteIntent = null;
+      } catch (error) {
+        if (disposed || attachmentVersion !== version || state.sessionId !== agentId) return;
+        attachmentState = { files: [], status: error?.message || 'Attachment listing failed', preview: null };
+      }
+      renderAttachments();
+    };
+    const showAttachment = async (item) => {
+      if (attachmentBusy || !state.sessionId) return;
+      const agentId = state.sessionId;
+      const version = attachmentVersion;
+      attachmentBusy = true;
+      attachmentState.status = 'Retrieving managed attachment…';
+      renderAttachments();
+      try {
+        const result = await adapter.http('GET',
+          `/api/session-attachments/content?sessionId=${encodeURIComponent(agentId)}&fileId=${encodeURIComponent(item.id)}`);
+        if (result?.ok !== true || result.sessionId !== agentId || result.id !== item.id
+          || typeof result.base64 !== 'string' || result.base64.length > 30_000_000) {
+          throw new Error(result?.error || 'Native attachment read not acknowledged');
+        }
+        if (disposed || attachmentVersion !== version || state.sessionId !== agentId) return;
+        attachmentState.preview = { name: result.name, base64: result.base64 };
+        attachmentState.status = 'Managed attachment ready for download';
+      } catch (error) {
+        if (disposed || attachmentVersion !== version || state.sessionId !== agentId) return;
+        attachmentState.status = error?.message || 'Attachment retrieval failed';
+      } finally {
+        attachmentBusy = false;
+        if (!disposed && attachmentVersion === version && state.sessionId === agentId) renderAttachments();
+      }
+    };
+    const removeAttachment = async (item) => {
+      if (attachmentBusy || !state.sessionId) return;
+      if (attachmentDeleteIntent !== item.id) {
+        attachmentDeleteIntent = item.id;
+        renderAttachments();
+        return;
+      }
+      const agentId = state.sessionId;
+      const version = attachmentVersion;
+      attachmentBusy = true;
+      attachmentState.status = 'Deleting managed attachment…';
+      renderAttachments();
+      try {
+        const result = await adapter.http('POST', '/api/session-attachments/remove', {
+          sessionId: agentId, fileId: item.id,
+        });
+        if (result?.ok !== true || result.sessionId !== agentId || result.id !== item.id
+          || result.deleted !== true) throw new Error(result?.error || 'Deletion was not acknowledged');
+        if (disposed || attachmentVersion !== version || state.sessionId !== agentId) return;
+        attachmentState.files = attachmentState.files.filter((row) => row.id !== item.id);
+        attachmentState.preview = null;
+        attachmentState.status = 'Deleted managed attachment';
+        attachmentDeleteIntent = null;
+      } catch (error) {
+        if (disposed || attachmentVersion !== version || state.sessionId !== agentId) return;
+        attachmentState.status = error?.message || 'Attachment deletion failed';
+        attachmentDeleteIntent = null;
+      } finally {
+        attachmentBusy = false;
+        if (!disposed && attachmentVersion === version && state.sessionId === agentId) renderAttachments();
       }
     };
     const refreshApprovals = async () => {
@@ -1346,6 +1462,11 @@ return (function () {
       const nextId = typeof sessionId === 'string' && sessionId ? sessionId : null;
       if (state.sessionId === nextId) return;
       state.sessionId = nextId;
+      attachmentVersion += 1;
+      attachmentState = { files: [], status: '', preview: null };
+      attachmentDeleteIntent = null;
+      renderAttachments();
+      loadAttachments();
       approvalVersion += 1;
       approvalConfirmId = null;
       approvalState = { rows: [], status: '' };
@@ -1376,6 +1497,7 @@ return (function () {
     loadCheckpoints();
     renderApprovals();
     renderNativeMemory();
+    renderAttachments();
     const approvalTimer = typeof setInterval === 'function'
       ? setInterval(() => { if (state.sessionId && !approvalBusy) refreshApprovals(); }, 2000)
       : null;
@@ -1394,7 +1516,7 @@ return (function () {
       root,
       update, setSession, openJian,
       dispose: () => { disposed = true; historyVersion += 1; workspaceVersion += 1;
-        checkpointVersion += 1; approvalVersion += 1; memoryVersion += 1;
+        checkpointVersion += 1; approvalVersion += 1; memoryVersion += 1; attachmentVersion += 1;
         if (approvalTimer != null) clearInterval(approvalTimer);
         if (typeof unsubscribeSlots === 'function') unsubscribeSlots(); },
     };

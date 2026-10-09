@@ -50,6 +50,8 @@ const check = (label, cond) => { if (!cond) failures.push(label); };
 const tauri = studio.require('lib/tauri-invoke');
 const api = studio.require('lib/api');
 const adapter = studio.require('lib/hana-adapter');
+api.projectCatalogAvailable = () => false;
+api.automationSchedulerAvailable = () => false;
 const host = studio.require('lib/host-bridge');
 
 let invokeError = null;
@@ -2464,6 +2466,109 @@ check('host bridge correlates requestId',
     && absent.capabilities.memoryToggle === false
     && absent.capabilities.primaryAgentSwitch === false
     && absent.capabilities.agentConfigWrite === false);
+}
+
+// Native Phase B vertical slices (separate from legacy browser-only tests).
+{
+  const original = {
+    projectAvailable: api.projectCatalogAvailable,
+    getProject: api.getProjectCatalog,
+    putProject: api.putProjectCatalog,
+    schedulerAvailable: api.automationSchedulerAvailable,
+    jobs: api.getAutomationJobs,
+    mutate: api.mutateAutomationJob,
+    run: api.runAutomationJob,
+    filesAvailable: api.sessionAttachmentsAvailable,
+    list: api.listSessionAttachments,
+    read: api.readSessionAttachment,
+    delete: api.deleteSessionAttachment,
+  };
+  const clone = (value) => JSON.parse(JSON.stringify(value));
+  let nativeCatalog = { revision: 'r0', catalog: { projects: [], folders: [] }, assignments: {} };
+  let failCas = false;
+  api.projectCatalogAvailable = () => true;
+  api.getProjectCatalog = async () => ({ ok: true, ...clone(nativeCatalog) });
+  api.putProjectCatalog = async (revision, catalog, assignments) => {
+    if (failCas || revision !== nativeCatalog.revision) throw new Error('project revision conflict');
+    nativeCatalog = { revision: 'r' + (Number(revision.slice(1)) + 1),
+      catalog: clone(catalog), assignments: clone(assignments) };
+    return { ok: true, ...clone(nativeCatalog) };
+  };
+  const folder = await adapter.http('POST', '/api/session-projects/folders', { name: 'Native projects' });
+  const project = await adapter.http('POST', '/api/session-projects/projects', {
+    name: 'Native build', folderId: folder.folder.id, workspacePath: '/tmp/native-project',
+  });
+  const assignment = await adapter.http('POST', '/api/session-projects/session-assignment', {
+    sessionPath: 'studio://agent-1', projectId: project.project.id,
+  });
+  const listing = await adapter.http('GET', '/api/session-projects');
+  check('native catalog handles folder/project/session assignment and CAS with no local persistence',
+    folder?.ok === true && project?.ok === true && assignment?.ok === true
+    && listing.catalog.projects.some((row) => row.id === project.project.id)
+    && nativeCatalog.assignments['studio://agent-1'] === project.project.id
+    && nativeCatalog.revision === 'r3');
+  failCas = true;
+  const failedProject = await adapter.http('POST', '/api/session-projects/projects', { name: 'Bad overlap' });
+  check('native project conflict fails closed instead of acknowledging optimistic local data',
+    failedProject?.ok === false && nativeCatalog.revision === 'r3');
+  failCas = false;
+  const listingAfterConflict = await adapter.http('GET', '/api/session-projects');
+  check('project conflict does not leak failed optimistic data into native reads',
+    !listingAfterConflict.catalog.projects.some((row) => row.name === 'Bad overlap'));
+
+  let job = { id: 'automation-native-1', type: 'every', schedule: 60000, enabled: false,
+    label: 'Native check', prompt: 'Check', nextRunAt: null };
+  let failedScheduler = false;
+  api.automationSchedulerAvailable = () => true;
+  api.getAutomationJobs = async () => ({ ok: true, schedulerAvailable: true, jobs: [clone(job)] });
+  api.mutateAutomationJob = async (payload) => {
+    if (failedScheduler) throw new Error('cannot save scheduler');
+    if (payload.action === 'toggle') job.enabled = !job.enabled;
+    if (payload.action === 'update') job = { ...job, ...payload };
+    return { ok: true, job: clone(job) };
+  };
+  api.runAutomationJob = async (id) => ({ ok: true, status: 'success', jobId: id, agentId: 'agent-1' });
+  const schedulerList = await adapter.http('GET', '/api/desk/cron');
+  const enabled = await adapter.http('POST', '/api/desk/cron', { action: 'toggle', id: job.id });
+  const ran = await adapter.http('POST', '/api/desk/cron', { action: 'run', id: job.id });
+  check('automation scheduler routes native enablement and run-now acknowledgments',
+    schedulerList?.schedulerAvailable === true && schedulerList.jobs[0].enabled === false
+    && enabled.job.enabled === true && ran.status === 'success');
+  failedScheduler = true;
+  const failedJob = await adapter.http('POST', '/api/desk/cron', { action: 'toggle', id: job.id });
+  check('scheduler cannot display enabled on a failed native mutation',
+    failedJob?.ok === false && job.enabled === true);
+
+  const fileId = 'studio-file-abcd-1234';
+  api.sessionAttachmentsAvailable = () => true;
+  let attachmentRemoved = false;
+  api.listSessionAttachments = async (agentId) => ({ ok: true, sessionId: agentId,
+    files: attachmentRemoved ? [] : [{ sessionId: agentId, id: fileId, name: 'notes.txt', size: 7 }],
+  });
+  api.readSessionAttachment = async (agentId, id) => ({ ok: true, sessionId: agentId,
+    id, name: 'notes.txt', size: 7, base64: 'dGVzdGluZw==' });
+  api.deleteSessionAttachment = async (agentId, id) => {
+    attachmentRemoved = true;
+    return { ok: true, sessionId: agentId, id, deleted: true };
+  };
+  const listed = await adapter.http('GET', '/api/session-attachments?sessionId=agent-1');
+  const attachment = await adapter.http('GET', '/api/session-attachments/content?sessionId=agent-1&fileId=' + fileId);
+  const removed = await adapter.http('POST', '/api/session-attachments/remove', { sessionId: 'agent-1', fileId });
+  const badAttachment = await adapter.http('GET', '/api/session-attachments/content?sessionId=agent-1&fileId=..%2Fsecret');
+  check('session attachment lifecycle requires native IDs and matching ack',
+    listed?.files?.length === 1 && attachment?.base64 === 'dGVzdGluZw=='
+    && removed?.deleted === true && badAttachment?.code === 'invalid_file');
+  api.projectCatalogAvailable = original.projectAvailable;
+  api.getProjectCatalog = original.getProject;
+  api.putProjectCatalog = original.putProject;
+  api.automationSchedulerAvailable = original.schedulerAvailable;
+  api.getAutomationJobs = original.jobs;
+  api.mutateAutomationJob = original.mutate;
+  api.runAutomationJob = original.run;
+  api.sessionAttachmentsAvailable = original.filesAvailable;
+  api.listSessionAttachments = original.list;
+  api.readSessionAttachment = original.read;
+  api.deleteSessionAttachment = original.delete;
 }
 
 detach();

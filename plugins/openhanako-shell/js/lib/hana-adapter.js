@@ -120,8 +120,12 @@ return (function () {
   // project catalog still function in Node harnesses or private mode where
   // Storage exists but setItem/getItem no-ops or throws.
   const memoryStore = new Map();
+  let nativeCatalogActive = false;
+  let projectOperationQueue = Promise.resolve();
   const studioUploadedFiles = new Map();
   const readJson = (key, fallback) => {
+    if (nativeCatalogActive && (key === CATALOG_KEY || key === ASSIGN_KEY))
+      return memoryStore.has(key) ? memoryStore.get(key) : fallback;
     try {
       if (typeof localStorage !== 'undefined') {
         const raw = localStorage.getItem(key);
@@ -140,6 +144,8 @@ return (function () {
 
   const writeJson = (key, value) => {
     memoryStore.set(key, value);
+    // A native catalog mutation must never silently become a localStorage save.
+    if (nativeCatalogActive && (key === CATALOG_KEY || key === ASSIGN_KEY)) return;
     try {
       if (typeof localStorage === 'undefined') return;
       localStorage.setItem(key, JSON.stringify(value));
@@ -2365,6 +2371,50 @@ return (function () {
           && Object.keys(patch).every((key) => r.config[key] === patch[key]));
     }
 
+    if (pathname === '/api/desk/cron' && api.automationSchedulerAvailable?.()) {
+      try {
+        const result = verb === 'GET' ? await api.getAutomationJobs()
+          : verb === 'POST' && body?.action === 'run' ? await api.runAutomationJob(String(body.id || ''))
+            : verb === 'POST' ? await api.mutateAutomationJob(body || {}) : null;
+        if (!result) return { ok: false, error: 'unsupported automation method' };
+        if (result.ok !== true || result.error) return { ok: false, code: 'native_scheduler_failed',
+          error: result.error || 'Studio scheduler refused operation' };
+        if (verb === 'GET' && (!Array.isArray(result.jobs) || result.schedulerAvailable !== true)) {
+          return { ok: false, error: 'invalid native scheduler state' };
+        }
+        return result;
+      } catch (error) { return stageAFailure(error, 'native_automation_scheduler'); }
+    }
+    if (pathname === '/api/session-attachments' || pathname === '/api/session-attachments/content'
+      || pathname === '/api/session-attachments/remove') {
+      if (!api.sessionAttachmentsAvailable?.()) return stageAUnsupported('list_session_attachments');
+      const agentId = idFrom(body?.sessionId || query.sessionId || body?.agentId || query.agentId);
+      const fileId = body?.fileId || query.fileId;
+      if (!agentId) return { ok: false, code: 'invalid_session', error: 'Session ID required' };
+      if (pathname !== '/api/session-attachments' && (typeof fileId !== 'string'
+        || !/^studio-file-[a-fA-F0-9]+-[a-fA-F0-9]+$/.test(fileId))) {
+        return { ok: false, code: 'invalid_file', error: 'Invalid managed attachment ID' };
+      }
+      if (pathname === '/api/session-attachments' && verb === 'GET') {
+        return stageAInvoke('list_session_attachments', true,
+          () => api.listSessionAttachments(agentId),
+          (r) => r.sessionId === agentId && Array.isArray(r.files)
+            && r.files.every((file) => file.sessionId === agentId && typeof file.name === 'string'
+              && /^studio-file-[a-fA-F0-9]+-[a-fA-F0-9]+$/.test(file.id)));
+      }
+      if (pathname === '/api/session-attachments/content' && verb === 'GET') {
+        return stageAInvoke('read_session_attachment', true,
+          () => api.readSessionAttachment(agentId, fileId),
+          (r) => r.sessionId === agentId && r.id === fileId
+            && typeof r.base64 === 'string' && /^[A-Za-z0-9+/]*={0,2}$/.test(r.base64));
+      }
+      if (pathname === '/api/session-attachments/remove' && verb === 'POST') {
+        return stageAInvoke('delete_session_attachment', true,
+          () => api.deleteSessionAttachment(agentId, fileId),
+          (r) => r.sessionId === agentId && r.id === fileId && r.deleted === true);
+      }
+      return { ok: false, code: 'invalid_method', error: 'Unsupported attachment operation' };
+    }
     if (pathname === '/api/health' && verb === 'GET') {
       const configured = await configuredModelFallback();
       return {
@@ -3302,7 +3352,17 @@ return (function () {
 
     if ((pathname === '/api/sessions/new' || pathname === '/api/sessions/new-detached') && verb === 'POST') {
       const pending = modelForPath(null);
-      const catalog = loadCatalog();
+      if (body?.projectId && api.projectCatalogAvailable?.()) {
+        let nativeCatalog;
+        try { nativeCatalog = await api.getProjectCatalog(); }
+        catch (error) { return stageAFailure(error, 'get_project_catalog'); }
+        if (nativeCatalog?.ok !== true || !Array.isArray(nativeCatalog.catalog?.projects)) {
+          return { ok: false, code: 'invalid_native_ack', error: 'Project catalog unavailable for session creation' };
+        }
+        memoryStore.set(CATALOG_KEY, nativeCatalog.catalog);
+      }
+      const catalog = body?.projectId && api.projectCatalogAvailable?.()
+        ? normalizeCatalog(memoryStore.get(CATALOG_KEY)) : loadCatalog();
       const requestedProjectId = typeof body?.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : null;
       const mappedProject = requestedProjectId ? catalog.projects.find((project) => project.id === requestedProjectId) : null;
       if (requestedProjectId && requestedProjectId !== UNCATEGORIZED_PROJECT_ID && !mappedProject) {
@@ -3644,6 +3704,42 @@ return (function () {
       };
     }
 
+    if ((pathname === '/api/session-projects' || pathname.startsWith('/api/session-projects/'))
+      && api.projectCatalogAvailable?.()) {
+      const run = projectOperationQueue.then(async () => {
+        let native;
+        try { native = await api.getProjectCatalog(); }
+        catch (error) { return stageAFailure(error, 'get_project_catalog'); }
+        if (native?.ok !== true || !/^r[0-9]+$/.test(native.revision || '')
+          || !native.catalog || !Array.isArray(native.catalog.projects)
+          || !Array.isArray(native.catalog.folders) || !native.assignments
+          || typeof native.assignments !== 'object' || Array.isArray(native.assignments)) {
+          return { ok: false, code: 'invalid_native_ack', error: 'Native project catalog read was not acknowledged' };
+        }
+        memoryStore.set(CATALOG_KEY, native.catalog);
+        memoryStore.set(ASSIGN_KEY, native.assignments);
+        nativeCatalogActive = true;
+        let result;
+        try { result = handleSessionProjects(pathname, verb, body, query); }
+        finally { nativeCatalogActive = false; }
+        if (verb === 'GET' || !result || result.ok !== true) return result;
+        const catalog = memoryStore.get(CATALOG_KEY);
+        const assignments = memoryStore.get(ASSIGN_KEY);
+        try {
+          const ack = await api.putProjectCatalog(native.revision, catalog, assignments);
+          if (ack?.ok !== true || !/^r[0-9]+$/.test(ack.revision || '')
+            || ack.revision === native.revision
+            || JSON.stringify(normalizeCatalog(ack.catalog)) !== JSON.stringify(normalizeCatalog(catalog))
+            || Object.keys(ack.assignments || {}).length !== Object.keys(assignments).length
+            || Object.keys(assignments).some((key) => ack.assignments?.[key] !== assignments[key])) {
+            return { ok: false, code: 'native_project_conflict', error: ack?.error || 'Studio did not persist project mutation' };
+          }
+          return { ...result, revision: ack.revision, source: 'studio-native' };
+        } catch (error) { return stageAFailure(error, 'put_project_catalog'); }
+      });
+      projectOperationQueue = run.catch(() => {});
+      return run;
+    }
     const projectResult = handleSessionProjects(pathname, verb, body, query);
     if (projectResult !== null) return projectResult;
 

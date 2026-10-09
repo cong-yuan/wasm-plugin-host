@@ -3360,6 +3360,49 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   adapter.http = oldHttp;
 }
 
+// Phase B managed attachment panel uses Studio-owned file identities only.
+{
+  const railModule = studio.require('panels/rail');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const oldAvailable = api.sessionAttachmentsAvailable;
+  api.sessionAttachmentsAvailable = () => true;
+  const id = 'studio-file-1111-22aa';
+  let files = [{ id, name: 'report.txt', sessionId: 'file-agent', size: 6 }];
+  let deletes = 0;
+  adapter.http = async (method, path, body) => {
+    if (path.startsWith('/api/session-attachments?')) return { ok: true, sessionId: 'file-agent', files };
+    if (path.startsWith('/api/session-attachments/content?')) return {
+      ok: true, sessionId: 'file-agent', id, name: 'report.txt', base64: 'cmVwb3J0',
+    };
+    if (path === '/api/session-attachments/remove') {
+      deletes += 1;
+      files = [];
+      return { ok: true, sessionId: body.sessionId, id: body.fileId, deleted: true };
+    }
+    return oldHttp(method, path, body);
+  };
+  const rail = railModule.render();
+  rail.setSession('file-agent');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('managed attachments list native session ownership and file names',
+    rail.root.querySelector('.railAttachmentRow')?.textContent.includes('report.txt'));
+  rail.root.querySelector('.railAttachmentPreview')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('managed attachment requires a native read before surfacing download',
+    rail.root.querySelector('.railAttachmentDownload')?.getAttribute('href')?.includes('cmVwb3J0'));
+  rail.root.querySelector('.railAttachmentRemove')?.fire('click');
+  check('managed attachment deletion is explicitly two-step',
+    deletes === 0 && /Confirm removal/.test(rail.root.querySelector('.railAttachmentRemove')?.textContent || ''));
+  rail.root.querySelector('.railAttachmentRemove')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('managed attachment disappears only after exact native deletion ack',
+    deletes === 1 && !rail.root.querySelector('.railAttachmentRow'));
+  rail.dispose();
+  adapter.http = oldHttp;
+  api.sessionAttachmentsAvailable = oldAvailable;
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));
