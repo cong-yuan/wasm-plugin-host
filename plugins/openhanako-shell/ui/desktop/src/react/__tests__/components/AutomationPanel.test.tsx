@@ -132,6 +132,21 @@ describe('AutomationPanel', () => {
     }));
   });
 
+  it('surfaces a persisted unknown delivery result after Studio restarts', async () => {
+    vi.mocked(hanaFetch).mockImplementation(async (url) => {
+      if (url === '/api/models') return new Response(JSON.stringify({ models: [] }), { status: 200 });
+      return new Response(JSON.stringify({ schedulerAvailable: true, jobs: [{
+        id: 'recovered-run', label: 'Check after restart', type: 'cron',
+        schedule: '0 9 * * *', enabled: true, prompt: 'Check status',
+        actorAgentId: 'hanako', lastDispatchState: 'interrupted',
+        lastError: 'Studio restarted before delivery was confirmed; outcome unknown',
+      }] }), { status: 200 });
+    });
+    render(<AutomationPanel />);
+    expect(await screen.findByText('Delivery not confirmed after restart')).toBeInTheDocument();
+    expect(screen.getByText(/outcome unknown/)).toBeInTheDocument();
+  });
+
   it('disables conflicting actions while another window is dispatching the job', async () => {
     vi.mocked(hanaFetch).mockImplementation(async (url, options) => {
       if (url === '/api/models') return new Response(JSON.stringify({ models: [] }), { status: 200 });

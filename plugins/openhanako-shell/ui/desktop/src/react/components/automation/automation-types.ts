@@ -29,6 +29,7 @@ export interface CronJob {
   lastRunAt?: string | null;
   lastAttemptAt?: string | null;
   lastError?: string | null;
+  lastDispatchState?: 'dispatching' | 'dispatched' | 'failed' | 'interrupted' | null;
   running?: boolean;
   createdAt?: string;
   model?: string | ModelRef;

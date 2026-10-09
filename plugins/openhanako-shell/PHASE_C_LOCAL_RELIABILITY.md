@@ -14,3 +14,9 @@ The repository's `.github/workflows/ci.yml` **has been deleted entirely** at the
 ## Remaining deployment acceptance
 
 Start the newly compiled installed Studio desktop binary on macOS, verify actual allowed and blocked sandboxed shell calls, persistent native project data across a GUI restart, and an automation firing while Studio is open. The restricted tunl runner does not allow validating nested `sandbox-exec` success. The project migration deliberately refuses conflicts instead of attempting automatic merges. No background OS service for automations is included.
+
+## Follow-up: descriptor-bound managed files and crash recovery
+
+The native managed attachment implementation now uses `openat`/`unlinkat` on an open session-directory descriptor on macOS/Unix, including file creation and enumeration. A parent-path symlink swap after authorization cannot redirect these operations to a different directory. The earlier validated pathname fallback applies on non-Unix targets. Tests exercise swapping the `session-files` parent to an external symlink, attempts to recreate files, repeated directory enumeration, oversized files and final-component symlinks.
+
+Studio's persisted automation entries now distinguish `dispatching`, `dispatched`, `failed` and `interrupted` states. A cold restart converts a stale `dispatching` state to `interrupted` and records that the delivery result is unknown; it does not automatically resend and risk duplicates. OpenHanako shows a visible restart-warning status. This is **delivery acknowledgement**, not proof that the model/tool run finished. All validation is local to the Mac. No GitHub Actions workflow exists.

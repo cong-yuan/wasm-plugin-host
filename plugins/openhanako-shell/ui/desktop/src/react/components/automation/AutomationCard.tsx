@@ -151,6 +151,8 @@ export function AutomationCard({
             {job.nextRunAt ? <span className={styles.meta}>{new Date(job.nextRunAt).toLocaleString(undefined, { hour12: false })}</span> : null}
             <span className={styles.badge}>{executorLabel}</span>
             {running ? <span className={styles.meta} role="status">Dispatch in progress</span> : null}
+            {!running && job.lastDispatchState === 'interrupted'
+              ? <span className={styles.meta} role="status">Delivery not confirmed after restart</span> : null}
             {job.lastError ? <span className={styles.meta} role="status"
               title={job.lastError}>⚠ {job.lastError.slice(0, 140)}</span> : null}
             {!job.lastError && job.lastRunAt ? <span className={styles.meta}
