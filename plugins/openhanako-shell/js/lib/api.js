@@ -755,6 +755,15 @@ return (function () {
     },
 
     transcript: async (agentId) => readTranscript(agentId),
+    trajectoryAvailable: () => nativeCommandAvailable('session_trajectory'),
+    getTrajectory: async (agentId, before = null, limit = 200) => {
+      if (!tauri.available()) {
+        const error = new Error('Trajectory requires a connected Studio native session');
+        error.code = 'capability_unavailable';
+        throw error;
+      }
+      return invokeNative('session_trajectory', {agentId, before, limit});
+    },
 
     resume: async (sessionId) => {
       if (!tauri.available()) return mock.resume(sessionId);

@@ -2640,6 +2640,38 @@ check('host bridge correlates requestId',
   api.deleteSessionAttachment = original.delete;
 }
 
+// Native trajectory always reads the real Studio event ledger, with explicit
+// cursor validation and fail-closed unsupported-host behavior.
+{
+  const previousAvailable = api.trajectoryAvailable;
+  const previousTrajectory = api.getTrajectory;
+  const calls=[];
+  api.trajectoryAvailable=()=>true;
+  api.getTrajectory=async (agentId,before,limit)=>{
+    calls.push({agentId,before,limit});
+    return {ok:true,records:[{seq:8,time:1790000000000,turn:2,step:1,
+      role:'tool',kind:'tool/call',label:'read_file',content:'{}',durationMs:35}],
+      total:18,hasMore:true,nextBefore:8};
+  };
+  const first=await adapter.http('GET','/api/session-trajectory?sessionId=studio%3A%2F%2Fagent-1&limit=40');
+  const earlier=await adapter.http('GET','/api/session-trajectory?sessionId=studio%3A%2F%2Fagent-1&before=8&limit=40');
+  const malformed=await adapter.http('GET','/api/session-trajectory?sessionId=agent-1&before=not-a-number');
+  const mutating=await adapter.http('POST','/api/session-trajectory',{sessionId:'agent-1'});
+  check('trajectory routes a session path to true native event paging',
+    first?.ok===true && first.records[0].kind==='tool/call'
+    && earlier?.nextBefore===8 && calls.length===2
+    && calls[0].agentId==='agent-1' && calls[0].before===null && calls[0].limit===40
+    && calls[1].before===8);
+  check('trajectory denies invalid paging or mutating methods',
+    malformed?.code==='invalid_pagination' && mutating?.code==='invalid_method' && calls.length===2);
+  api.trajectoryAvailable=()=>false;
+  const unavailable=await adapter.http('GET','/api/session-trajectory?sessionId=agent-1');
+  check('missing native trajectory cannot fall back to fabricated records',
+    unavailable?.ok===false && unavailable.code==='capability_unavailable');
+  api.trajectoryAvailable=previousAvailable;
+  api.getTrajectory=previousTrajectory;
+}
+
 detach();
 check('detach removes the message listener', messageHandlers.length === 0);
 

@@ -2,6 +2,10 @@
 
 > 2026-10-09 本机只读审计后整理。此清单记录“Studio 原生能力”和“完整 Hana Server 可用能力”的差异；不把原生桥接未覆盖误报为上游 Hana 功能不存在。`DEVELOPMENT.md` 中早期 Phase 段落属于历史实施记录。本仓库**不启用 GitHub CI**。
 
+## 新近完成：Studio 原生 Trajectory
+
+- `Chat / Trajectory` 是**会话内的独立视图**，不同于旧版 Chat 气泡中的 `过程详情`：提供三轨时间轴、按角色着色的时间序事件记录、详情检视、过滤、尾部分页、真实 Token/TTFT 和工具状态。详见 [`TRAJECTORY_NATIVE_VIEW.md`](TRAJECTORY_NATIVE_VIEW.md)。待在安装版 Studio 重新构建/重启后做真实 GUI 点击验收（归入 C04）；流式断线后精确补帧仍属 C02。不要将两者误报为已解决。
+
 ## P0 — 先保证用户可用与回归可信
 
 | 编号 | 状态 | 验收标准 |

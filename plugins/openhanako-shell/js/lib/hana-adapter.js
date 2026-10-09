@@ -2442,6 +2442,25 @@ return (function () {
         return result;
       } catch (error) { return stageAFailure(error, 'native_automation_scheduler'); }
     }
+    if (pathname === '/api/session-trajectory') {
+      if (verb !== 'GET') return {ok:false,code:'invalid_method',error:'Only GET is supported'};
+      if (!api.trajectoryAvailable?.()) return stageAUnsupported('session_trajectory');
+      const agentId = sessionIdFromBody(body, query);
+      if (!agentId) return {ok:false,code:'invalid_session',error:'Session ID required'};
+      const before = query.before != null && /^[0-9]+$/.test(String(query.before))
+        ? Number(query.before) : null;
+      const limit = query.limit != null && /^[0-9]+$/.test(String(query.limit))
+        ? Math.min(500, Math.max(1, Number(query.limit))) : 200;
+      if ((query.before != null && (!Number.isSafeInteger(before) || before < 0))
+        || (query.limit != null && !/^[0-9]+$/.test(String(query.limit))))
+        return {ok:false,code:'invalid_pagination',error:'Invalid trajectory cursor or page size'};
+      return stageAInvoke('session_trajectory', true,
+        () => api.getTrajectory(agentId, before, limit),
+        (r) => Array.isArray(r.records) && Number.isInteger(r.total)
+          && typeof r.hasMore === 'boolean'
+          && r.records.every((row) => Number.isInteger(row.seq)
+            && Number.isFinite(row.time) && typeof row.role === 'string'));
+    }
     if (pathname === '/api/session-attachments' || pathname === '/api/session-attachments/content'
       || pathname === '/api/session-attachments/remove') {
       if (!api.sessionAttachmentsAvailable?.()) return stageAUnsupported('list_session_attachments');
