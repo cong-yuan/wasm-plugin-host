@@ -2516,6 +2516,52 @@ check('host bridge correlates requestId',
   check('project conflict does not leak failed optimistic data into native reads',
     !listingAfterConflict.catalog.projects.some((row) => row.name === 'Bad overlap'));
 
+  // Phase C migration: preview, confirm, CAS and preserve old browser copy.
+  const priorStorage = global.localStorage;
+  const browserData = new Map();
+  global.localStorage = {
+    getItem(key) { return browserData.has(key) ? browserData.get(key) : null; },
+    setItem(key, value) { browserData.set(key, String(value)); },
+    removeItem(key) { browserData.delete(key); },
+  };
+  browserData.set('openhanako.sessionProjectCatalog.v1', JSON.stringify({
+    folders: [{ id: 'f-legacy', name: 'Old folder', order: 0 }],
+    projects: [{ id: 'p-legacy', name: 'Old project', folderId: 'f-legacy',
+      workspacePath: '/tmp/legacy', order: 0 }],
+  }));
+  browserData.set('openhanako.sessionProjectAssignments.v1', JSON.stringify({
+    'studio://legacy': 'p-legacy', 'studio://invalid': 'absent-project',
+  }));
+  const collisionPreview = await adapter.http('GET', '/api/session-projects/native-migration');
+  check('migration preview blocks overwriting a nonempty native project catalog',
+    collisionPreview?.ok === true && collisionPreview?.canImport === false
+      && collisionPreview?.projects === 1 && collisionPreview?.assignments === 1);
+  nativeCatalog = { revision: 'r9', catalog: { projects: [], folders: [] }, assignments: {} };
+  const preview = await adapter.http('GET', '/api/session-projects/native-migration');
+  const prematureImport = await adapter.http('POST', '/api/session-projects/native-migration', {
+    confirm: 'import-local-projects', sourceSignature: 'stale', nativeRevision: preview.nativeRevision,
+  });
+  check('migration requires a matching preview and explicit user confirmation',
+    preview?.canImport === true && preview.sourceSignature?.startsWith('legacy-')
+    && prematureImport?.code === 'migration_requires_confirmation');
+  const imported = await adapter.http('POST', '/api/session-projects/native-migration', {
+    confirm: 'import-local-projects', sourceSignature: preview.sourceSignature,
+    nativeRevision: preview.nativeRevision,
+  });
+  check('explicit local to native migration preserves folders, assignments and source backup',
+    imported?.ok === true && imported?.imported === true && imported.sourcePreserved === true
+    && nativeCatalog.catalog.projects[0]?.name === 'Old project'
+    && nativeCatalog.assignments['studio://legacy'] === 'p-legacy'
+    && !nativeCatalog.assignments['studio://invalid']
+    && browserData.get('openhanako.sessionProjectCatalog.v1')?.includes('Old project'));
+  const secondImport = await adapter.http('GET', '/api/session-projects/native-migration');
+  check('a completed migration cannot be silently imported twice',
+    secondImport?.canImport === false);
+  if (priorStorage === undefined) delete global.localStorage;
+  else global.localStorage = priorStorage;
+  nativeCatalog = { revision: 'r3', catalog: clone(listing.catalog),
+    assignments: { 'studio://agent-1': project.project.id } };
+
   let job = { id: 'automation-native-1', type: 'every', schedule: 60000, enabled: false,
     label: 'Native check', prompt: 'Check', nextRunAt: null };
   let failedScheduler = false;

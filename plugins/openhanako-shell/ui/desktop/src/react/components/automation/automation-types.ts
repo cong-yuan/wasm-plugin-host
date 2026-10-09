@@ -27,6 +27,8 @@ export interface CronJob {
   schedule: string | number;
   nextRunAt?: string | null;
   lastRunAt?: string | null;
+  lastAttemptAt?: string | null;
+  lastError?: string | null;
   createdAt?: string;
   model?: string | ModelRef;
   actorAgentId?: string;

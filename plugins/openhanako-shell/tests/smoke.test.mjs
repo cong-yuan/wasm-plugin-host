@@ -3403,6 +3403,53 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.sessionAttachmentsAvailable = oldAvailable;
 }
 
+// Phase C explicit browser-to-Studio project import never runs on its own.
+{
+  const railModule = studio.require('panels/rail');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const oldAvailable = api.projectCatalogAvailable;
+  api.projectCatalogAvailable = () => true;
+  let submitted = 0;
+  let fail = true;
+  adapter.http = async (method, path, body) => {
+    if (path === '/api/session-projects/native-migration' && method === 'GET') {
+      return { ok: true, available: true, canImport: true,
+        targetEmpty: true, folders: 1, projects: 2, assignments: 2,
+        sourceSignature: 'legacy-1a2b', nativeRevision: 'r0' };
+    }
+    if (path === '/api/session-projects/native-migration' && method === 'POST') {
+      submitted++;
+      if (fail) return { ok: false, error: 'Native revision mismatch' };
+      return { ok: true, imported: true, sourcePreserved: true };
+    }
+    return oldHttp(method, path, body);
+  };
+  const rail = railModule.render();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('project import UI previews count and requires explicit choice',
+    rail.root.querySelector('.railProjectMigrationPanel')?.textContent.includes('2 projects')
+    && !!rail.root.querySelector('.railMigrationImport') && submitted === 0);
+  rail.root.querySelector('.railMigrationImport')?.fire('click');
+  check('first project migration click never mutates native catalog',
+    submitted === 0 && /Confirm import/.test(rail.root.querySelector('.railMigrationImport')?.textContent || ''));
+  rail.root.querySelector('.railMigrationImport')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('migration CAS rejection keeps import available and shows failure',
+    submitted === 1 && /Native revision mismatch/.test(rail.root.textContent || '')
+    && !!rail.root.querySelector('.railMigrationImport'));
+  fail = false;
+  rail.root.querySelector('.railMigrationImport')?.fire('click');
+  rail.root.querySelector('.railMigrationImport')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('native migration successful ACK retains browser source and hides repeat button',
+    submitted === 2 && /Original browser projects preserved/.test(rail.root.textContent || '')
+    && !rail.root.querySelector('.railMigrationImport'));
+  rail.dispose();
+  api.projectCatalogAvailable = oldAvailable;
+  adapter.http = oldHttp;
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));

@@ -11940,3 +11940,7 @@ html[data-platform="linux"] .onboarding {
 .railAttachmentRefresh:disabled, .railAttachmentPreview:disabled, .railAttachmentRemove:disabled { opacity:.5; cursor:default; }
 .railAttachmentDownload { overflow-wrap:anywhere; }
 .railAttachmentStatus { font-size:11px; color:var(--text-muted); }
+.railProjectMigrationPanel { display:flex;flex-direction:column;gap:6px;padding:8px;border-bottom:1px solid rgba(0,0,0,.12);font-size:11px; }
+.railMigrationImport { color:var(--text-primary);background:rgba(0,0,0,.07);border:0;border-radius:4px;padding:5px 8px;cursor:pointer;font:inherit; }
+.railMigrationImport:disabled {opacity:.5;cursor:not-allowed;}
+.railMigrationStatus {color:var(--text-muted);overflow-wrap:anywhere;}

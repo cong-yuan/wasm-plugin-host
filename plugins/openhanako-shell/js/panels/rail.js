@@ -61,6 +61,8 @@ return (function () {
     let attachmentVersion = 0;
     let attachmentBusy = false;
     let attachmentDeleteIntent = null;
+    let migrationState = { preview: null, busy: false, armed: false, status: '' };
+    let migrationVersion = 0;
 
     // <div className={styles.workspaceHeader}> + workspaceTitle
     const title = h('div', { class: 'workspaceTitle' }, t('desk.title'));
@@ -71,6 +73,8 @@ return (function () {
       'aria-label': 'Agent memory notes' });
     const attachmentPanel = h('section', { class: 'railAttachmentPanel',
       'aria-label': 'Managed session attachments' });
+    const migrationPanel = h('section', { class: 'railProjectMigrationPanel',
+      'aria-label': 'Legacy project migration' });
     const headerSlot = h('div', { class: 'rail-header-slot' });
     slots.mount('openhanako.rail.header', headerSlot);
 
@@ -217,7 +221,7 @@ return (function () {
       class: 'universal-card workspaceCard',
       'data-right-workspace-card': '',
       'data-jian-open': 'false',
-    }, header, headerSlot, approvalPanel, memoryPanel, attachmentPanel, tabs, content, drawer, jianToggle);
+    }, header, headerSlot, approvalPanel, memoryPanel, attachmentPanel, migrationPanel, tabs, content, drawer, jianToggle);
 
     // <div className={styles.shell}>
     const shell = h('div', { class: 'workspaceShell' }, card);
@@ -589,6 +593,79 @@ return (function () {
       } finally {
         job.busy = false;
         if (!disposed && workspaceUpload === job && workspaceVersion === version) renderData(latestData);
+      }
+    };
+    const renderMigration = () => {
+      clear(migrationPanel);
+      const preview = migrationState.preview;
+      if (!api.projectCatalogAvailable?.() || !preview?.available) {
+        migrationPanel.style.display = 'none';
+        return;
+      }
+      migrationPanel.style.display = '';
+      migrationPanel.appendChild(h('strong', {}, 'Legacy project import · Studio'));
+      migrationPanel.appendChild(h('div', { class: 'railMigrationSummary' },
+        `${preview.folders} folders, ${preview.projects} projects, ${preview.assignments} assignments`));
+      if (!preview.targetEmpty) {
+        migrationPanel.appendChild(h('div', { class: 'railMigrationStatus' },
+          'Native projects already exist. Import blocked to protect their data.'));
+      } else {
+        const importButton = h('button', { type: 'button', class: 'railMigrationImport' },
+          migrationState.armed ? 'Confirm import to Studio' : 'Review and import local projects');
+        importButton.disabled = migrationState.busy;
+        importButton.onclick = () => {
+          if (!migrationState.armed) {
+            migrationState.armed = true;
+            renderMigration();
+          } else { void importLegacyProjects(); }
+        };
+        migrationPanel.appendChild(importButton);
+      }
+      if (migrationState.status) migrationPanel.appendChild(h('div', {
+        class: 'railMigrationStatus', 'aria-live': 'polite',
+      }, migrationState.status));
+    };
+    const loadProjectMigration = async () => {
+      if (disposed || !api.projectCatalogAvailable?.() || migrationState.busy) return;
+      const version = ++migrationVersion;
+      try {
+        const preview = await adapter.http('GET', '/api/session-projects/native-migration');
+        if (disposed || version !== migrationVersion) return;
+        if (preview?.ok !== true || typeof preview.canImport !== 'boolean')
+          throw new Error(preview?.error || 'Native import preview unavailable');
+        migrationState = { preview, busy: false, armed: false, status: '' };
+      } catch (error) {
+        if (disposed || version !== migrationVersion) return;
+        migrationState = { preview: null, busy: false, armed: false,
+          status: error?.message || 'Migration preview failed' };
+      }
+      renderMigration();
+    };
+    const importLegacyProjects = async () => {
+      if (disposed || migrationState.busy || !migrationState.armed
+        || !migrationState.preview?.canImport) return;
+      const { sourceSignature, nativeRevision } = migrationState.preview;
+      const version = migrationVersion;
+      migrationState.busy = true;
+      migrationState.status = 'Saving project catalog to native Studio…';
+      renderMigration();
+      try {
+        const result = await adapter.http('POST', '/api/session-projects/native-migration', {
+          confirm: 'import-local-projects', sourceSignature, nativeRevision,
+        });
+        if (result?.ok !== true || result.imported !== true || result.sourcePreserved !== true)
+          throw new Error(result?.error || 'Native migration not acknowledged');
+        if (disposed || version !== migrationVersion) return;
+        migrationState.armed = false;
+        migrationState.status = 'Imported to Studio. Original browser projects preserved.';
+        migrationState.preview = { ...migrationState.preview, targetEmpty: false, canImport: false };
+      } catch (error) {
+        if (disposed || version !== migrationVersion) return;
+        migrationState.armed = false;
+        migrationState.status = error?.message || 'Native migration failed';
+      } finally {
+        migrationState.busy = false;
+        if (!disposed && version === migrationVersion) renderMigration();
       }
     };
     const renderAttachments = () => {
@@ -1498,6 +1575,7 @@ return (function () {
     renderApprovals();
     renderNativeMemory();
     renderAttachments();
+    loadProjectMigration();
     const approvalTimer = typeof setInterval === 'function'
       ? setInterval(() => { if (state.sessionId && !approvalBusy) refreshApprovals(); }, 2000)
       : null;
@@ -1516,7 +1594,7 @@ return (function () {
       root,
       update, setSession, openJian,
       dispose: () => { disposed = true; historyVersion += 1; workspaceVersion += 1;
-        checkpointVersion += 1; approvalVersion += 1; memoryVersion += 1; attachmentVersion += 1;
+        checkpointVersion += 1; approvalVersion += 1; memoryVersion += 1; attachmentVersion += 1; migrationVersion += 1;
         if (approvalTimer != null) clearInterval(approvalTimer);
         if (typeof unsubscribeSlots === 'function') unsubscribeSlots(); },
     };

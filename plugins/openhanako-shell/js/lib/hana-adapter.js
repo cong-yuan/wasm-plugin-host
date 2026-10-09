@@ -624,6 +624,32 @@ return (function () {
     return { folders, projects };
   };
 
+  // A previously browser-only project catalog is never silently imported.
+  // Read the original browser storage directly: native catalog readbacks are
+  // cached separately, and must not masquerade as legacy source data.
+  const legacyProjectSource = () => {
+    try {
+      if (typeof localStorage === 'undefined') return null;
+      const raw = localStorage.getItem(CATALOG_KEY);
+      if (!raw) return null;
+      const catalog = normalizeCatalog(JSON.parse(raw));
+      const assignmentRaw = JSON.parse(localStorage.getItem(ASSIGN_KEY) || '{}');
+      const projectIds = new Set(catalog.projects.map((row) => row.id));
+      const assignments = {};
+      for (const [path, projectId] of Object.entries(assignmentRaw || {})) {
+        if (typeof path === 'string' && path && path.length <= 4096
+          && projectIds.has(projectId)) assignments[path] = projectId;
+      }
+      if (!catalog.folders.length && !catalog.projects.length) return null;
+      const signatureText = JSON.stringify({ catalog, assignments });
+      let hash = 2166136261;
+      for (let i = 0; i < signatureText.length; i++)
+        hash = Math.imul(hash ^ signatureText.charCodeAt(i), 16777619);
+      return { catalog, assignments, signature: 'legacy-' + (hash >>> 0).toString(16),
+        folders: catalog.folders.length, projects: catalog.projects.length,
+        assignmentsCount: Object.keys(assignments).length };
+    } catch (_) { return null; }
+  };
   const loadCatalog = () => normalizeCatalog(readJson(CATALOG_KEY, { folders: [], projects: [] }));
   const saveCatalog = (catalog) => writeJson(CATALOG_KEY, normalizeCatalog(catalog));
 
@@ -3704,6 +3730,50 @@ return (function () {
       };
     }
 
+    if (pathname === '/api/session-projects/native-migration' && api.projectCatalogAvailable?.()) {
+      const run = projectOperationQueue.then(async () => {
+        const legacy = legacyProjectSource();
+        let native;
+        try { native = await api.getProjectCatalog(); }
+        catch (error) { return stageAFailure(error, 'get_project_catalog'); }
+        if (native?.ok !== true || typeof native.revision !== 'string'
+          || !Array.isArray(native.catalog?.projects) || !Array.isArray(native.catalog?.folders)
+          || !native.assignments || typeof native.assignments !== 'object') {
+          return { ok: false, code: 'invalid_native_ack', error: 'Native catalog unavailable for migration' };
+        }
+        const targetEmpty = !native.catalog.projects.length && !native.catalog.folders.length
+          && Object.keys(native.assignments).length === 0;
+        if (verb === 'GET') return {
+          ok: true, available: !!legacy, sourceSignature: legacy?.signature || null,
+          folders: legacy?.folders || 0, projects: legacy?.projects || 0,
+          assignments: legacy?.assignmentsCount || 0,
+          nativeRevision: native.revision, targetEmpty,
+          canImport: !!legacy && targetEmpty,
+        };
+        if (verb !== 'POST' || body?.confirm !== 'import-local-projects'
+          || !legacy || body?.sourceSignature !== legacy.signature
+          || body?.nativeRevision !== native.revision) {
+          return { ok: false, code: 'migration_requires_confirmation',
+            error: 'Migration requires a matching preview and explicit confirmation' };
+        }
+        if (!targetEmpty) return { ok: false, code: 'migration_target_not_empty',
+          error: 'Native project catalog is not empty; refusing to overwrite existing projects' };
+        try {
+          const result = await api.putProjectCatalog(native.revision, legacy.catalog, legacy.assignments);
+          if (result?.ok !== true || result.revision === native.revision
+            || JSON.stringify(normalizeCatalog(result.catalog)) !== JSON.stringify(legacy.catalog)
+            || Object.keys(result.assignments || {}).length !== Object.keys(legacy.assignments).length
+            || Object.keys(legacy.assignments).some((key) => result.assignments[key] !== legacy.assignments[key])) {
+            return { ok: false, code: 'native_migration_ack', error: 'Native migration not confirmed' };
+          }
+          return { ok: true, imported: true, folders: legacy.folders,
+            projects: legacy.projects, assignments: legacy.assignmentsCount,
+            revision: result.revision, sourcePreserved: true };
+        } catch (error) { return stageAFailure(error, 'put_project_catalog'); }
+      });
+      projectOperationQueue = run.catch(() => {});
+      return run;
+    }
     if ((pathname === '/api/session-projects' || pathname.startsWith('/api/session-projects/'))
       && api.projectCatalogAvailable?.()) {
       const run = projectOperationQueue.then(async () => {

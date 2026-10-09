@@ -267,3 +267,10 @@
 - Vendored dsh-rs `bash` now runs inside a default-deny macOS OS sandbox for session-authorized roots and disallows unconfined fallback. With zero roots, on unsupported OSes or if the OS sandbox cannot execute, shell returns a denial instead of running unrestricted. A nested OS sandbox could not run under TUNL, so this still requires a real installed-app GUI/sandbox acceptance test.
 - Session attachments are explicitly managed by their native per-session upload cache identity: list, validated read and double-confirmed deletion in the right rail. Cross-session path access, symlinks and arbitrary attachment IDs are rejected. Rust, browser bridge and rail DOM regressions cover key success/failure contracts.
 - See `PHASE_B_NATIVE_INTEGRATIONS.md` for command-by-command integration, limits, and deployment checks.
+
+### Phase C local reliability and migration (2026-10-09)
+
+- GitHub Actions CI no longer triggers on pushes or pull requests; development checks run via the local Mac Runner only. The workflow file retains a manual-only entry that is not invoked by these iterations.
+- Studio's Stage B scheduler now records separate attempt/success/error statuses, isolates invalid schedules, consumes due one-shot tasks without stopping other jobs, holds per-job execution permits across async sends, resumes persisted Agents when dispatching, and syncs state before atomic replacement. Jobs claimed just before a hard crash may be skipped to avoid duplicate agent prompts; there is no exactly-once distributed guarantee.
+- The existing automation card exposes native error or completion status. A project migration preview/import interface moves legacy browser catalog and valid session assignments into an **empty** Studio native catalog after explicit two-click confirmation and CAS validation, retaining the original local browser copy.
+- See `PHASE_C_LOCAL_RELIABILITY.md` for verification, operational limits, and deployment checks.

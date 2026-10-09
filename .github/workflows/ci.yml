@@ -1,9 +1,8 @@
 name: CI
 
+# Local development and pushes do not launch GitHub-hosted CI.
+# Keep an explicitly manual diagnostic entry point only.
 on:
-  push:
-    branches: [master]
-  pull_request:
   workflow_dispatch:
 
 permissions:
