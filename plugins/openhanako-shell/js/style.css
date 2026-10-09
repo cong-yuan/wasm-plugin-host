@@ -11896,3 +11896,10 @@ html[data-platform="linux"] .onboarding {
 .railCheckpointMeta, .railCheckpointStatus { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
 .railCheckpointRefresh, .railCheckpointRestore, .railCheckpointRemove, .railCheckpointCancel { border: 0; border-radius: 5px; padding: 4px 6px; margin: 2px; font: inherit; font-size: 11px; cursor: pointer; color: var(--text-primary); background: rgba(0,0,0,0.06); }
 .railCheckpointRefresh:disabled, .railCheckpointRestore:disabled, .railCheckpointRemove:disabled, .railCheckpointCancel:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Session-scoped local Jian notes with explicit durability feedback. */
+.jianScope, .jianCounter, .jianStatus { font-size: 11px; color: var(--text-muted); }
+.jianScope, .jianCounter { white-space: nowrap; }
+.jianStatus { padding: 4px 8px; line-height: 1.4; overflow-wrap: anywhere; }
+.jianClear { border: 0; border-radius: 5px; cursor: pointer; padding: 3px 6px; color: var(--text-primary); background: rgba(0,0,0,0.06); font-size: 11px; }
+.jianClear:hover { background: rgba(0,0,0,0.10); }

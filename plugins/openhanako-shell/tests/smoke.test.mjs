@@ -2335,6 +2335,7 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   let sends = 0;
   let compacts = 0;
   let reads = 0;
+  let notesOpened = 0;
   api.sessionSummaryAvailable = () => true;
   api.freshCompactSessionAvailable = () => true;
   api.completeSessionTodosAvailable = () => true;
@@ -2356,7 +2357,8 @@ adapterForShellRefresh.http = originalHttpForRefresh;
     }
     return oldHttp(method, path, body);
   };
-  const panel = conversation.render({ onChanged() {}, onOpened() {}, onCreated() {} });
+  const panel = conversation.render({ onChanged() {}, onOpened() {}, onCreated() {},
+    onOpenNotes() { notesOpened += 1; } });
   const input = panel.root.querySelector('.input-box');
   const slashBtn = panel.root.querySelector('.nativeSlashButton');
   const cmdStatus = panel.root.querySelector('.nativeSlashStatus');
@@ -2370,9 +2372,12 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   await issue('/help');
   check('slash help opens local menu without sending a chat turn',
     sends === 0 && input.textContent === '' && cmdMenu.style.display === ''
-    && cmdMenu.querySelectorAll('.nativeSlashOption').length === 6);
+    && cmdMenu.querySelectorAll('.nativeSlashOption').length === 7);
   check('command capability gates are visible before opening a session',
     cmdMenu.querySelectorAll('.nativeSlashOption').filter((option) => option.disabled).length === 4);
+  await issue('/notes');
+  check('local notes command uses host callback without sending to the LLM',
+    notesOpened === 1 && sends === 0 && input.textContent === '');
   input.fire('keydown', { key: 'Escape', preventDefault() {} });
   check('Escape dismisses slash popup', cmdMenu.style.display === 'none' && slashBtn.getAttribute('aria-expanded') === 'false');
   await issue('/summary');
@@ -3060,6 +3065,64 @@ adapterForShellRefresh.http = originalHttpForRefresh;
     !/secret\/other/.test(rail.root.textContent || ''));
   adapter.http = oldHttp;
   flags.forEach((name, i) => { api[name] = originals[i]; });
+}
+
+// Jian note edits persist per active session using local-only storage and
+// never leak one session's draft to another. Confirm clears only current note.
+{
+  const railModule = studio.require('panels/rail');
+  const priorStorage = Object.getOwnPropertyDescriptor(global, 'localStorage');
+  const values = new Map();
+  Object.defineProperty(global, 'localStorage', { configurable: true, value: {
+    getItem(key) { return values.has(key) ? values.get(key) : null; },
+    setItem(key, value) { values.set(key, value); },
+  } });
+  const rail = railModule.render();
+  const note = rail.root.querySelector('.jian-editor');
+  const status = () => rail.root.querySelector('.jianStatus')?.textContent || '';
+  note.value = 'Workspace instructions';
+  note.fire('input');
+  check('Jian autosaves workspace notes locally',
+    /Saved locally/.test(status()) && Array.from(values.values()).includes('Workspace instructions'));
+  rail.setSession('session-one');
+  check('new chat session does not inherit workspace note', note.value === ''
+    && /Session note/.test(rail.root.querySelector('.jianScope')?.textContent || ''));
+  note.value = 'Session one draft';
+  note.fire('input');
+  rail.setSession('session-two');
+  note.value = 'Session two draft';
+  note.fire('input');
+  rail.setSession('session-one');
+  check('Jian restores only the selected chat note', note.value === 'Session one draft');
+  rail.root.querySelector('.jianClear')?.fire('click');
+  check('first note clear does not erase any content', note.value === 'Session one draft'
+    && /Confirm clear/.test(rail.root.querySelector('.jianClear')?.textContent || ''));
+  rail.root.querySelector('.jianClear')?.fire('click');
+  check('second note clear removes only current chat draft', note.value === '');
+  rail.setSession('session-two');
+  check('clearing one chat does not erase another', note.value === 'Session two draft');
+  note.value = 'x'.repeat(33000);
+  note.fire('input');
+  check('oversized note is truncated and stored consistently', note.value.length === 32000
+    && /Note limited/.test(status()));
+  rail.dispose();
+  const mountedAgain = railModule.render();
+  mountedAgain.setSession('session-two');
+  check('Jian persists after the panel is remounted',
+    mountedAgain.root.querySelector('.jian-editor')?.value.length === 32000);
+  mountedAgain.dispose();
+  Object.defineProperty(global, 'localStorage', { configurable: true, value: {
+    getItem() { return null; }, setItem() { throw new Error('blocked'); },
+  } });
+  const unavailable = railModule.render();
+  const ephemeralNote = unavailable.root.querySelector('.jian-editor');
+  ephemeralNote.value = 'Temporary';
+  ephemeralNote.fire('input');
+  check('notes do not falsely promise persistence when localStorage is blocked',
+    /storage unavailable/.test(unavailable.root.querySelector('.jianStatus')?.textContent || ''));
+  unavailable.dispose();
+  if (priorStorage) Object.defineProperty(global, 'localStorage', priorStorage);
+  else delete global.localStorage;
 }
 
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);

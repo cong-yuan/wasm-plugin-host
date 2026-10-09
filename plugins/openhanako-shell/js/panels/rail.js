@@ -8,6 +8,8 @@ return (function () {
   const adapter = studio.require('lib/hana-adapter');
   const api = studio.require('lib/api');
   const { t } = studio.require('lib/i18n');
+  // In-memory fallback is deliberately shared by panel instances in this host.
+  const jianMirror = new Map();
 
   // function Chevron({ open }) — upstream markup, both branches.
   const CHEVRON_OPEN = `
@@ -82,16 +84,93 @@ return (function () {
     slots.mount('openhanako.rail.items', itemsSlot);
 
     // <section className={styles.jianDrawer} data-open=…>
+    const jianMaxChars = 32000;
+    let jianClearArmed = false;
     const editor = h('textarea', {
       class: 'jian-editor',
       'data-desk-editor': '',
       placeholder: t('desk.jianPlaceholder'),
+      maxlength: String(jianMaxChars),
     });
+    const jianStatus = h('div', { class: 'jianStatus', 'aria-live': 'polite' }, '');
+    const jianCounter = h('span', { class: 'jianCounter' }, '0 / 32000');
+    const jianClear = h('button', { class: 'jianClear', type: 'button' }, 'Clear note');
+    const jianScope = h('span', { class: 'jianScope' }, 'Workspace note');
+    const noteKey = () => 'openhanako.jian.notes.v1:' + encodeURIComponent(state.sessionId || 'workspace');
+    const noteStorage = () => {
+      try { return typeof localStorage === 'undefined' ? null : localStorage; } catch { return null; }
+    };
+    let jianDurability = 'memory';
+    const writeNote = (text) => {
+      const key = noteKey();
+      jianMirror.set(key, text);
+      const storage = noteStorage();
+      if (!storage) { jianDurability = 'memory'; return; }
+      try {
+        storage.setItem(key, text);
+        jianDurability = 'local';
+      } catch {
+        jianDurability = 'memory';
+      }
+    };
+    const readNote = () => {
+      const key = noteKey();
+      const storage = noteStorage();
+      if (storage) {
+        try {
+          const persisted = storage.getItem(key);
+          if (typeof persisted === 'string') {
+            jianMirror.set(key, persisted);
+            jianDurability = 'local';
+            return persisted.slice(0, jianMaxChars);
+          }
+        } catch { /* do not assume local persistence works in this sandbox */ }
+      }
+      jianDurability = 'memory';
+      return String(jianMirror.get(key) || '').slice(0, jianMaxChars);
+    };
+    const updateJianStatus = (message) => {
+      jianScope.textContent = state.sessionId ? 'Session note' : 'Workspace note';
+      jianCounter.textContent = `${String(editor.value || '').length} / ${jianMaxChars}`;
+      jianClear.textContent = jianClearArmed ? 'Confirm clear' : 'Clear note';
+      jianStatus.textContent = message || (jianDurability === 'local'
+        ? 'Saved locally in this browser' : 'Only kept in this open application (storage unavailable)');
+    };
+    const hydrateJian = () => {
+      jianClearArmed = false;
+      editor.value = readNote();
+      updateJianStatus();
+    };
+    editor.oninput = () => {
+      const value = String(editor.value || '');
+      if (value.length > jianMaxChars) {
+        editor.value = value.slice(0, jianMaxChars);
+        jianClearArmed = false;
+        writeNote(editor.value);
+        updateJianStatus('Note limited to 32,000 characters');
+        return;
+      }
+      jianClearArmed = false;
+      writeNote(value);
+      updateJianStatus();
+    };
+    jianClear.onclick = () => {
+      if (jianClearArmed) {
+        jianClearArmed = false;
+        editor.value = '';
+        writeNote('');
+        updateJianStatus();
+      } else {
+        jianClearArmed = true;
+        updateJianStatus('Click Confirm clear to delete this note locally');
+      }
+    };
     const drawer = h('section', {
       class: 'jianDrawer', 'data-open': 'false', role: 'region', 'aria-label': t('desk.jianLabel'),
     },
-      h('div', { class: 'jianHeader' }, h('span', { class: 'jianTitle' }, t('desk.jianLabel'))),
-      h('div', { class: 'jianBody' }, editor));
+      h('div', { class: 'jianHeader' }, h('span', { class: 'jianTitle' }, t('desk.jianLabel')), jianScope, jianCounter, jianClear),
+      h('div', { class: 'jianBody' }, editor, jianStatus));
+    hydrateJian();
 
     // function JianFloatingToggle()
     const jianToggle = h('button', {
@@ -99,6 +178,8 @@ return (function () {
       'aria-label': t('rightWorkspace.jian.expand'), 'aria-expanded': 'false',
     }, svg(CHEVRON_CLOSED));
     jianToggle.onclick = () => {
+      jianClearArmed = false;
+      updateJianStatus();
       state.jianOpen = !state.jianOpen;
       drawer.setAttribute('data-open', state.jianOpen ? 'true' : 'false');
       card.setAttribute('data-jian-open', state.jianOpen ? 'true' : 'false');
@@ -948,6 +1029,7 @@ return (function () {
       const nextId = typeof sessionId === 'string' && sessionId ? sessionId : null;
       if (state.sessionId === nextId) return;
       state.sessionId = nextId;
+      hydrateJian();
       restoreIntent = null;
       historyVersion += 1;
       historyView = { kind: 'idle' };
@@ -969,9 +1051,14 @@ return (function () {
       slotSummary.setAttribute('data-contributions', String(slotState.contributions));
     });
 
+    const openJian = () => {
+      if (disposed) return;
+      if (!state.jianOpen) jianToggle.onclick();
+      editor.focus?.();
+    };
     return {
       root,
-      update, setSession,
+      update, setSession, openJian,
       dispose: () => { disposed = true; historyVersion += 1; workspaceVersion += 1; checkpointVersion += 1; if (typeof unsubscribeSlots === 'function') unsubscribeSlots(); },
     };
   }

@@ -497,6 +497,7 @@ return (function () {
     };
     const slashCommands = [
       { name: 'help', label: 'Show local commands', enabled: () => true },
+      { name: 'notes', label: 'Open session or workspace notes', enabled: () => typeof options.onOpenNotes === 'function' },
       { name: 'models', label: 'Choose model', enabled: () => !state.opening && !state.busy && !state.switchingModel },
       { name: 'folders', label: 'Authorized folders', enabled: () => scopeAvailable && !!state.id && !state.opening },
       { name: 'summary', label: 'Read session summary', enabled: () => canReadSummary && !!state.id && !state.busy && !state.opening },
@@ -532,7 +533,8 @@ return (function () {
       }
       closeSlash();
       slashStatus.textContent = '';
-      if (name === 'models') modelPill.onclick();
+      if (name === 'notes') options.onOpenNotes();
+      else if (name === 'models') modelPill.onclick();
       else if (name === 'folders') {
         if (scopePanel.style.display === 'none') toggleScopePanel();
       } else {

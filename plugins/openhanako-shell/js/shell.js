@@ -45,6 +45,7 @@ return (function () {
       onOpened: (id) => { state.selected = id; right.setSession(id); side.refresh(id); },
       onCreated: (id) => { state.selected = id; right.setSession(id); side.refresh(id); },
       onChanged: () => scheduleRuntimeRefresh(),
+      onOpenNotes: () => right.openJian(),
     });
 
     side = sidebar.render({
