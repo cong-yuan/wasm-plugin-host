@@ -2247,6 +2247,7 @@ return (function () {
           'Content-Length': String(Number.isFinite(result.size) ? result.size : Buffer.byteLength(String(result.content || ''), 'utf8')),
           'Cache-Control': 'private, max-age=0, must-revalidate',
           ...(result.etag ? { ETag: String(result.etag) } : {}),
+          ...(typeof result.version === 'string' && result.version.trim() ? { 'X-Hana-File-Version': result.version } : {}),
           ...(Number.isFinite(result.mtimeMs) ? { 'X-Hana-File-MtimeMs': String(result.mtimeMs) } : {}),
           ...(Number.isFinite(result.size) ? { 'X-Hana-File-Size': String(result.size) } : {}),
           ...(result.filename ? { 'Content-Disposition': 'inline; filename="' + String(result.filename).replace(/["\\\\\\r\\n]/g, '_') + '"' } : {}),
@@ -2328,7 +2329,7 @@ return (function () {
         return {
           ...(result && typeof result === 'object' ? result : {}),
           action,
-          ok: result?.ok !== false,
+          ok: result?.ok === true,
         };
       } catch (error) {
         return nativeWorkbenchError(error, command + '_failed');

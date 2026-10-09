@@ -2670,6 +2670,93 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.workbenchSearchFilesAvailable = oldSearch;
 }
 
+// Versioned native text edits and create-only writes preserve drafts on conflicts.
+{
+  const railModule = studio.require('panels/rail');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const oldList = api.workbenchListFilesAvailable;
+  const oldRead = api.workbenchReadFileAvailable;
+  const oldWrite = api.workbenchWriteFileAvailable;
+  api.workbenchListFilesAvailable = () => true;
+  api.workbenchReadFileAvailable = () => true;
+  api.workbenchWriteFileAvailable = () => true;
+  const writes = [];
+  let conflict = false;
+  let deferSave = false;
+  let releaseSave = null;
+  adapter.http = async (method, path, body) => {
+    if (path.startsWith('/api/workbench/files'))
+      return { rootId: 'default', subdir: '', files: [{ name: 'notes.txt', isDir: false }] };
+    if (path.startsWith('/api/workbench/content'))
+      return { __httpStatus: 200, __httpHeaders: { 'Content-Type': 'text/plain', 'X-Hana-File-Version': 'v1' }, __httpBody: 'Original' };
+    if (path === '/api/workbench/actions') {
+      writes.push(body);
+      if (deferSave) return new Promise((resolve) => { releaseSave = resolve; });
+      return conflict ? { ok: false, error: 'Version conflict' }
+        : { ok: true, action: body.action, version: 'v2' };
+    }
+    return oldHttp(method, path, body);
+  };
+  const rail = railModule.render();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  rail.root.querySelector('.railWorkspaceFile')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('versioned file exposes native edit action', !!rail.root.querySelector('.railWorkspaceEditButton'));
+  rail.root.querySelector('.railWorkspaceEditButton')?.fire('click');
+  const editor = rail.root.querySelector('.railWorkspaceEditor');
+  editor.value = 'Modified';
+  editor.fire('input');
+  rail.root.querySelectorAll('.tab')[0]?.fire('click');
+  check('unsaved text prevents tab navigation', /Unsaved changes/.test(rail.root.textContent || ''));
+  conflict = true;
+  rail.root.querySelector('.railWorkspaceSave')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('conflicting versioned save keeps draft and original revision',
+    writes.length === 1 && writes[0].expectedVersion === 'v1'
+    && writes[0].content === 'Modified'
+    && /Version conflict/.test(rail.root.textContent || '')
+    && rail.root.querySelector('.railWorkspaceEditor')?.value === 'Modified');
+  conflict = false;
+  deferSave = true;
+  rail.root.querySelector('.railWorkspaceSave')?.fire('click');
+  await Promise.resolve();
+  rail.root.querySelector('.railWorkspaceSave')?.fire('click');
+  check('save is single-flight and prevents discard while pending',
+    writes.length === 2 && rail.root.querySelector('.railWorkspaceDiscard')?.disabled === true);
+  releaseSave?.({ ok: true, action: 'writeText', version: 'v2' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  deferSave = false;
+  check('acknowledged native save produces persisted preview',
+    /Modified/.test(rail.root.querySelector('.railWorkspacePreview')?.textContent || '')
+    && /File saved to Studio/.test(rail.root.textContent || ''));
+  rail.root.querySelector('.railWorkspaceList')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const filename = rail.root.querySelector('.railWorkspaceNewName');
+  filename.value = '../invalid';
+  rail.root.querySelector('.railWorkspaceCreate')?.fire('click');
+  check('unsafe new filename cannot dispatch any native write', writes.length === 2
+    && /valid single filename/.test(rail.root.textContent || ''));
+  const validFilename = rail.root.querySelector('.railWorkspaceNewName');
+  validFilename.value = 'new.md';
+  rail.root.querySelector('.railWorkspaceCreate')?.fire('click');
+  check('new file waits for explicit native create', writes.length === 2
+    && rail.root.querySelector('.railWorkspaceSave')?.textContent === 'Create file');
+  const createEditor = rail.root.querySelector('.railWorkspaceEditor');
+  createEditor.value = 'New content';
+  createEditor.fire('input');
+  rail.root.querySelector('.railWorkspaceSave')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('new file commits via create-only action', writes.length === 3
+    && writes[2].action === 'create' && writes[2].name === 'new.md'
+    && writes[2].content === 'New content' && writes[2].expectedVersion == null);
+  rail.dispose();
+  adapter.http = oldHttp;
+  api.workbenchListFilesAvailable = oldList;
+  api.workbenchReadFileAvailable = oldRead;
+  api.workbenchWriteFileAvailable = oldWrite;
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));

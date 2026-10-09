@@ -34,6 +34,7 @@ return (function () {
     let workspacePath = '';
     let workspaceQuery = '';
     let workspaceState = { kind: 'idle' };
+    let workspaceEdit = null; // {name, subdir, version, content, original, create, saving, error}
     let latestData = { tools: [], plugins: [], runtime: { mode: 'unknown', sessions: [] } };
 
     // <div className={styles.workspaceHeader}> + workspaceTitle
@@ -115,7 +116,18 @@ return (function () {
       h('div', { class: 'resize-handle resize-handle-left', id: 'jianResizeHandle' }),
       h('div', { class: 'jian-sidebar-inner' }, shell));
 
+    const editIsDirty = () => workspaceEdit && (workspaceEdit.create || workspaceEdit.content !== workspaceEdit.original);
+    const guardEdit = () => {
+      if (!workspaceEdit) return false;
+      if (!editIsDirty() && !workspaceEdit.saving) { workspaceEdit = null; return false; }
+      workspaceEdit.error = workspaceEdit.saving
+        ? 'A native save is in progress; finish before navigating'
+        : 'Unsaved changes: Save or Discard before navigating';
+      renderData(latestData);
+      return true;
+    };
     function selectTab(id) {
+      if (state.tab !== id && guardEdit()) return;
       state.tab = id;
       const index = Math.max(0, BASE_TABS.findIndex((tab) => tab.id === id));
       tabs.setAttribute('style',
@@ -193,6 +205,7 @@ return (function () {
       renderData(latestData);
     };
     const loadWorkspace = async () => {
+      if (guardEdit()) return;
       const subdir = workspacePath;
       const version = ++workspaceVersion;
       if (!api.workbenchListFilesAvailable?.()) {
@@ -214,6 +227,7 @@ return (function () {
       }
     };
     const openWorkspaceFile = async (name) => {
+      if (guardEdit()) return;
       if (!validName(name) || !api.workbenchReadFileAvailable?.()) {
         workspaceState = { kind: 'unavailable', text: 'Native file reading is unsupported by this Studio host' };
         renderData(latestData);
@@ -229,7 +243,8 @@ return (function () {
           || !(/^(text\/|application\/(json|xml|javascript))/.test(String(mime)))) {
           throw new Error(response?.error || 'File is unavailable or cannot be previewed as text');
         }
-        setWorkspaceState({ kind: 'preview', name, content: response.__httpBody }, version, subdir);
+        setWorkspaceState({ kind: 'preview', name, content: response.__httpBody,
+          fileVersion: response.__httpHeaders?.['X-Hana-File-Version'] || null }, version, subdir);
       } catch (err) {
         setWorkspaceState({ kind: 'error', text: err?.message || 'File preview failed' }, version, subdir);
       }
@@ -237,6 +252,7 @@ return (function () {
     const validRelativePath = (path) => typeof path === 'string' && path.length > 0
       && path.split('/').every(validName);
     const searchWorkspace = async () => {
+      if (guardEdit()) return;
       const query = workspaceQuery.trim();
       if (!query) return loadWorkspace();
       const subdir = workspacePath;
@@ -266,9 +282,63 @@ return (function () {
       }
     };
     const changeWorkspacePath = (subdir) => {
+      if (guardEdit()) return;
       workspaceVersion += 1;
       workspacePath = subdir;
       loadWorkspace();
+    };
+    const beginWorkspaceEdit = ({ name, content, fileVersion = null, create = false }) => {
+      if (!validName(name) || !api.workbenchWriteFileAvailable?.()
+        || (!create && (typeof fileVersion !== 'string' || !fileVersion.trim()))
+        || typeof content !== 'string' || content.length > 256000) return false;
+      workspaceEdit = {
+        name, subdir: workspacePath, version: fileVersion, create,
+        content, original: content, saving: false, error: '',
+      };
+      workspaceVersion += 1;
+      workspaceState = { kind: 'edit' };
+      renderData(latestData);
+      return true;
+    };
+    const discardWorkspaceEdit = () => {
+      if (!workspaceEdit || workspaceEdit.saving) return;
+      workspaceEdit = null;
+      loadWorkspace();
+    };
+    const saveWorkspaceEdit = async () => {
+      const edit = workspaceEdit;
+      if (!edit || edit.saving) return;
+      if (edit.content.length > 256000) {
+        edit.error = 'Text file exceeds the 256,000-character editing limit';
+        renderData(latestData);
+        return;
+      }
+      const version = workspaceVersion;
+      edit.saving = true;
+      edit.error = 'Saving to Studio…';
+      renderData(latestData);
+      try {
+        const response = await adapter.http('POST', '/api/workbench/actions', {
+          action: edit.create ? 'create' : 'writeText', rootId: 'default',
+          subdir: edit.subdir, name: edit.name, content: edit.content,
+          ...(edit.create ? {} : { expectedVersion: edit.version }),
+        });
+        if (!response || response.ok !== true || response.action !== (edit.create ? 'create' : 'writeText')
+          || typeof response.version !== 'string' || !response.version.trim()) {
+          throw new Error(response?.error || 'Studio did not acknowledge this file write');
+        }
+        if (disposed || workspaceEdit !== edit || workspaceVersion !== version) return;
+        workspaceEdit = null;
+        workspaceState = { kind: 'preview', name: edit.name, content: edit.content,
+          fileVersion: response.version, saved: true };
+        renderData(latestData);
+      } catch (err) {
+        if (disposed || workspaceEdit !== edit || workspaceVersion !== version) return;
+        edit.error = err?.error || err?.message || 'Save failed; changes kept for retry';
+      } finally {
+        edit.saving = false;
+        if (!disposed && workspaceEdit === edit && workspaceVersion === version) renderData(latestData);
+      }
     };
     const renderWorkspace = () => {
       clear(workspaceBrowser);
@@ -298,6 +368,20 @@ return (function () {
       workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceHeader' },
         h('span', {}, `Workspace /${workspacePath}`), back, refresh));
       workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSearchRow' }, searchInput, searchButton));
+      if (workspaceState.kind === 'files' && api.workbenchWriteFileAvailable?.()) {
+        const newName = h('input', { class: 'railWorkspaceNewName', type: 'text',
+          'aria-label': 'New workspace filename', placeholder: 'new-file.txt' });
+        const create = h('button', { class: 'railWorkspaceCreate', type: 'button' }, 'New file');
+        create.onclick = () => {
+          const name = String(newName.value || '').trim();
+          if (!validName(name)) {
+            workspaceState = { ...workspaceState, error: 'Enter a valid single filename' };
+            renderData(latestData);
+          } else beginWorkspaceEdit({ name, content: '', create: true });
+        };
+        workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceNewRow' }, newName, create));
+        if (workspaceState.error) workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSaveStatus', 'aria-live': 'polite' }, workspaceState.error));
+      }
       if (workspaceState.kind === 'files') {
         if (!workspaceState.files.length) workspaceBrowser.appendChild(h('div', { class: 'emptyState' }, 'Empty workspace directory'));
         for (const row of workspaceState.files) {
@@ -330,8 +414,30 @@ return (function () {
         backToList.onclick = loadWorkspace;
         workspaceBrowser.appendChild(backToList);
         workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceName' }, workspaceState.name));
+        if (workspaceState.saved) workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSaveStatus', 'aria-live': 'polite' }, 'File saved to Studio'));
+        if (api.workbenchWriteFileAvailable?.() && workspaceState.fileVersion && workspaceState.content.length <= 256000) {
+          const editButton = h('button', { class: 'railWorkspaceEditButton', type: 'button' }, 'Edit text');
+          editButton.onclick = () => beginWorkspaceEdit(workspaceState);
+          workspaceBrowser.appendChild(editButton);
+        }
         workspaceBrowser.appendChild(h('pre', { class: 'railWorkspacePreview' },
           workspaceState.content.slice(0, 16000) + (workspaceState.content.length > 16000 ? '\n… preview truncated' : '')));
+      } else if (workspaceState.kind === 'edit' && workspaceEdit) {
+        const edit = workspaceEdit;
+        const editor = h('textarea', { class: 'railWorkspaceEditor', 'aria-label': 'Edit workspace text file',
+          maxlength: '256000' });
+        editor.value = edit.content;
+        editor.disabled = edit.saving;
+        editor.oninput = () => { edit.content = String(editor.value || ''); };
+        const save = h('button', { class: 'railWorkspaceSave', type: 'button' }, edit.create ? 'Create file' : 'Save file');
+        const discard = h('button', { class: 'railWorkspaceDiscard', type: 'button' }, 'Discard');
+        save.disabled = discard.disabled = edit.saving;
+        save.onclick = saveWorkspaceEdit;
+        discard.onclick = discardWorkspaceEdit;
+        workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceName' }, edit.name));
+        workspaceBrowser.appendChild(editor);
+        workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceEditorActions' }, save, discard));
+        if (edit.error) workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSaveStatus', 'aria-live': 'polite' }, edit.error));
       } else {
         workspaceBrowser.appendChild(h('div', { class: 'emptyState railWorkspaceStatus', 'aria-live': 'polite' },
           workspaceState.text || 'Choose a workspace directory'));
@@ -462,6 +568,8 @@ return (function () {
 
     function update(data) {
       latestData = data || latestData;
+      // Runtime polls must not replace a focused native textarea mid-edit.
+      if (state.tab === 'workspace' && workspaceState.kind === 'edit') return;
       renderData(latestData);
     }
 

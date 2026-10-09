@@ -11845,3 +11845,15 @@ html[data-platform="linux"] .onboarding {
 .railWorkspaceSearchResult { display: block; width: 100%; overflow-wrap: anywhere; }
 .railWorkspaceSearchButton:hover, .railWorkspaceSearchResult:hover { background: rgba(0,0,0,0.06); }
 .railWorkspaceSearchCaption { font-size: 11px; color: var(--text-muted); }
+
+/* Native capability-gated text editor with expected-version saves. */
+.railWorkspaceNewRow, .railWorkspaceEditorActions { display: flex; gap: 5px; align-items: center; }
+.railWorkspaceNewName { min-width: 0; flex: 1; border: 1px solid rgba(0,0,0,0.15); border-radius: 5px; padding: 5px; font: inherit; font-size: 11px; color: var(--text-primary); background: transparent; }
+.railWorkspaceCreate, .railWorkspaceEditButton, .railWorkspaceSave, .railWorkspaceDiscard {
+    border: 0; border-radius: 5px; padding: 5px 7px; font: inherit; font-size: 11px;
+    color: var(--text-primary); background: rgba(0,0,0,0.06); cursor: pointer;
+}
+.railWorkspaceCreate:hover, .railWorkspaceEditButton:hover, .railWorkspaceSave:hover, .railWorkspaceDiscard:hover { background: rgba(0,0,0,0.1); }
+.railWorkspaceCreate:disabled, .railWorkspaceEditButton:disabled, .railWorkspaceSave:disabled, .railWorkspaceDiscard:disabled { opacity: 0.45; cursor: not-allowed; }
+.railWorkspaceEditor { display: block; width: 100%; min-height: 180px; box-sizing: border-box; resize: vertical; font: 11px/1.5 monospace; background: transparent; color: var(--text-primary); border: 1px solid rgba(0,0,0,0.15); border-radius: 6px; padding: 6px; }
+.railWorkspaceSaveStatus { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }

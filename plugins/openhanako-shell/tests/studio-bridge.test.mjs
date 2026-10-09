@@ -846,6 +846,7 @@ check('blob upload reports missing Studio capability explicitly',
     && workbenchContent?.__httpBody === 'hello'
     && workbenchContent?.__httpBodyEncoding === 'utf8'
     && workbenchContent?.__httpHeaders?.ETag === '"v1"'
+    && workbenchContent?.__httpHeaders?.['X-Hana-File-Version'] === 'v1'
     && workbenchContent?.__httpHeaders?.['Content-Length'] === '5');
 
   const workbenchHead = await adapter.http('HEAD', '/api/workbench/content?mountId=default&subdir=src&name=hello.txt');
@@ -864,6 +865,16 @@ check('blob upload reports missing Studio capability explicitly',
   });
   check('workbench writeText delegates to Studio native command',
     workbenchWrite?.ok === true && workbenchWrite?.version === 'v2');
+  const originalWorkbenchHostAction = studio.hostAction;
+  studio.hostAction = async (action) => action.command === 'workbench_write_file'
+    ? { version: 'unconfirmed' } : originalWorkbenchHostAction(action);
+  const unacknowledgedWorkbenchWrite = await adapter.http('POST', '/api/workbench/actions', {
+    action: 'writeText', rootId: 'default', subdir: 'src', name: 'hello.txt',
+    content: 'unconfirmed', expectedVersion: 'v1',
+  });
+  check('native workspace mutation without explicit ok is never acknowledged',
+    unacknowledgedWorkbenchWrite?.ok === false);
+  studio.hostAction = originalWorkbenchHostAction;
   const workbenchRename = await adapter.http('POST', '/api/workbench/actions', {
     action: 'rename',
     mountId: 'default',
