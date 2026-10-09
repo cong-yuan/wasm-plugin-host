@@ -29,6 +29,7 @@ export interface CronJob {
   lastRunAt?: string | null;
   lastAttemptAt?: string | null;
   lastError?: string | null;
+  running?: boolean;
   createdAt?: string;
   model?: string | ModelRef;
   actorAgentId?: string;

@@ -136,9 +136,11 @@ export function AutomationCard({
       <button type="button" className={styles.row} onClick={onToggleOpen} aria-expanded={open}>
         <span
           className={`hana-toggle${job.enabled ? ' on' : ''}`}
-          title={job.enabled ? t('automation.disable') : t('automation.enable')}
+          title={running ? 'Automation is currently dispatching' : job.enabled ? t('automation.disable') : t('automation.enable')}
+          aria-disabled={running}
           onClick={(e) => {
             e.stopPropagation();
+            if (running) return;
             void toggleEnabled();
           }}
         />
@@ -148,6 +150,7 @@ export function AutomationCard({
             <span className={styles.meta}>{schedulePreviewFromDraft(scheduleDraftFromStored(job.type, job.schedule))}</span>
             {job.nextRunAt ? <span className={styles.meta}>{new Date(job.nextRunAt).toLocaleString(undefined, { hour12: false })}</span> : null}
             <span className={styles.badge}>{executorLabel}</span>
+            {running ? <span className={styles.meta} role="status">Dispatch in progress</span> : null}
             {job.lastError ? <span className={styles.meta} role="status"
               title={job.lastError}>⚠ {job.lastError.slice(0, 140)}</span> : null}
             {!job.lastError && job.lastRunAt ? <span className={styles.meta}
@@ -198,7 +201,7 @@ export function AutomationCard({
           ) : null}
           <div className={styles.actions}>
             <button className={styles.textButton} type="button" disabled={running} onClick={() => void onRunNow(job.id)}>{running ? t('automation.running') : t('automation.runNow')}</button>
-            <button className={styles.textButton} type="button" disabled={!dirty} onClick={save}>{t('common.confirm')}</button>
+            <button className={styles.textButton} type="button" disabled={!dirty || running} onClick={save}>{t('common.confirm')}</button>
             <button className={`${styles.textButton} ${styles.dangerButton}`} type="button" disabled={running} onClick={() => onRemove(job.id)}>{t('automation.delete')}</button>
           </div>
         </div>

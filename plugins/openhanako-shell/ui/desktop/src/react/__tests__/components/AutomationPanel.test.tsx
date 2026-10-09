@@ -102,6 +102,49 @@ describe('AutomationPanel', () => {
     }));
   });
 
+  it('disables conflicting actions while another window is dispatching the job', async () => {
+    vi.mocked(hanaFetch).mockImplementation(async (url, options) => {
+      if (url === '/api/models') return new Response(JSON.stringify({ models: [] }), { status: 200 });
+      if (url === '/api/desk/cron' && options?.method === 'POST') {
+        throw new Error('running task must not be mutated');
+      }
+      return new Response(JSON.stringify({ jobs: [{ id: 'active-job',
+        label: 'Active cross-window task', type: 'cron', schedule: '0 9 * * *',
+        enabled: true, running: true, prompt: 'Do work', actorAgentId: 'hanako',
+      }] }), { status: 200 });
+    });
+    render(<AutomationPanel />);
+    const row = await screen.findByRole('button', { name: /Active cross-window task/ });
+    fireEvent.click(row);
+    expect(screen.getByText('Dispatch in progress')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'automation.running' })).toBeDisabled();
+    const nativeToggle = document.querySelector<HTMLElement>('.hana-toggle');
+    expect(nativeToggle).toHaveAttribute('aria-disabled', 'true');
+    if (nativeToggle) fireEvent.click(nativeToggle);
+    expect(screen.getByRole('button', { name: 'automation.delete' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'common.confirm' })).toBeDisabled();
+    expect(vi.mocked(hanaFetch).mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
+  });
+
+  it('shows a backend mutation error instead of silently accepting a failed change', async () => {
+    vi.mocked(hanaFetch).mockImplementation(async (url, options) => {
+      if (url === '/api/models') return new Response(JSON.stringify({ models: [] }), { status: 200 });
+      if (url === '/api/desk/cron' && options?.method === 'POST') {
+        return new Response(JSON.stringify({ ok: false, error: 'automation is currently running' }), { status: 409 });
+      }
+      return new Response(JSON.stringify({ jobs: [{ id: 'busy-toggle',
+        label: 'Busy toggle task', type: 'cron', schedule: '0 9 * * *',
+        enabled: true, prompt: 'Do work', actorAgentId: 'hanako',
+      }] }), { status: 200 });
+    });
+    render(<AutomationPanel />);
+    const row = await screen.findByRole('button', { name: /Busy toggle task/ });
+    fireEvent.click(row);
+    fireEvent.click(screen.getByRole('button', { name: 'automation.delete' }));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith(
+      'automation is currently running', 'error'));
+  });
+
   it('shows the structured POST error and keeps the panel usable', async () => {
     render(<AutomationPanel />);
     await waitFor(() => expect(hanaFetch).toHaveBeenCalledWith('/api/desk/cron', {

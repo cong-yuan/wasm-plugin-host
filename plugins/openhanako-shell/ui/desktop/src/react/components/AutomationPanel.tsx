@@ -105,24 +105,49 @@ export function AutomationPanel() {
   }, []);
 
   const { visible, close } = usePanel('automation', loadData, [currentAgentId]);
+  // Backend-owned scheduled runs can begin in another window. Refresh while
+  // visible so the controls follow the actual native execution lock.
+  useEffect(() => {
+    if (!visible) return;
+    const interval = window.setInterval(() => { void loadData(); }, 6000);
+    return () => window.clearInterval(interval);
+  }, [visible, loadData]);
 
   const toggleJob = useCallback(async (jobId: string) => {
-    await hanaFetch('/api/desk/cron', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'toggle', id: jobId }),
-    });
+    try {
+      const response = await hanaFetch('/api/desk/cron', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'toggle', id: jobId }),
+        throwOnHttpError: false,
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result?.ok !== true) {
+        const detail = normalizeSessionRouteError(result).message || result?.error || 'Studio refused task change';
+        addToast(String(detail), 'error');
+      }
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : String(error), 'error');
+    }
     await loadData();
-  }, [loadData]);
+  }, [addToast, loadData]);
 
   const removeJob = useCallback(async (jobId: string) => {
-    await hanaFetch('/api/desk/cron', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'remove', id: jobId }),
-    });
+    try {
+      const response = await hanaFetch('/api/desk/cron', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remove', id: jobId }),
+        throwOnHttpError: false,
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result?.ok !== true) {
+        const detail = normalizeSessionRouteError(result).message || result?.error || 'Studio refused task change';
+        addToast(String(detail), 'error');
+      }
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : String(error), 'error');
+    }
     await loadData();
-  }, [loadData]);
+  }, [addToast, loadData]);
 
   const updateJob = useCallback(async (jobId: string, fields: Record<string, unknown>) => {
     const res = await hanaFetch('/api/desk/cron', {
@@ -313,7 +338,7 @@ export function AutomationPanel() {
                       onRemove={removeJob}
                       onUpdate={updateJob}
                       onRunNow={runJobNow}
-                      running={runningJobIds.has(job.id)}
+                      running={runningJobIds.has(job.id) || job.running === true}
                     />
                   ))}
                 </div>
