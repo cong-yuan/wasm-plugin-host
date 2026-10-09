@@ -11814,3 +11814,19 @@ html[data-platform="linux"] .onboarding {
 .railHistoryRefresh:hover, .railHistoryBack:hover { background: rgba(0,0,0,0.06); }
 .railHistoryPath { font-size: 11px; overflow-wrap: anywhere; color: var(--text-muted); }
 .railHistorySnapshot { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; font-size: 11px; }
+
+/* Read-only native workspace browser in companion rail. */
+.railWorkspaceBrowser { margin: 6px 0; display: flex; flex-direction: column; gap: 4px; }
+.railWorkspaceHeader { display: flex; align-items: center; gap: 5px; overflow-wrap: anywhere; font-size: 11px; }
+.railWorkspaceHeader span { flex: 1; min-width: 0; }
+.railWorkspaceBack, .railWorkspaceRefresh, .railWorkspaceFile, .railWorkspaceDir, .railWorkspaceList {
+    font: inherit; font-size: 11px; text-align: left; color: var(--text-primary);
+    border: 0; border-radius: 5px; padding: 5px 6px; cursor: pointer;
+    background: transparent; overflow-wrap: anywhere;
+}
+.railWorkspaceFile, .railWorkspaceDir { width: 100%; }
+.railWorkspaceBack:disabled { opacity: 0.45; cursor: not-allowed; }
+.railWorkspaceBack:hover:not(:disabled), .railWorkspaceRefresh:hover,
+.railWorkspaceFile:hover, .railWorkspaceDir:hover, .railWorkspaceList:hover { background: rgba(0,0,0,0.06); }
+.railWorkspaceName { font-size: 11px; color: var(--text-muted); }
+.railWorkspacePreview { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; font-size: 11px; }

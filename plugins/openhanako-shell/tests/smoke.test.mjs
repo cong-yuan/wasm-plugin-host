@@ -2508,6 +2508,114 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.fileHistoryGetSnapshotAvailable = oldSnapshot;
 }
 
+// Native workspace browser remains read-only, scopes coordinates to the
+// default root, rejects unsafe rows, and isolates out-of-order navigation.
+{
+  const railModule = studio.require('panels/rail');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const oldList = api.workbenchListFilesAvailable;
+  const oldRead = api.workbenchReadFileAvailable;
+  api.workbenchListFilesAvailable = () => true;
+  api.workbenchReadFileAvailable = () => true;
+  let holdDirectory = false;
+  let releaseDirectory;
+  let invalidRoot = false;
+  let invalidName = false;
+  let binaryFile = false;
+  const paths = [];
+  adapter.http = async (method, path, body) => {
+    if (path.startsWith('/api/workbench/')) {
+      paths.push([method, path]);
+      if (path.startsWith('/api/workbench/files')) {
+        if (holdDirectory && path.includes('subdir=docs')) {
+          return new Promise((resolve) => { releaseDirectory = resolve; });
+        }
+        const subdir = decodeURIComponent(path.match(/[?&]subdir=([^&]*)/)?.[1] || '');
+        return {
+          rootId: invalidRoot ? 'untrusted' : 'default', subdir,
+          files: invalidName ? [{ name: '../secret', isDir: false }]
+            : subdir === 'docs' ? [{ name: 'guide.txt', isDir: false, size: 5 }]
+              : [{ name: 'docs', isDir: true }, { name: 'README.md', isDir: false, size: 3 }],
+        };
+      }
+      if (path.startsWith('/api/workbench/content')) {
+        return { __httpStatus: 200,
+          __httpHeaders: { 'Content-Type': binaryFile ? 'image/png' : 'text/plain; charset=utf-8' },
+          __httpBody: 'Read-only workspace text' };
+      }
+    }
+    return oldHttp(method, path, body);
+  };
+  const rail = railModule.render();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('workspace native browser fetches scoped default directory',
+    rail.root.querySelectorAll('.railWorkspaceDir').length === 1
+    && rail.root.querySelectorAll('.railWorkspaceFile').length === 1
+    && paths.some(([, path]) => path.includes('rootId=default')));
+  rail.root.querySelector('.railWorkspaceDir')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('workspace navigation opens nested directory by relative coordinate',
+    /Workspace \/docs/.test(rail.root.querySelector('.railWorkspaceHeader')?.textContent || '')
+    && /guide.txt/.test(rail.root.querySelector('.railWorkspaceFile')?.textContent || ''));
+  rail.root.querySelector('.railWorkspaceFile')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('text preview reads the native content endpoint without writes',
+    /Read-only workspace text/.test(rail.root.querySelector('.railWorkspacePreview')?.textContent || '')
+    && paths.some(([, path]) => path.includes('name=guide.txt')));
+  rail.root.querySelector('.railWorkspaceBack')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('Up navigation returns to workspace root',
+    rail.root.querySelectorAll('.railWorkspaceDir').length === 1
+    && rail.root.querySelector('.railWorkspaceBack')?.disabled === true);
+  invalidName = true;
+  rail.root.querySelector('.railWorkspaceRefresh')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('unsafe backend file names fail closed',
+    rail.root.querySelector('.content')?.getAttribute('data-content-state') === 'workspace'
+    && /Invalid workspace directory response/.test(rail.root.textContent || '')
+    && rail.root.querySelectorAll('.railWorkspaceFile').length === 0);
+  invalidName = false;
+  invalidRoot = true;
+  rail.root.querySelector('.railWorkspaceRefresh')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('workspace mismatched root cannot display files',
+    /Invalid workspace directory response/.test(rail.root.textContent || ''));
+  invalidRoot = false;
+  rail.root.querySelector('.railWorkspaceRefresh')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  binaryFile = true;
+  rail.root.querySelector('.railWorkspaceFile')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('binary content cannot masquerade as a text preview',
+    /cannot be previewed as text/.test(rail.root.textContent || '')
+    && rail.root.querySelector('.railWorkspacePreview') == null);
+  binaryFile = false;
+  holdDirectory = true;
+  rail.root.querySelector('.railWorkspaceRefresh')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  rail.root.querySelector('.railWorkspaceDir')?.fire('click');
+  await Promise.resolve();
+  check('directory request held for late response test', typeof releaseDirectory === 'function');
+  rail.root.querySelectorAll('.tab')[0]?.fire('click');
+  releaseDirectory?.({ rootId: 'default', subdir: 'docs', files: [{ name: 'stale-private.txt', isDir: false }] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('workspace response cannot overwrite session-history tab',
+    !/stale-private/.test(rail.root.textContent || '')
+    && rail.root.querySelector('.railWorkspaceBrowser')?.style.display === 'none');
+  rail.root.querySelectorAll('.tab')[1]?.fire('click');
+  api.workbenchListFilesAvailable = () => false;
+  rail.root.querySelector('.railWorkspaceRefresh')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('workspace browser distinguishes absent native capability',
+    /unavailable in this Studio host/.test(rail.root.textContent || ''));
+  check('workspace file browser never issues mutations', paths.every(([method]) => method === 'GET'));
+  rail.dispose();
+  adapter.http = oldHttp;
+  api.workbenchListFilesAvailable = oldList;
+  api.workbenchReadFileAvailable = oldRead;
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));

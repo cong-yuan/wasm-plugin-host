@@ -30,6 +30,9 @@ return (function () {
     let historyVersion = 0;
     let historyView = { kind: 'idle' };
     let disposed = false;
+    let workspaceVersion = 0;
+    let workspacePath = '';
+    let workspaceState = { kind: 'idle' };
     let latestData = { tools: [], plugins: [], runtime: { mode: 'unknown', sessions: [] } };
 
     // <div className={styles.workspaceHeader}> + workspaceTitle
@@ -63,8 +66,9 @@ return (function () {
     const runtimeSummary = h('div', { class: 'runtimeSummary' });
     const slotSummary = h('div', { class: 'slotSummary' });
     const fileList = h('div', { class: 'fileList' });
+    const workspaceBrowser = h('section', { class: 'railWorkspaceBrowser', 'aria-label': 'Workspace files' });
     const itemsSlot = h('div', { class: 'rail-items-slot' });
-    const content = h('div', { class: 'content', role: 'tabpanel' }, runtimeSummary, slotSummary, fileList, itemsSlot);
+    const content = h('div', { class: 'content', role: 'tabpanel' }, runtimeSummary, slotSummary, workspaceBrowser, fileList, itemsSlot);
     slots.mount('openhanako.rail.items', itemsSlot);
 
     // <section className={styles.jianDrawer} data-open=…>
@@ -123,6 +127,7 @@ return (function () {
       }
       renderData(latestData);
       if (state.tab === 'session-files') loadHistory();
+      else loadWorkspace();
     }
 
     function renderData(data) {
@@ -132,6 +137,8 @@ return (function () {
       clear(runtimeSummary);
       clear(slotSummary);
       clear(fileList);
+      workspaceBrowser.style.display = state.tab === 'workspace' ? '' : 'none';
+      if (state.tab === 'workspace') renderWorkspace();
 
       if (state.tab === 'session-files') {
         content.setAttribute('data-content-state', historyView.kind);
@@ -172,6 +179,95 @@ return (function () {
             h('div', { class: 'fileName' }, tool.name || 'tool'))));
       }
     }
+
+    // The default native workspace root is resolved and scoped by the host.
+    // This UI never passes absolute filesystem paths or performs mutations.
+    const validName = (name) => typeof name === 'string' && name.length > 0
+      && name !== '.' && name !== '..' && !/[\/\\\0-\x1f]/.test(name);
+    const workspaceCurrent = (version, subdir) => !disposed
+      && state.tab === 'workspace' && workspaceVersion === version && workspacePath === subdir;
+    const setWorkspaceState = (view, version, subdir) => {
+      if (!workspaceCurrent(version, subdir)) return;
+      workspaceState = view;
+      renderData(latestData);
+    };
+    const loadWorkspace = async () => {
+      const subdir = workspacePath;
+      const version = ++workspaceVersion;
+      if (!api.workbenchListFilesAvailable?.()) {
+        setWorkspaceState({ kind: 'unavailable', text: 'Native workspace browsing is unavailable in this Studio host' }, version, subdir);
+        return;
+      }
+      setWorkspaceState({ kind: 'loading', text: 'Loading workspace files…' }, version, subdir);
+      try {
+        const response = await adapter.http('GET', `/api/workbench/files?rootId=default&subdir=${encodeURIComponent(subdir)}`);
+        if (!response || response.ok === false || response.error || !Array.isArray(response.files)
+          || (response.rootId != null && response.rootId !== 'default')
+          || (response.subdir != null && response.subdir !== subdir)
+          || response.files.some((row) => !row || !validName(row.name) || typeof row.isDir !== 'boolean')) {
+          throw new Error(response?.error || 'Invalid workspace directory response');
+        }
+        setWorkspaceState({ kind: 'files', files: response.files }, version, subdir);
+      } catch (err) {
+        setWorkspaceState({ kind: 'error', text: err?.message || 'Workspace browsing failed' }, version, subdir);
+      }
+    };
+    const openWorkspaceFile = async (name) => {
+      if (!validName(name) || !api.workbenchReadFileAvailable?.()) {
+        workspaceState = { kind: 'unavailable', text: 'Native file reading is unsupported by this Studio host' };
+        renderData(latestData);
+        return;
+      }
+      const subdir = workspacePath;
+      const version = ++workspaceVersion;
+      setWorkspaceState({ kind: 'loading', text: `Reading ${name}…` }, version, subdir);
+      try {
+        const response = await adapter.http('GET', `/api/workbench/content?rootId=default&subdir=${encodeURIComponent(subdir)}&name=${encodeURIComponent(name)}`);
+        const mime = response?.__httpHeaders?.['Content-Type'] || '';
+        if (!response || response.__httpStatus !== 200 || typeof response.__httpBody !== 'string'
+          || !(/^(text\/|application\/(json|xml|javascript))/.test(String(mime)))) {
+          throw new Error(response?.error || 'File is unavailable or cannot be previewed as text');
+        }
+        setWorkspaceState({ kind: 'preview', name, content: response.__httpBody }, version, subdir);
+      } catch (err) {
+        setWorkspaceState({ kind: 'error', text: err?.message || 'File preview failed' }, version, subdir);
+      }
+    };
+    const changeWorkspacePath = (subdir) => {
+      workspaceVersion += 1;
+      workspacePath = subdir;
+      loadWorkspace();
+    };
+    const renderWorkspace = () => {
+      clear(workspaceBrowser);
+      const refresh = h('button', { class: 'railWorkspaceRefresh', type: 'button' }, 'Refresh');
+      refresh.onclick = loadWorkspace;
+      const back = h('button', { class: 'railWorkspaceBack', type: 'button' }, 'Up');
+      back.disabled = !workspacePath;
+      back.onclick = () => changeWorkspacePath(workspacePath.split('/').slice(0, -1).join('/'));
+      workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceHeader' },
+        h('span', {}, `Workspace /${workspacePath}`), back, refresh));
+      if (workspaceState.kind === 'files') {
+        if (!workspaceState.files.length) workspaceBrowser.appendChild(h('div', { class: 'emptyState' }, 'Empty workspace directory'));
+        for (const row of workspaceState.files) {
+          const button = h('button', { class: row.isDir ? 'railWorkspaceDir' : 'railWorkspaceFile', type: 'button' },
+            `${row.isDir ? '📁 ' : '📄 '}${row.name}`);
+          button.onclick = () => row.isDir ? changeWorkspacePath(workspacePath ? `${workspacePath}/${row.name}` : row.name)
+            : openWorkspaceFile(row.name);
+          workspaceBrowser.appendChild(button);
+        }
+      } else if (workspaceState.kind === 'preview') {
+        const backToList = h('button', { class: 'railWorkspaceList', type: 'button' }, 'Back to listing');
+        backToList.onclick = loadWorkspace;
+        workspaceBrowser.appendChild(backToList);
+        workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceName' }, workspaceState.name));
+        workspaceBrowser.appendChild(h('pre', { class: 'railWorkspacePreview' },
+          workspaceState.content.slice(0, 16000) + (workspaceState.content.length > 16000 ? '\n… preview truncated' : '')));
+      } else {
+        workspaceBrowser.appendChild(h('div', { class: 'emptyState railWorkspaceStatus', 'aria-live': 'polite' },
+          workspaceState.text || 'Choose a workspace directory'));
+      }
+    };
 
     const isCurrentHistory = (version, sessionId) => !disposed
       && state.tab === 'session-files' && state.sessionId === sessionId
@@ -292,6 +388,7 @@ return (function () {
       historyVersion += 1;
       historyView = { kind: 'idle' };
       if (state.tab === 'session-files') loadHistory();
+      else loadWorkspace();
     };
 
     function update(data) {
@@ -299,6 +396,7 @@ return (function () {
       renderData(latestData);
     }
 
+    loadWorkspace();
     const unsubscribeSlots = slots.subscribe((slotState) => {
       slotSummary.textContent = `Slots ${slotState.mounted}/${slotState.total} · visible ${slotState.visible} · contributions ${slotState.contributions}`;
       slotSummary.setAttribute('data-contributions', String(slotState.contributions));
@@ -307,7 +405,7 @@ return (function () {
     return {
       root,
       update, setSession,
-      dispose: () => { disposed = true; historyVersion += 1; if (typeof unsubscribeSlots === 'function') unsubscribeSlots(); },
+      dispose: () => { disposed = true; historyVersion += 1; workspaceVersion += 1; if (typeof unsubscribeSlots === 'function') unsubscribeSlots(); },
     };
   }
 
