@@ -11830,3 +11830,18 @@ html[data-platform="linux"] .onboarding {
 .railWorkspaceFile:hover, .railWorkspaceDir:hover, .railWorkspaceList:hover { background: rgba(0,0,0,0.06); }
 .railWorkspaceName { font-size: 11px; color: var(--text-muted); }
 .railWorkspacePreview { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; font-size: 11px; }
+
+/* Native workspace filename search with safe relative-result navigation. */
+.railWorkspaceSearchRow { display: flex; align-items: center; gap: 4px; }
+.railWorkspaceSearchInput {
+    flex: 1; min-width: 0; padding: 5px 6px; border: 1px solid rgba(0,0,0,0.12);
+    border-radius: 6px; font: inherit; font-size: 11px; color: var(--text-primary); background: transparent;
+}
+.railWorkspaceSearchButton, .railWorkspaceSearchResult {
+    padding: 5px 7px; border: 0; border-radius: 5px; font: inherit;
+    font-size: 11px; text-align: left; color: var(--text-primary);
+    background: transparent; cursor: pointer;
+}
+.railWorkspaceSearchResult { display: block; width: 100%; overflow-wrap: anywhere; }
+.railWorkspaceSearchButton:hover, .railWorkspaceSearchResult:hover { background: rgba(0,0,0,0.06); }
+.railWorkspaceSearchCaption { font-size: 11px; color: var(--text-muted); }

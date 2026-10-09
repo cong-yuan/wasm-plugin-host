@@ -32,6 +32,7 @@ return (function () {
     let disposed = false;
     let workspaceVersion = 0;
     let workspacePath = '';
+    let workspaceQuery = '';
     let workspaceState = { kind: 'idle' };
     let latestData = { tools: [], plugins: [], runtime: { mode: 'unknown', sessions: [] } };
 
@@ -233,6 +234,37 @@ return (function () {
         setWorkspaceState({ kind: 'error', text: err?.message || 'File preview failed' }, version, subdir);
       }
     };
+    const validRelativePath = (path) => typeof path === 'string' && path.length > 0
+      && path.split('/').every(validName);
+    const searchWorkspace = async () => {
+      const query = workspaceQuery.trim();
+      if (!query) return loadWorkspace();
+      const subdir = workspacePath;
+      const version = ++workspaceVersion;
+      if (query.length > 160) {
+        setWorkspaceState({ kind: 'error', text: 'Workspace search must be at most 160 characters' }, version, subdir);
+        return;
+      }
+      if (!api.workbenchSearchFilesAvailable?.()) {
+        setWorkspaceState({ kind: 'unavailable', text: 'Native workspace search is not supported by this Studio host' }, version, subdir);
+        return;
+      }
+      setWorkspaceState({ kind: 'loading', text: 'Searching workspace files…' }, version, subdir);
+      try {
+        const response = await adapter.http('GET', `/api/workbench/search?rootId=default&q=${encodeURIComponent(query)}`);
+        if (!response || response.ok === false || response.error || !Array.isArray(response.results)
+          || (response.rootId != null && response.rootId !== 'default')
+          || (response.query != null && response.query !== query)
+          || response.results.some((row) => !row || !validRelativePath(row.relativePath)
+            || !validName(row.name) || row.name !== row.relativePath.split('/').slice(-1)[0]
+            || typeof row.isDir !== 'boolean')) {
+          throw new Error(response?.error || 'Invalid workspace search response');
+        }
+        setWorkspaceState({ kind: 'search', results: response.results, query }, version, subdir);
+      } catch (err) {
+        setWorkspaceState({ kind: 'error', text: err?.message || 'Workspace search failed' }, version, subdir);
+      }
+    };
     const changeWorkspacePath = (subdir) => {
       workspaceVersion += 1;
       workspacePath = subdir;
@@ -242,11 +274,30 @@ return (function () {
       clear(workspaceBrowser);
       const refresh = h('button', { class: 'railWorkspaceRefresh', type: 'button' }, 'Refresh');
       refresh.onclick = loadWorkspace;
+      const searchInput = h('input', {
+        class: 'railWorkspaceSearchInput', type: 'search', 'aria-label': 'Search workspace files',
+        placeholder: 'Find workspace file…',
+      });
+      searchInput.value = workspaceQuery;
+      searchInput.oninput = () => {
+        workspaceQuery = String(searchInput.value || '');
+        // Typing invalidates a previously submitted asynchronous search immediately.
+        workspaceVersion += 1;
+      };
+      searchInput.onkeydown = (event) => {
+        if (event?.key === 'Enter' && !event?.isComposing) {
+          event.preventDefault?.();
+          searchWorkspace();
+        }
+      };
+      const searchButton = h('button', { class: 'railWorkspaceSearchButton', type: 'button' }, 'Search');
+      searchButton.onclick = searchWorkspace;
       const back = h('button', { class: 'railWorkspaceBack', type: 'button' }, 'Up');
       back.disabled = !workspacePath;
       back.onclick = () => changeWorkspacePath(workspacePath.split('/').slice(0, -1).join('/'));
       workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceHeader' },
         h('span', {}, `Workspace /${workspacePath}`), back, refresh));
+      workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSearchRow' }, searchInput, searchButton));
       if (workspaceState.kind === 'files') {
         if (!workspaceState.files.length) workspaceBrowser.appendChild(h('div', { class: 'emptyState' }, 'Empty workspace directory'));
         for (const row of workspaceState.files) {
@@ -254,6 +305,24 @@ return (function () {
             `${row.isDir ? '📁 ' : '📄 '}${row.name}`);
           button.onclick = () => row.isDir ? changeWorkspacePath(workspacePath ? `${workspacePath}/${row.name}` : row.name)
             : openWorkspaceFile(row.name);
+          workspaceBrowser.appendChild(button);
+        }
+      } else if (workspaceState.kind === 'search') {
+        workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSearchCaption' },
+          `${workspaceState.results.length} results for ${workspaceState.query}`));
+        if (!workspaceState.results.length) workspaceBrowser.appendChild(h('div', { class: 'emptyState' }, 'No matching workspace files'));
+        for (const row of workspaceState.results) {
+          const button = h('button', { class: 'railWorkspaceSearchResult', type: 'button' },
+            `${row.isDir ? '📁 ' : '📄 '}${row.relativePath}`);
+          button.onclick = () => {
+            workspaceQuery = '';
+            if (row.isDir) changeWorkspacePath(row.relativePath);
+            else {
+              workspaceVersion += 1;
+              workspacePath = row.relativePath.split('/').slice(0, -1).join('/');
+              openWorkspaceFile(row.name);
+            }
+          };
           workspaceBrowser.appendChild(button);
         }
       } else if (workspaceState.kind === 'preview') {

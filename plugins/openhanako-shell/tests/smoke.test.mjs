@@ -2516,6 +2516,8 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   const oldHttp = adapter.http;
   const oldList = api.workbenchListFilesAvailable;
   const oldRead = api.workbenchReadFileAvailable;
+  const oldSearch = api.workbenchSearchFilesAvailable;
+  api.workbenchSearchFilesAvailable = () => true;
   api.workbenchListFilesAvailable = () => true;
   api.workbenchReadFileAvailable = () => true;
   let holdDirectory = false;
@@ -2523,10 +2525,19 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   let invalidRoot = false;
   let invalidName = false;
   let binaryFile = false;
+  let holdSearch = false;
+  let releaseSearch;
+  let unsafeSearch = false;
   const paths = [];
   adapter.http = async (method, path, body) => {
     if (path.startsWith('/api/workbench/')) {
       paths.push([method, path]);
+      if (path.startsWith('/api/workbench/search')) {
+        if (holdSearch) return new Promise((resolve) => { releaseSearch = resolve; });
+        return { rootId: 'default', query: 'guide', results: unsafeSearch
+          ? [{ name: 'secret.md', relativePath: '../secret.md', isDir: false }]
+          : [{ name: 'guide.txt', relativePath: 'docs/guide.txt', isDir: false }] };
+      }
       if (path.startsWith('/api/workbench/files')) {
         if (holdDirectory && path.includes('subdir=docs')) {
           return new Promise((resolve) => { releaseDirectory = resolve; });
@@ -2568,6 +2579,48 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   check('Up navigation returns to workspace root',
     rail.root.querySelectorAll('.railWorkspaceDir').length === 1
     && rail.root.querySelector('.railWorkspaceBack')?.disabled === true);
+  const searchInput = rail.root.querySelector('.railWorkspaceSearchInput');
+  searchInput.value = 'guide';
+  searchInput.fire('input');
+  rail.root.querySelector('.railWorkspaceSearchButton')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('workspace search displays native scoped matching files',
+    /docs\/guide.txt/.test(rail.root.querySelector('.railWorkspaceSearchResult')?.textContent || '')
+    && paths.some(([, path]) => path.includes('/api/workbench/search?rootId=default')));
+  rail.root.querySelector('.railWorkspaceSearchResult')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('search result opens the correct relative file for text preview',
+    /Read-only workspace text/.test(rail.root.querySelector('.railWorkspacePreview')?.textContent || '')
+    && /subdir=docs&name=guide.txt/.test(paths[paths.length - 1]?.[1] || ''));
+  // A mismatched search path must not become a read or navigation command.
+  unsafeSearch = true;
+  const unsafeInput = rail.root.querySelector('.railWorkspaceSearchInput');
+  unsafeInput.value = 'guide';
+  unsafeInput.fire('input');
+  rail.root.querySelector('.railWorkspaceSearchButton')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('workspace search rejects path traversal in backend results',
+    /Invalid workspace search response/.test(rail.root.textContent || '')
+    && rail.root.querySelectorAll('.railWorkspaceSearchResult').length === 0);
+  unsafeSearch = false;
+  holdSearch = true;
+  const delayedInput = rail.root.querySelector('.railWorkspaceSearchInput');
+  delayedInput.value = 'guide';
+  delayedInput.fire('input');
+  rail.root.querySelector('.railWorkspaceSearchButton')?.fire('click');
+  await Promise.resolve();
+  check('async workspace search began', typeof releaseSearch === 'function');
+  rail.root.querySelectorAll('.tab')[0]?.fire('click');
+  releaseSearch?.({ rootId: 'default', results: [
+    { name: 'leaked.md', relativePath: 'leaked.md', isDir: false },
+  ] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('stale workspace search cannot leak onto file history tab',
+    !/leaked.md/.test(rail.root.textContent || ''));
+  rail.root.querySelectorAll('.tab')[1]?.fire('click');
+  holdSearch = false;
+  rail.root.querySelector('.railWorkspaceBack')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
   invalidName = true;
   rail.root.querySelector('.railWorkspaceRefresh')?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2614,6 +2667,7 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   adapter.http = oldHttp;
   api.workbenchListFilesAvailable = oldList;
   api.workbenchReadFileAvailable = oldRead;
+  api.workbenchSearchFilesAvailable = oldSearch;
 }
 
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
