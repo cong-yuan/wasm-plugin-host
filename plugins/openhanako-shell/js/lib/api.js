@@ -301,6 +301,7 @@ return (function () {
       reasoning: (m && m.reasoning) || '',
       tool_calls: (m && m.tool_calls) || [],
       tool_results: (m && m.tool_results) || [],
+      streamTimeline: Array.isArray(m && m.streamTimeline) ? m.streamTimeline : [],
     }));
   };
 

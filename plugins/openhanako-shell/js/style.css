@@ -11944,3 +11944,17 @@ html[data-platform="linux"] .onboarding {
 .railMigrationImport { color:var(--text-primary);background:rgba(0,0,0,.07);border:0;border-radius:4px;padding:5px 8px;cursor:pointer;font:inherit; }
 .railMigrationImport:disabled {opacity:.5;cursor:not-allowed;}
 .railMigrationStatus {color:var(--text-muted);overflow-wrap:anywhere;}
+/* Completed-turn disclosure follows DeepSeek Harness's compact-process model:
+   render final answer outside of a collapsible, evidence-preserving process. */
+.conversationViewToolbar { display:flex; justify-content:flex-end; padding: 6px 12px; }
+.conversationViewMode { border:1px solid var(--border,rgba(0,0,0,.14)); border-radius:8px; padding:5px 10px; background:var(--surface,transparent); color:var(--text-primary); cursor:pointer; font-size:12px; }
+.conversationTurnDetails { margin:6px 15px 10px 46px; min-width:0; }
+.conversationTurnSummary { cursor:pointer; padding:7px 11px; border:1px solid var(--border,rgba(0,0,0,.15)); background:var(--overlay-subtle,rgba(0,0,0,.03)); border-radius:8px; font-size:12px; color:var(--text-muted); }
+.conversationTurnDetails[open]>.conversationTurnSummary { border-radius:8px 8px 0 0; }
+.conversationTurnProcess { border:1px solid var(--border,rgba(0,0,0,.12)); border-top:0; padding:8px 10px; border-radius:0 0 8px 8px; }
+.conversationTurnProcess .messageGroup { margin: 3px 0; }
+.conversationEmptyProcess { font-size:12px; color:var(--text-muted); margin:0; }
+.conversationToolDetails { width:100%; }
+.conversationToolSummary { display:flex;gap:8px;justify-content:space-between;align-items:center;cursor:pointer; }
+.conversationToolDetailBody { padding:8px 2px; font-size:12px; overflow-wrap:anywhere; }
+.conversationToolDetailBody pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:280px; overflow:auto; }

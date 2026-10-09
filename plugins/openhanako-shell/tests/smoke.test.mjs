@@ -3450,6 +3450,76 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   adapter.http = oldHttp;
 }
 
+// Completed-turn disclosure mirrors DeepSeek Harness's compact process UI.
+// The source is a newly loaded authoritative transcript, not a live-only
+// streamTimeline kept from the most recent request.
+{
+  const conversation = studio.require('panels/conversation');
+  const oldTranscript = api.transcript;
+  const transcript = [
+    {role:'user',text:'Can you inspect the file?'},
+    {role:'assistant',text:'Before toolAfter tool',reasoning:'Analyze safely',
+      tool_calls:[{id:'call-x',name:'read_file',arguments:'{"path":"index.ts"}'}],
+      tool_results:[],streamTimeline:[{kind:'text',text:'Before '},
+        {kind:'reasoning',text:'Analyze safely'}, {kind:'text',text:'tool'},
+        {kind:'tool',id:'call-x'},{kind:'text',text:'After tool'}]},
+    {role:'assistant',text:'',tool_results:[{tool_call_id:'call-x',content:'file contents',is_error:false}],
+      tool_calls:[],reasoning:''},
+    {role:'assistant',text:'Final readout',reasoning:'',tool_calls:[],tool_results:[],
+      streamTimeline:[{kind:'text',text:'Final readout'}]},
+    {role:'user',text:'One more answer, please'},
+    {role:'assistant',text:'Second final answer',reasoning:'Think next',
+      tool_calls:[],tool_results:[],streamTimeline:[{kind:'text',text:'Second final answer'}]},
+    {role:'user',text:'Call tool only'},
+    {role:'assistant',text:'',reasoning:'',
+      tool_calls:[{id:'call-x',name:'risky_tool',arguments:'{}'}],
+      tool_results:[{tool_call_id:'call-x',content:'Denied by user',is_error:true}],
+      streamTimeline:[{kind:'tool',id:'call-x'}]},
+  ];
+  api.transcript = async () => JSON.parse(JSON.stringify(transcript));
+  const panel = conversation.render({onChanged(){},onOpened(){},onCreated(){}});
+  await panel.open({id:'process-disclosure-session',live:true});
+  const details = () => panel.root.querySelectorAll('.conversationTurnDetails');
+  check('each historical turn offers an independent process disclosure',
+    details().length === 3 && details()[0].open === false && details()[1].open === false);
+  check('final reply is outside the hidden process, in original text/tool order',
+    details()[0].querySelector('.conversationTurnProcess')?.textContent.includes('Before ')
+    && details()[0].querySelector('.conversationTurnProcess')?.textContent.includes('read_file')
+    && panel.root.querySelectorAll('.message-stream')[0]?.children[2]?.textContent.includes('Final readout'));
+  const processMessages = details()[0].querySelector('.conversationTurnProcess')
+    ?.querySelector('.messageGroupAssistant')?.children || [];
+  const reasoningPosition = processMessages.findIndex((node) => node.className?.includes('thinkingBlock'));
+  const toolPosition = processMessages.findIndex((node) => node.className?.includes('toolGroup'));
+  check('historical reasoning keeps its original place before the tool',
+    reasoningPosition > 0 && toolPosition > reasoningPosition
+    && details()[0].querySelectorAll('.thinkingBlock').length === 1);
+  check('tool disclosures expose arguments and truthful execution results',
+    details()[0].querySelector('.conversationToolDetailBody')?.textContent.includes('index.ts')
+    && details()[0].querySelector('.conversationToolDetailBody')?.textContent.includes('file contents')
+    && details()[0].querySelector('.conversationToolDetails')?.textContent.includes('Succeeded')
+    && details()[2].querySelector('.conversationToolDetails')?.textContent.includes('Failed'));
+  check('reused tool-call IDs never steal another turn result',
+    details()[0].querySelector('.conversationToolDetailBody')?.textContent.includes('file contents')
+    && !details()[0].querySelector('.conversationToolDetailBody')?.textContent.includes('Denied by user')
+    && details()[2].querySelector('.conversationToolDetailBody')?.textContent.includes('Denied by user'));
+  check('turn without final reply keeps its tool evidence expanded',
+    details()[2].open === true && details()[1].querySelector('.conversationTurnSummary')?.textContent.includes('思考'));
+  details()[0].querySelector('summary')?.fire('click',{preventDefault(){}});
+  check('user can expand just one completed turn',
+    details()[0].open === true && details()[1].open === false);
+  await panel.open({id:'process-disclosure-session',live:true});
+  check('expanded turn survives authoritative transcript reload',
+    details()[0].open === true && details()[1].open === false);
+  panel.root.querySelector('.conversationViewMode')?.fire('click');
+  check('normal view displays all process entries without folding',
+    details().length === 0 && panel.root.querySelectorAll('.toolGroup').length >= 2);
+  panel.root.querySelector('.conversationViewMode')?.fire('click');
+  check('switching normal back to compact preserves manual expansion',
+    details().length === 3 && details()[0].open === true);
+  panel.reset();
+  api.transcript = oldTranscript;
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));

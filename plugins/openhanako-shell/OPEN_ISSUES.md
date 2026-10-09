@@ -8,7 +8,7 @@
 |---|---|---|
 | C01 Studio WASM tool approval 集成回归 | **已修复** | 真实模型回合要求显式单次审批；批准后调用工具，拒绝时不执行；`cargo test --test studio` 通过。审批超时/取消由 runtime_controls 单元测试维护 |
 | C02 断线后的实时回复恢复 | 未完成 | `resume_stream` / `stream_resume` 根据明确 stream ID / 会话回传有序缺失事件，不重复完整消息；取消/并发场景校验 |
-| C03 文字与工具历史交错时间线 | 部分完成 | 重新加载 transcript、切换会话或重启后保留并展示文字→工具→文字的真实发生顺序 |
+| C03 文字与工具历史交错时间线 | **已改善，继续完善事件级续放** | Rust 按持久化 ContentBlock 顺序投影 Text/Reasoning/ToolCall；独立 Shell 可重载完整历史、逐轮折叠并展开参数/结果。SessionEvent 级流序号/断线补帧仍与 C02 一起处理 |
 | C04 安装版 Studio 端到端验收 | 未验收 | 在真实 macOS app 验证 Shell 沙箱允许授权命令、拒绝越权、工具审批、项目及会话重启恢复、实际定时执行；不能用编译测试代替 |
 | C05 自动化最终 Agent 工作状态 | 部分完成 | 区分 queued/dispatched、Agent completed/failed/cancelled，恢复后不伪造成功或强制重放 |
 

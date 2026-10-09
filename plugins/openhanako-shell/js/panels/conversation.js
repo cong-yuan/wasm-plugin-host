@@ -49,6 +49,12 @@ return (function () {
 
   function render(options) {
     const state = { id: null, turns: [], busy: false, cancelling: false, opening: false, memory: true, epoch: 0, switchingModel: false };
+    // Compact mode follows deepseek-harness's turn/process separation: the
+    // final answer stays visible; the intermediate steps disclose on demand.
+    const DISPLAY_KEY = 'openhanako.conversation.displayMode.v1';
+    let displayMode = 'compact';
+    try {if (localStorage.getItem(DISPLAY_KEY) === 'normal') displayMode = 'normal';} catch (_) {}
+    const expandedProcessBySession = new Map();
     const markUnsupported = (button, reason) => {
       button.disabled = true;
       button.setAttribute('aria-disabled', 'true');
@@ -78,9 +84,12 @@ return (function () {
     const welcome = h('div', { class: 'welcome', id: 'welcome' }, welcomeInner);
 
     // ── ChatArea ──
+    const viewModeButton = h('button', {class:'conversationViewMode',type:'button',
+      'aria-label':'Toggle conversation detail display'}, '简洁视图 · 展开过程');
+    const viewToolbar = h('div', {class:'conversationViewToolbar'}, viewModeButton);
     const stream = h('div', { class: 'message-stream' });
     slots.mount('openhanako.conversation.stream', stream);
-    const chat = h('div', { class: 'chat-area' }, welcome, stream);
+    const chat = h('div', { class: 'chat-area' }, welcome, viewToolbar, stream);
     const conversationStatus = h('div', {
       class: 'conversation-status',
       'aria-live': 'polite',
@@ -744,21 +753,43 @@ return (function () {
       submit();
     };
 
+    viewModeButton.onclick = () => {
+      displayMode = displayMode === 'compact' ? 'normal' : 'compact';
+      try {localStorage.setItem(DISPLAY_KEY, displayMode);} catch (_) {}
+      draw();
+    };
     function draw() {
       clear(stream);
+      viewToolbar.style.display = state.turns.length ? '' : 'none';
+      viewModeButton.textContent = displayMode === 'compact'
+        ? '简洁视图 · 展开过程' : '完整视图 · 显示全部';
       const empty = !state.turns.length;
       welcome.classList.toggle('hidden', !empty);
       root.classList.toggle('welcome-mode', empty);
       chat.classList.toggle('has-panels', !empty);
-      const toolResults = new Map();
-      state.turns.forEach((message) => {
-        (message && Array.isArray(message.tool_results) ? message.tool_results : []).forEach((result) => {
+      // Tool call ids may be reused in distinct turns. Results must never
+      // escape their user-turn boundary when rendering historical evidence.
+      const toolResultsByIndex = [];
+      let resultsInTurn = new Map();
+      let turnStart = 0;
+      const commitResultScope = (end) => {
+        for (let i = turnStart; i < end; i++) toolResultsByIndex[i] = resultsInTurn;
+      };
+      state.turns.forEach((message, i) => {
+        if (message.role === 'user') {
+          commitResultScope(i);
+          resultsInTurn = new Map();
+          turnStart = i;
+        }
+        (Array.isArray(message.tool_results) ? message.tool_results : []).forEach((result) => {
           const id = result && (result.tool_call_id ?? result.toolCallId ?? result.id);
-          if (id != null) toolResults.set(String(id), result);
+          if (id != null) resultsInTurn.set(String(id), result);
         });
       });
-      // UserMessage.tsx / AssistantMessage.tsx group markup (Chat.module.css).
-      state.turns.forEach((m, index) => {
+      commitResultScope(state.turns.length);
+      // Build one message at a time; the completed-turn fold below preserves
+      // this exact order when it moves process rows inside disclosure panels.
+      const renderMessage = (m, index, parent = stream) => {
         const isUser = m.role === 'user';
         const name = isUser ? USER_NAME : AGENT_NAME;
         const group = h('div', {
@@ -778,18 +809,36 @@ return (function () {
         const appendText = (value) => group.appendChild(h('div', {
           class: 'message ' + (isUser ? 'messageUser' : 'messageAssistant'),
         }, h('div', { class: 'md-content' }, value || '')));
+        const appendReasoning = (value) => group.appendChild(h('details', {class:'thinkingBlock'},
+          h('summary', {class:'thinkingBlockSummary'}, 'Thinking'),
+          h('div', {class:'thinkingBlockBody'}, value)));
         const appendTool = (call) => {
           const id = String(call.id ?? call.call_id ?? call.tool_call_id ?? '');
-          const result = id ? toolResults.get(id) : null;
+          const result = id ? toolResultsByIndex[index]?.get(id) : null;
           const failed = !!(result && (result.is_error === true || result.isError === true || result.success === false));
           const status = result ? (failed ? 'Failed' : 'Succeeded') : 'Running';
+          const rawArgs = typeof call.arguments === 'string'
+            ? call.arguments : JSON.stringify(call.arguments ?? {});
+          const rawResult = result ? String(result.content ?? result.output ?? '') : 'Pending';
+          const started = Number(call.started_at ?? call.startedAt);
+          const finished = Number(result?.finished_at ?? result?.finishedAt);
+          const elapsed = result && Number.isFinite(started) && Number.isFinite(finished)
+            && finished >= started && started > 0 ? ` · ${finished - started} ms` : '';
+          const preview = (value) => value.length > 24000
+            ? value.slice(0,24000) + '\n[Output truncated in UI]' : value;
+          const detail = h('details', {class:'conversationToolDetails'},
+            h('summary', {class:'conversationToolSummary'},
+              h('span', {class:'toolGroupTitle'}, call.name || 'tool'),
+              h('span', {class:'openhanako-tool-status'}, status + elapsed)),
+            h('div', {class:'conversationToolDetailBody'},
+              h('strong', {}, 'Arguments'),
+              h('pre', {}, preview(String(rawArgs || '{}'))),
+              h('strong', {}, 'Result'),
+              h('pre', {}, preview(rawResult))));
           group.appendChild(h('div', {
             class: 'toolGroup toolGroupSingle',
             'data-tool-state': result ? (failed ? 'failed' : 'succeeded') : 'running',
-          }, h('div', { class: 'toolGroupContent' },
-            h('div', { class: 'toolGroupSummary' },
-              h('span', { class: 'toolGroupTitle' }, call.name || 'tool'),
-              h('span', { class: 'openhanako-tool-status' }, status)))));
+          }, detail));
         };
         const tools = !isUser && Array.isArray(m.tool_calls) ? m.tool_calls : [];
         const timeline = !isUser && Array.isArray(m.streamTimeline) && m.streamTimeline.length
@@ -798,6 +847,7 @@ return (function () {
           const seenTools = new Set();
           for (const segment of timeline) {
             if (segment?.kind === 'text' && segment.text) appendText(segment.text);
+            if (segment?.kind === 'reasoning' && segment.text) appendReasoning(segment.text);
             if (segment?.kind === 'tool') {
               const id = String(segment.id || '');
               if (!id || seenTools.has(id)) continue;
@@ -814,7 +864,7 @@ return (function () {
             if (id && !seenTools.has(id)) appendTool(call);
           }
         } else {
-          appendText(m.text || '');
+          if (m.text || isUser) appendText(m.text || '');
           for (const call of tools) appendTool(call);
         }
         if (!isUser && m.retryText) {
@@ -827,13 +877,99 @@ return (function () {
           retry.onclick = () => retryFailedTurn(index, m);
           group.appendChild(retry);
         }
-        if (!isUser && m.reasoning) {
-          group.appendChild(h('details', { class: 'thinkingBlock' },
-            h('summary', { class: 'thinkingBlockSummary' }, 'Thinking'),
-            h('div', { class: 'thinkingBlockBody' }, m.reasoning)));
-        }
-        stream.appendChild(group);
-      });
+        if (!isUser && m.reasoning && !timeline?.some((part) => part.kind === 'reasoning'))
+          appendReasoning(m.reasoning);
+        parent.appendChild(group);
+      };
+      if (displayMode === 'normal') {
+        state.turns.forEach((m, index) => renderMessage(m, index));
+      } else {
+        let pending = [];
+        let turnKey = null;
+        const flushTurn = () => {
+          if (!pending.length) return;
+          const rows = pending;
+          pending = [];
+          // A final answer is the last plain text-bearing Assistant step.
+          // If that same message contained tool calls, only the text after
+          // its last tool call qualifies as a final answer.
+          let answer = null;
+          let answerIndex = -1;
+          let processes = rows.slice();
+          for (let n = rows.length - 1; n >= 0; n--) {
+            const item = rows[n].m;
+            if (item.role !== 'assistant' || item.retryText) continue;
+            const timeline = Array.isArray(item.streamTimeline) ? item.streamTimeline : [];
+            const tools = Array.isArray(item.tool_calls) ? item.tool_calls : [];
+            const visibleText = !tools.length && !(item.tool_results || []).length
+              ? String(item.text || '') : '';
+            if (!visibleText.trim()) continue;
+            answer = { ...item, text: visibleText, reasoning: '', tool_calls: [],
+              tool_results: [], streamTimeline: [{kind:'text',text:visibleText}] };
+            answerIndex = n;
+            if (item.reasoning) {
+              processes[n] = {...rows[n], m: {...item, text:'',
+                streamTimeline:[], retryText:null}};
+            } else processes.splice(n, 1);
+            break;
+          }
+          const containsProcess = processes.some((row) => row.m.role === 'assistant'
+            && (row.m.text || row.m.reasoning || row.m.tool_calls?.length
+              || row.m.tool_results?.length));
+          if (answer || containsProcess) {
+            const key = `${turnKey || 'earlier'}:${rows[0].i}`;
+            const selected = expandedProcessBySession.get(state.id) || new Set();
+            const live = state.busy && rows.at(-1)?.i === state.turns.length - 1;
+            const expanded = live || selected.has(key) || !answer;
+            const toolIds = new Set();
+            let reasoning = false;
+            for (const row of processes) {
+              if (row.m.reasoning) reasoning = true;
+              for (const call of row.m.tool_calls || [])
+                toolIds.add(String(call.id ?? call.call_id ?? call.tool_call_id ?? ''));
+            }
+            const summaryParts = ['过程详情'];
+            if (toolIds.size) summaryParts.push(`${toolIds.size} 次工具调用`);
+            if (reasoning) summaryParts.push('思考');
+            const priorMessages = processes.filter((row) => row.m.role === 'assistant'
+              && String(row.m.text || '').trim() && !(row.m.tool_calls || []).length).length;
+            if (priorMessages) summaryParts.push(`${priorMessages} 条中间回复`);
+            if (!containsProcess) summaryParts.push('无额外过程');
+            const disclosure = h('details', {class:'conversationTurnDetails',
+              'data-turn-key': key});
+            disclosure.open = expanded;
+            const summary = h('summary', {class:'conversationTurnSummary'}, summaryParts.join(' · '));
+            summary.onclick = (event) => {
+              event.preventDefault?.();
+              disclosure.open = !disclosure.open;
+              let current = expandedProcessBySession.get(state.id);
+              if (!current) {current = new Set();expandedProcessBySession.set(state.id,current);}
+              if (disclosure.open) current.add(key); else current.delete(key);
+            };
+            disclosure.appendChild(summary);
+            const body = h('div', {class:'conversationTurnProcess'});
+            if (!containsProcess) body.appendChild(h('p', {class:'conversationEmptyProcess'},
+              '本轮没有额外的工具或思考记录。'));
+            else for (const row of processes) {
+              if (row.m.tool_results?.length && !row.m.text && !row.m.reasoning
+                && !(row.m.tool_calls || []).length) continue;
+              renderMessage(row.m,row.i,body);
+            }
+            disclosure.appendChild(body);
+            stream.appendChild(disclosure);
+          }
+          if (answer) renderMessage(answer, rows[answerIndex].i);
+          else if (!containsProcess) rows.forEach((row)=>renderMessage(row.m,row.i));
+        };
+        state.turns.forEach((m,index) => {
+          if (m.role === 'user') {
+            flushTurn();
+            turnKey = `${index}:${String(m.text || '').slice(0, 80)}`;
+            renderMessage(m,index);
+          } else pending.push({m,i:index});
+        });
+        flushTurn();
+      }
       chat.scrollTop = chat.scrollHeight;
     }
 
@@ -1100,6 +1236,7 @@ return (function () {
               String(call.id ?? call.call_id ?? call.tool_call_id ?? '')));
             const toolsPreserved = assistant.tool_calls.every((call) => toolIds.has(String(call.id)));
             if (replies.length === 1 && assistant.streamTimeline.length > 0 && toolsPreserved
+              && (!Array.isArray(replies[0].streamTimeline) || !replies[0].streamTimeline.length)
               && String(replies[0].text || '').startsWith(assistant.text)) {
               const segments = assistant.streamTimeline.map((segment) => ({ ...segment }));
               const suffix = String(replies[0].text || '').slice(assistant.text.length);
