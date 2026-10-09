@@ -39,6 +39,9 @@ return (function () {
     let workspaceMutation = null; // native rename/move/safe-delete intent
     let workspaceNotice = '';
     let workspaceUpload = null;
+    let checkpointState = { kind: 'idle', rows: [] };
+    let checkpointVersion = 0;
+    let checkpointIntent = null;
     let latestData = { tools: [], plugins: [], runtime: { mode: 'unknown', sessions: [] } };
 
     // <div className={styles.workspaceHeader}> + workspaceTitle
@@ -73,8 +76,9 @@ return (function () {
     const slotSummary = h('div', { class: 'slotSummary' });
     const fileList = h('div', { class: 'fileList' });
     const workspaceBrowser = h('section', { class: 'railWorkspaceBrowser', 'aria-label': 'Workspace files' });
+    const checkpointPanel = h('section', { class: 'railCheckpointPanel', 'aria-label': 'Native checkpoints' });
     const itemsSlot = h('div', { class: 'rail-items-slot' });
-    const content = h('div', { class: 'content', role: 'tabpanel' }, runtimeSummary, slotSummary, workspaceBrowser, fileList, itemsSlot);
+    const content = h('div', { class: 'content', role: 'tabpanel' }, runtimeSummary, slotSummary, workspaceBrowser, checkpointPanel, fileList, itemsSlot);
     slots.mount('openhanako.rail.items', itemsSlot);
 
     // <section className={styles.jianDrawer} data-open=…>
@@ -137,8 +141,9 @@ return (function () {
       return true;
     };
     function selectTab(id) {
-      if (state.tab !== id && restoreIntent?.busy) return;
+      if (state.tab !== id && (restoreIntent?.busy || checkpointIntent?.busy)) return;
       if (state.tab !== id && guardEdit()) return;
+      if (state.tab !== id) checkpointIntent = null;
       state.tab = id;
       const index = Math.max(0, BASE_TABS.findIndex((tab) => tab.id === id));
       tabs.setAttribute('style',
@@ -151,7 +156,7 @@ return (function () {
       }
       renderData(latestData);
       if (state.tab === 'session-files') loadHistory();
-      else loadWorkspace();
+      else { loadWorkspace(); loadCheckpoints(); }
     }
 
     function renderData(data) {
@@ -162,7 +167,8 @@ return (function () {
       clear(slotSummary);
       clear(fileList);
       workspaceBrowser.style.display = state.tab === 'workspace' ? '' : 'none';
-      if (state.tab === 'workspace') renderWorkspace();
+      checkpointPanel.style.display = state.tab === 'workspace' ? '' : 'none';
+      if (state.tab === 'workspace') { renderWorkspace(); renderCheckpoints(); }
 
       if (state.tab === 'session-files') {
         content.setAttribute('data-content-state', historyView.kind);
@@ -479,6 +485,118 @@ return (function () {
       } finally {
         job.busy = false;
         if (!disposed && workspaceUpload === job && workspaceVersion === version) renderData(latestData);
+      }
+    };
+    // Native Checkpoints apply to host-owned files, not the selected chat.
+    // Only host-provided IDs are usable; arbitrary paths cannot be entered.
+    const checkpointIdValid = (id) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(id);
+    const loadCheckpoints = async () => {
+      if (checkpointIntent?.busy) return;
+      checkpointIntent = null;
+      const version = ++checkpointVersion;
+      if (!api.checkpointListAvailable?.()) {
+        checkpointState = { kind: 'unavailable', text: 'Native checkpoints unavailable on this Studio host' };
+        renderData(latestData);
+        return;
+      }
+      checkpointState = { kind: 'loading', text: 'Loading native checkpoints…' };
+      renderData(latestData);
+      try {
+        const result = await adapter.http('GET', '/api/checkpoints');
+        if (!result || result.ok === false || result.error || !Array.isArray(result.checkpoints)
+          || result.checkpoints.some((row) => !row || !checkpointIdValid(row.id)
+            || typeof row.path !== 'string' || !row.path.trim())) {
+          throw new Error(result?.error || 'Invalid native checkpoint listing');
+        }
+        if (disposed || version !== checkpointVersion) return;
+        checkpointState = { kind: 'list', rows: result.checkpoints.slice(0, 100) };
+      } catch (err) {
+        if (disposed || version !== checkpointVersion) return;
+        checkpointState = { kind: 'error', text: err?.message || 'Native checkpoint listing failed' };
+      }
+      if (!disposed && version === checkpointVersion) renderData(latestData);
+    };
+    const runCheckpointAction = async (row, action) => {
+      if (checkpointIntent?.busy || checkpointState.kind !== 'list'
+        || !checkpointState.rows.some((item) => item.id === row.id)) return;
+      const supported = action === 'restore' ? api.checkpointRestoreAvailable?.()
+        : api.checkpointRemoveAvailable?.();
+      if (!supported || !checkpointIdValid(row.id)) return;
+      if (!checkpointIntent || checkpointIntent.id !== row.id || checkpointIntent.action !== action
+        || checkpointIntent.path !== row.path || !checkpointIntent.confirmed) {
+        checkpointIntent = { id: row.id, path: row.path, action, confirmed: true, busy: false,
+          error: `Confirm ${action} for checkpoint ${row.id} (${row.path})` };
+        renderData(latestData);
+        return;
+      }
+      const intent = checkpointIntent;
+      const version = checkpointVersion;
+      intent.busy = true;
+      intent.error = `Applying native checkpoint ${action}…`;
+      renderData(latestData);
+      try {
+        const path = `/api/checkpoints/${encodeURIComponent(intent.id)}`;
+        const result = await adapter.http(action === 'restore' ? 'POST' : 'DELETE',
+          action === 'restore' ? `${path}/restore` : path);
+        if (!result || result.ok !== true
+          || (action === 'restore' && result.restoredTo !== intent.path)
+          || (action === 'remove' && result.id !== intent.id)) {
+          throw new Error(result?.error || `Native checkpoint ${action} not acknowledged`);
+        }
+        if (disposed || checkpointIntent !== intent || checkpointVersion !== version) return;
+        checkpointIntent = null;
+        checkpointState = { kind: 'status', text: `Native checkpoint ${action} confirmed for ${intent.id}` };
+        renderData(latestData);
+        // Re-list only after a completed native mutation. Do not infer new rows.
+        await loadCheckpoints();
+      } catch (err) {
+        if (disposed || checkpointIntent !== intent || checkpointVersion !== version) return;
+        intent.error = err?.message || `Native checkpoint ${action} failed`;
+        intent.confirmed = false;
+      } finally {
+        intent.busy = false;
+        if (!disposed && checkpointIntent === intent && checkpointVersion === version) renderData(latestData);
+      }
+    };
+    const renderCheckpoints = () => {
+      clear(checkpointPanel);
+      const refresh = h('button', { type: 'button', class: 'railCheckpointRefresh' }, 'Refresh');
+      refresh.disabled = !!checkpointIntent?.busy;
+      refresh.onclick = loadCheckpoints;
+      checkpointPanel.appendChild(h('div', { class: 'railCheckpointHeader' },
+        h('strong', {}, 'Native file checkpoints'), refresh));
+      if (checkpointState.kind !== 'list') {
+        checkpointPanel.appendChild(h('div', { class: 'railCheckpointStatus', 'aria-live': 'polite' },
+          checkpointState.text || 'No checkpoints loaded'));
+        return;
+      }
+      if (!checkpointState.rows.length) checkpointPanel.appendChild(h('div', {
+        class: 'railCheckpointStatus',
+      }, 'No native checkpoints'));
+      for (const row of checkpointState.rows) {
+        const item = h('div', { class: 'railCheckpointRow' },
+          h('div', { class: 'railCheckpointPath' }, row.path),
+          h('div', { class: 'railCheckpointMeta' }, `${row.id} · ${row.reason || 'checkpoint'}`));
+        for (const [action, label, available] of [
+          ['restore', 'Restore', api.checkpointRestoreAvailable?.()],
+          ['remove', 'Remove', api.checkpointRemoveAvailable?.()],
+        ]) {
+          if (!available) continue;
+          const active = checkpointIntent && checkpointIntent.id === row.id && checkpointIntent.action === action;
+          const button = h('button', { type: 'button', class: `railCheckpoint${action === 'restore' ? 'Restore' : 'Remove'}` },
+            active && checkpointIntent.confirmed ? `Confirm ${label}` : label);
+          button.disabled = !!checkpointIntent?.busy;
+          button.onclick = () => runCheckpointAction(row, action);
+          item.appendChild(button);
+        }
+        checkpointPanel.appendChild(item);
+      }
+      if (checkpointIntent) {
+        const cancel = h('button', { type: 'button', class: 'railCheckpointCancel' }, 'Cancel checkpoint action');
+        cancel.disabled = checkpointIntent.busy;
+        cancel.onclick = () => { checkpointIntent = null; renderData(latestData); };
+        checkpointPanel.appendChild(cancel);
+        checkpointPanel.appendChild(h('div', { class: 'railCheckpointStatus', 'aria-live': 'polite' }, checkpointIntent.error));
       }
     };
     const renderWorkspace = () => {
@@ -834,7 +952,7 @@ return (function () {
       historyVersion += 1;
       historyView = { kind: 'idle' };
       if (state.tab === 'session-files') loadHistory();
-      else loadWorkspace();
+      else { loadWorkspace(); loadCheckpoints(); }
     };
 
     function update(data) {
@@ -845,6 +963,7 @@ return (function () {
     }
 
     loadWorkspace();
+    loadCheckpoints();
     const unsubscribeSlots = slots.subscribe((slotState) => {
       slotSummary.textContent = `Slots ${slotState.mounted}/${slotState.total} · visible ${slotState.visible} · contributions ${slotState.contributions}`;
       slotSummary.setAttribute('data-contributions', String(slotState.contributions));
@@ -853,7 +972,7 @@ return (function () {
     return {
       root,
       update, setSession,
-      dispose: () => { disposed = true; historyVersion += 1; workspaceVersion += 1; if (typeof unsubscribeSlots === 'function') unsubscribeSlots(); },
+      dispose: () => { disposed = true; historyVersion += 1; workspaceVersion += 1; checkpointVersion += 1; if (typeof unsubscribeSlots === 'function') unsubscribeSlots(); },
     };
   }
 

@@ -978,6 +978,22 @@ check('blob upload reports missing Studio capability explicitly',
   const checkpointRemove = await adapter.http('DELETE', '/api/checkpoints/1700000000_ab12');
   check('checkpoint remove delegates to native command',
     checkpointRemove?.ok === true && checkpointRemove?.id === '1700000000_ab12');
+  const priorCheckpointHost = studio.hostAction;
+  studio.hostAction = async (action) => {
+    if (action.command === 'checkpoint_restore') return { restoredTo: '/workspace/hello.txt' };
+    if (action.command === 'checkpoint_remove') return { id: action.args.id };
+    if (action.command === 'checkpoint_create_user_edit') return { checkpoint: { id: 'unconfirmed' } };
+    return priorCheckpointHost(action);
+  };
+  const missingRestoreAck = await adapter.http('POST', '/api/checkpoints/1700000000_ab12/restore');
+  const missingRemoveAck = await adapter.http('DELETE', '/api/checkpoints/1700000000_ab12');
+  const missingCreateAck = await adapter.http('POST', '/api/checkpoints/user-edit', {
+    filePath: '/workspace/hello.txt', reason: 'edit-start',
+  });
+  check('all checkpoint mutation routes require explicit native ok confirmation',
+    missingRestoreAck?.ok === false && missingRemoveAck?.ok === false
+    && missingCreateAck?.ok === false);
+  studio.hostAction = priorCheckpointHost;
 
   const invalidCheckpointPath = await adapter.http('POST', '/api/checkpoints/user-edit', {
     filePath: 'relative.md',

@@ -2980,6 +2980,88 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.workbenchUploadFileAvailable = oldUpload;
 }
 
+// Native checkpoint browsing / restore / remove is backed by exact host IDs,
+// double confirmation and explicit acknowledgments, never guessed success.
+{
+  const railModule = studio.require('panels/rail');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const flags = ['checkpointListAvailable', 'checkpointRestoreAvailable', 'checkpointRemoveAvailable'];
+  const originals = flags.map((name) => api[name]);
+  flags.forEach((name) => { api[name] = () => true; });
+  let rows = [{ id: 'cp-1', path: '/workspace/one.txt', reason: 'user-edit' }];
+  const mutations = [];
+  let failRestore = false;
+  let deferRemove = false;
+  let finishRemove;
+  let delayedList = false;
+  let finishList;
+  adapter.http = async (method, path) => {
+    if (path === '/api/checkpoints' && method === 'GET') {
+      if (delayedList) return new Promise((resolve) => { finishList = resolve; });
+      return { checkpoints: rows };
+    }
+    if (path.startsWith('/api/checkpoints/')) {
+      mutations.push({ method, path });
+      if (deferRemove && method === 'DELETE') return new Promise((resolve) => { finishRemove = resolve; });
+      if (failRestore) return { ok: false, error: 'checkpoint conflict' };
+      if (method === 'POST') return { ok: true, restoredTo: '/workspace/one.txt' };
+      rows = [];
+      return { ok: true, id: 'cp-1' };
+    }
+    return oldHttp(method, path);
+  };
+  const rail = railModule.render();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('native checkpoint listing displays validated host ID and file',
+    /workspace\/one.txt/.test(rail.root.querySelector('.railCheckpointPath')?.textContent || '')
+    && !!rail.root.querySelector('.railCheckpointRestore'));
+  rail.root.querySelector('.railCheckpointRestore')?.fire('click');
+  check('first checkpoint restore click only enters confirmation state',
+    mutations.length === 0 && /Confirm Restore/.test(rail.root.querySelector('.railCheckpointRestore')?.textContent || ''));
+  failRestore = true;
+  rail.root.querySelector('.railCheckpointRestore')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('native checkpoint restore conflict preserves record and demands fresh confirmation',
+    mutations.length === 1 && /checkpoint conflict/.test(rail.root.textContent || '')
+    && rail.root.querySelector('.railCheckpointRestore')?.textContent === 'Restore');
+  failRestore = false;
+  rail.root.querySelector('.railCheckpointRestore')?.fire('click');
+  rail.root.querySelector('.railCheckpointRestore')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('confirmed restore passes exact checked checkpoint ID to Studio',
+    mutations.length === 2 && mutations[1].method === 'POST'
+    && mutations[1].path === '/api/checkpoints/cp-1/restore');
+  rail.root.querySelector('.railCheckpointRemove')?.fire('click');
+  check('checkpoint removal requires independent confirmation',
+    mutations.length === 2 && /Confirm Remove/.test(rail.root.querySelector('.railCheckpointRemove')?.textContent || ''));
+  deferRemove = true;
+  rail.root.querySelector('.railCheckpointRemove')?.fire('click');
+  await Promise.resolve();
+  rail.root.querySelector('.railCheckpointRemove')?.fire('click');
+  rail.root.querySelectorAll('.tab')[0]?.fire('click');
+  check('in-flight checkpoint removal prevents duplicates and tab switches',
+    mutations.length === 3 && rail.root.querySelector('.railCheckpointCancel')?.disabled === true
+    && rail.root.querySelector('.railCheckpointPanel')?.style.display === '');
+  finishRemove?.({ ok: true, id: 'cp-1' });
+  rows = [];
+  deferRemove = false;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('acknowledged checkpoint removal refreshes authoritative empty list',
+    /No native checkpoints/.test(rail.root.textContent || '') && mutations.length === 3);
+  delayedList = true;
+  rail.root.querySelector('.railCheckpointRefresh')?.fire('click');
+  await Promise.resolve();
+  check('native list race started', typeof finishList === 'function');
+  rail.dispose();
+  finishList?.({ checkpoints: [{ id: 'stale', path: '/secret/other' }] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('disposed checkpoint rail cannot repopulate stale results',
+    !/secret\/other/.test(rail.root.textContent || ''));
+  adapter.http = oldHttp;
+  flags.forEach((name, i) => { api[name] = originals[i]; });
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));

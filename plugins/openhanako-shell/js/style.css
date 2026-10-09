@@ -11887,3 +11887,12 @@ html[data-platform="linux"] .onboarding {
 }
 .railHistoryRestoreButton:disabled, .railHistoryRestoreCancel:disabled { opacity: 0.45; cursor: not-allowed; }
 .railHistoryRestoreStatus { padding: 5px 0; font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
+
+/* Capability-scoped local native file checkpoint browser. */
+.railCheckpointPanel { margin: 8px 0; padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.1); display: flex; flex-direction: column; gap: 6px; }
+.railCheckpointHeader { display: flex; justify-content: space-between; align-items: center; font-size: 11px; }
+.railCheckpointRow { border: 1px solid rgba(0,0,0,0.1); border-radius: 6px; padding: 5px; font-size: 11px; overflow-wrap: anywhere; }
+.railCheckpointPath { font-weight: 500; }
+.railCheckpointMeta, .railCheckpointStatus { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
+.railCheckpointRefresh, .railCheckpointRestore, .railCheckpointRemove, .railCheckpointCancel { border: 0; border-radius: 5px; padding: 4px 6px; margin: 2px; font: inherit; font-size: 11px; cursor: pointer; color: var(--text-primary); background: rgba(0,0,0,0.06); }
+.railCheckpointRefresh:disabled, .railCheckpointRestore:disabled, .railCheckpointRemove:disabled, .railCheckpointCancel:disabled { opacity: 0.45; cursor: not-allowed; }

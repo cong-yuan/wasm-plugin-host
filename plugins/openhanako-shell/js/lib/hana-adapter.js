@@ -2442,7 +2442,7 @@ return (function () {
         const result = await api.checkpointCreateUserEdit({ filePath, reason });
         return {
           ...(result && typeof result === 'object' ? result : {}),
-          ok: result?.ok !== false,
+          ok: result?.ok === true,
         };
       } catch (error) {
         return nativeCommandError(error, 'checkpoint_create_failed');
@@ -2467,7 +2467,7 @@ return (function () {
         const result = await api.checkpointRestore(id);
         return {
           ...(result && typeof result === 'object' ? result : {}),
-          ok: result?.ok !== false,
+          ok: result?.ok === true,
         };
       } catch (error) {
         return nativeCommandError(error, 'checkpoint_restore_failed');
@@ -2492,7 +2492,7 @@ return (function () {
         const result = await api.checkpointRemove(id);
         return {
           ...(result && typeof result === 'object' ? result : {}),
-          ok: result?.ok !== false,
+          ok: result?.ok === true,
         };
       } catch (error) {
         return nativeCommandError(error, 'checkpoint_remove_failed');
