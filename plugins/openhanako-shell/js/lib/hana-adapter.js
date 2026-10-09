@@ -2398,10 +2398,41 @@ return (function () {
     }
 
     if (pathname === '/api/desk/cron' && api.automationSchedulerAvailable?.()) {
+      // Legacy Hana UI saves interval edits as a *minute string*. The native
+      // Studio scheduler uses numeric milliseconds. Convert only that legacy
+      // representation, without reinterpreting numeric native milliseconds.
+      const nativeSchedule = (source) => {
+        if (!source || typeof source !== 'object' || Array.isArray(source)) return source;
+        const draft = { ...source };
+        if (!draft.type && draft.scheduleType) draft.type = draft.scheduleType;
+        if (draft.type === 'every' && typeof draft.schedule === 'string'
+          && /^[1-9][0-9]*$/.test(draft.schedule)) {
+          const minutes = Number(draft.schedule);
+          if (!Number.isSafeInteger(minutes) || minutes > 525600)
+            return { ...draft, schedule: null };
+          draft.schedule = minutes * 60000;
+        }
+        return draft;
+      };
+      let nativeRequest = nativeSchedule(body || {});
+      if (nativeRequest.action === 'apply_suggestion') nativeRequest = {
+        ...nativeRequest,
+        jobData: nativeSchedule(nativeRequest.jobData || nativeRequest.job),
+      };
+      // Do not forward an oversized or unsafe minute interval as a bogus
+      // null schedule and leave the user believing an invalid task was saved.
+      const taskFields = nativeRequest.action === 'apply_suggestion'
+        ? nativeRequest.jobData : nativeRequest;
+      if (verb === 'POST' && taskFields?.type === 'every'
+        && (taskFields.schedule === null || !Number.isSafeInteger(taskFields.schedule)
+          || taskFields.schedule < 60000 || taskFields.schedule > 31536000000)) {
+        return { ok: false, code: 'invalid_schedule',
+          error: 'Native interval must be between 1 minute and 1 year' };
+      }
       try {
         const result = verb === 'GET' ? await api.getAutomationJobs()
           : verb === 'POST' && body?.action === 'run' ? await api.runAutomationJob(String(body.id || ''))
-            : verb === 'POST' ? await api.mutateAutomationJob(body || {}) : null;
+            : verb === 'POST' ? await api.mutateAutomationJob(nativeRequest) : null;
         if (!result) return { ok: false, error: 'unsupported automation method' };
         if (result.ok !== true || result.error) return { ok: false, code: 'native_scheduler_failed',
           error: result.error || 'Studio scheduler refused operation' };

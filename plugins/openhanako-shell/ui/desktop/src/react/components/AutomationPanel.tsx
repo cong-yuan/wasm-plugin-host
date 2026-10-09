@@ -95,7 +95,9 @@ export function AutomationPanel() {
         }));
       const nextJobs = cronData.jobs || [];
       setJobs(nextJobs);
-      setAvailableModels(modelOptions);
+      // Native Studio currently dispatches via the target Agent's active
+      // model. Do not present a per-job model picker that it cannot persist.
+      setAvailableModels(cronData.schedulerAvailable === true ? [] : modelOptions);
       setLoadError(null);
       updateBadge(nextJobs);
     } catch (err) {

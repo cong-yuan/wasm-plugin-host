@@ -2565,9 +2565,11 @@ check('host bridge correlates requestId',
   let job = { id: 'automation-native-1', type: 'every', schedule: 60000, enabled: false,
     label: 'Native check', prompt: 'Check', nextRunAt: null };
   let failedScheduler = false;
+  const nativeSchedulerRequests = [];
   api.automationSchedulerAvailable = () => true;
   api.getAutomationJobs = async () => ({ ok: true, schedulerAvailable: true, jobs: [clone(job)] });
   api.mutateAutomationJob = async (payload) => {
+    nativeSchedulerRequests.push(payload);
     if (failedScheduler) throw new Error('cannot save scheduler');
     if (payload.action === 'toggle') job.enabled = !job.enabled;
     if (payload.action === 'update') job = { ...job, ...payload };
@@ -2580,6 +2582,27 @@ check('host bridge correlates requestId',
   check('automation scheduler routes native enablement and run-now acknowledgments',
     schedulerList?.schedulerAvailable === true && schedulerList.jobs[0].enabled === false
     && enabled.job.enabled === true && ran.status === 'dispatched');
+  const createdDraft = await adapter.http('POST', '/api/desk/cron', {
+    action: 'add', scheduleType: 'cron', schedule: '0 9 * * *',
+    prompt: '', enabled: false, label: 'Create native draft',
+  });
+  const everyEdited = await adapter.http('POST', '/api/desk/cron', {
+    action: 'update', id: job.id, type: 'every', schedule: '15',
+  });
+  const everyNative = await adapter.http('POST', '/api/desk/cron', {
+    action: 'update', id: job.id, type: 'every', schedule: 900000,
+  });
+  const overflowInterval = await adapter.http('POST', '/api/desk/cron', {
+    action: 'update', id: job.id, type: 'every', schedule: '525601',
+  });
+  check('native scheduler accepts disabled empty drafts and converts legacy interval minutes',
+    createdDraft?.ok === true && everyEdited?.ok === true && everyNative?.ok === true
+    && nativeSchedulerRequests.some((r) => r.action === 'add' && r.type === 'cron'
+      && r.enabled === false && r.prompt === '')
+    && nativeSchedulerRequests.some((r) => r.action === 'update' && r.schedule === 900000)
+    && nativeSchedulerRequests.filter((r) => r.action === 'update' && r.schedule === 900000).length >= 2
+    && overflowInterval?.ok === false && overflowInterval.code === 'invalid_schedule'
+    && !nativeSchedulerRequests.some((r) => r.action === 'update' && r.schedule === null));
   failedScheduler = true;
   const failedJob = await adapter.http('POST', '/api/desk/cron', { action: 'toggle', id: job.id });
   check('scheduler cannot display enabled on a failed native mutation',

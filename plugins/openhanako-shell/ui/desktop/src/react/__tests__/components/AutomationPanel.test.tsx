@@ -45,6 +45,36 @@ describe('AutomationPanel', () => {
     vi.restoreAllMocks();
   });
 
+  it('creates an editable native disabled draft without a prompt or fictional per-job model picker', async () => {
+    let posted: Record<string, unknown> | null = null;
+    vi.mocked(hanaFetch).mockImplementation(async (url, options) => {
+      if (url === '/api/models') return new Response(JSON.stringify({
+        models: [{ id: 'test', provider: 'mock', name: 'Test model' }],
+      }), { status: 200 });
+      if (url === '/api/desk/cron' && options?.method === 'POST') {
+        posted = JSON.parse(String(options.body || '{}'));
+        return new Response(JSON.stringify({ ok: true, job: {
+          id: 'draft-1', type: 'cron', schedule: '0 9 * * *',
+          label: 'automation.newAutomation', prompt: '', enabled: false,
+          actorAgentId: 'hanako',
+        } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true, schedulerAvailable: true,
+        jobs: posted ? [{ id: 'draft-1', type: 'cron', schedule: '0 9 * * *',
+          label: 'automation.newAutomation', prompt: '', enabled: false,
+          actorAgentId: 'hanako' }] : [],
+      }), { status: 200 });
+    });
+    render(<AutomationPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'automation.add' }));
+    await waitFor(() => expect(posted).toEqual(expect.objectContaining({
+      action: 'add', prompt: '', enabled: false, actorAgentId: 'hanako',
+    })));
+    await screen.findByRole('button', { name: /automation.newAutomation/ });
+    expect(screen.queryByText('rightWorkspace.session.model')).not.toBeInTheDocument();
+    expect(addToast).not.toHaveBeenCalledWith(expect.anything(), 'error');
+  });
+
   it('runs a saved automation immediately and refreshes the task list', async () => {
     let runCount = 0;
     vi.mocked(hanaFetch).mockImplementation(async (url, options) => {
