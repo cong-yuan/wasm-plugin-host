@@ -3176,6 +3176,75 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.sendWithProgress = originalSend;
 }
 
+// In-folder filtering stays local, directory sorting is stable and breadcrumbs
+// only navigate to validated workspace-relative ancestors.
+{
+  const railModule = studio.require('panels/rail');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const oldList = api.workbenchListFilesAvailable;
+  api.workbenchListFilesAvailable = () => true;
+  let listingCalls = 0;
+  adapter.http = async (method, path, body) => {
+    if (path.startsWith('/api/workbench/files')) {
+      listingCalls += 1;
+      const subdir = decodeURIComponent(path.match(/[?&]subdir=([^&]*)/)?.[1] || '');
+      if (subdir === 'docs/src') return { rootId: 'default', subdir, files: [{ name: 'main.js', isDir: false }] };
+      if (subdir === 'docs') return { rootId: 'default', subdir, files: [
+        { name: 'readme.md', isDir: false }, { name: 'src', isDir: true },
+      ] };
+      return { rootId: 'default', subdir, files: [
+        { name: 'zeta.txt', isDir: false }, { name: 'Alpha.md', isDir: false },
+        { name: 'docs', isDir: true },
+      ] };
+    }
+    return oldHttp(method, path, body);
+  };
+  const rail = railModule.render();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const filter = rail.root.querySelector('.railWorkspaceFilter');
+  const names = () => rail.root.querySelectorAll('.railWorkspaceDir').concat(
+    rail.root.querySelectorAll('.railWorkspaceFile')).map((node) => node.textContent);
+  check('workspace folder listing sorts directories first, then filenames',
+    names().join('|').includes('docs|') && names().join('|').indexOf('Alpha.md') < names().join('|').indexOf('zeta.txt'));
+  const countBefore = listingCalls;
+  filter.value = 'ALPHA';
+  filter.fire('input');
+  check('case-insensitive directory filter does not issue backend request',
+    listingCalls === countBefore && /1 \/ 3 visible/.test(rail.root.querySelector('.railWorkspaceFilterCount')?.textContent || '')
+    && rail.root.querySelector('.railWorkspaceDir')?.style.display === 'none');
+  filter.value = 'not-a-match';
+  filter.fire('input');
+  check('empty filter results show explicit empty state without losing files',
+    /0 \/ 3 visible/.test(rail.root.querySelector('.railWorkspaceFilterCount')?.textContent || '')
+    && rail.root.querySelector('.railWorkspaceFilterEmpty')?.style.display === '');
+  filter.fire('keydown', { key: 'Escape', preventDefault() {} });
+  check('Escape resets folder filter without new request',
+    rail.root.querySelector('.railWorkspaceDir')?.style.display === ''
+    && listingCalls === countBefore);
+  rail.root.querySelector('.railWorkspaceDir')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  rail.root.querySelector('.railWorkspaceDir')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('nested workspace browser shows breadcrumb path for each directory',
+    rail.root.querySelectorAll('.railWorkspaceCrumb').length === 3
+    && /src/.test(rail.root.querySelector('.railWorkspaceHeader')?.textContent || ''));
+  rail.root.querySelectorAll('.railWorkspaceCrumb')[1]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('clicking ancestor breadcrumb navigates directly to that folder',
+    /Workspace \/docs/.test(rail.root.querySelector('.railWorkspaceHeader')?.textContent || '')
+    && rail.root.querySelectorAll('.railWorkspaceCrumb').length === 2);
+  rail.root.querySelectorAll('.railWorkspaceCrumb')[0]?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('root breadcrumb works and resets filter on navigation',
+    rail.root.querySelectorAll('.railWorkspaceCrumb').length === 1
+    && rail.root.querySelector('.railWorkspaceBack')?.disabled === true
+    && rail.root.querySelector('.railWorkspaceFilter')?.value === '');
+  rail.dispose();
+  adapter.http = oldHttp;
+  api.workbenchListFilesAvailable = oldList;
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));

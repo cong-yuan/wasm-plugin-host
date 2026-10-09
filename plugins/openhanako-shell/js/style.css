@@ -11907,3 +11907,12 @@ html[data-platform="linux"] .onboarding {
 /* In-process only, per-chat composer draft indicator. */
 .conversationDraftStatus { display: block; min-height: 0; padding: 0 12px 4px; color: var(--text-muted); font-size: 11px; }
 .conversationDraftStatus:empty { display: none; }
+
+/* Local current-directory file filter and ancestor breadcrumb navigation. */
+.railWorkspaceBreadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; }
+.railWorkspaceCrumb { padding: 3px 5px; border: 0; border-radius: 4px; font: inherit; font-size: 11px; cursor: pointer; background: rgba(0,0,0,0.05); color: var(--text-primary); max-width: 100%; overflow-wrap: anywhere; }
+.railWorkspaceCrumb:disabled { cursor: default; opacity: 0.7; }
+.railWorkspaceCrumb:hover:not(:disabled) { background: rgba(0,0,0,0.10); }
+.railWorkspaceFilterRow { display: flex; align-items: center; gap: 6px; }
+.railWorkspaceFilter { flex: 1; min-width: 0; font: inherit; font-size: 11px; padding: 5px 6px; border: 1px solid rgba(0,0,0,0.15); border-radius: 5px; background: transparent; color: var(--text-primary); }
+.railWorkspaceFilterCount { white-space: nowrap; font-size: 10px; color: var(--text-muted); }

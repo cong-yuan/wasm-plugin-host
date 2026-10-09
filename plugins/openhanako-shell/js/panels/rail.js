@@ -36,6 +36,7 @@ return (function () {
     let workspaceVersion = 0;
     let workspacePath = '';
     let workspaceQuery = '';
+    let workspaceFilter = '';
     let workspaceState = { kind: 'idle' };
     let workspaceEdit = null; // {name, subdir, version, content, original, create, saving, error}
     let workspaceMutation = null; // native rename/move/safe-delete intent
@@ -385,6 +386,7 @@ return (function () {
       workspaceNotice = '';
       workspaceVersion += 1;
       workspacePath = subdir;
+      workspaceFilter = '';
       loadWorkspace();
     };
     const beginWorkspaceEdit = ({ name, content, fileVersion = null, create = false }) => {
@@ -708,6 +710,17 @@ return (function () {
       back.onclick = () => changeWorkspacePath(workspacePath.split('/').slice(0, -1).join('/'));
       workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceHeader' },
         h('span', {}, `Workspace /${workspacePath}`), back, refresh));
+      const breadcrumbs = h('nav', { class: 'railWorkspaceBreadcrumbs', 'aria-label': 'Workspace path' });
+      const segments = workspacePath ? workspacePath.split('/') : [];
+      for (let index = 0; index <= segments.length; index += 1) {
+        const subdir = segments.slice(0, index).join('/');
+        const crumb = h('button', { class: 'railWorkspaceCrumb', type: 'button' },
+          index === 0 ? 'Root' : segments[index - 1]);
+        crumb.disabled = subdir === workspacePath;
+        crumb.onclick = () => changeWorkspacePath(subdir);
+        breadcrumbs.appendChild(crumb);
+      }
+      workspaceBrowser.appendChild(breadcrumbs);
       workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSearchRow' }, searchInput, searchButton));
       if (workspaceNotice) workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSaveStatus', 'aria-live': 'polite' }, workspaceNotice));
       if (workspaceState.kind === 'files' && api.workbenchUploadFileAvailable?.()) {
@@ -749,14 +762,48 @@ return (function () {
         if (workspaceState.error) workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSaveStatus', 'aria-live': 'polite' }, workspaceState.error));
       }
       if (workspaceState.kind === 'files') {
+        const filterInput = h('input', { class: 'railWorkspaceFilter', type: 'search',
+          'aria-label': 'Filter current folder', placeholder: 'Filter this folder…' });
+        filterInput.value = workspaceFilter;
+        const filterCount = h('span', { class: 'railWorkspaceFilterCount', 'aria-live': 'polite' }, '');
+        const filterEmpty = h('div', { class: 'emptyState railWorkspaceFilterEmpty' }, 'No matching files in this folder');
+        workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceFilterRow' }, filterInput, filterCount));
         if (!workspaceState.files.length) workspaceBrowser.appendChild(h('div', { class: 'emptyState' }, 'Empty workspace directory'));
-        for (const row of workspaceState.files) {
+        const orderedRows = workspaceState.files.slice().sort((a, b) =>
+          Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+        const entries = [];
+        for (const row of orderedRows) {
           const button = h('button', { class: row.isDir ? 'railWorkspaceDir' : 'railWorkspaceFile', type: 'button' },
             `${row.isDir ? '📁 ' : '📄 '}${row.name}`);
           button.onclick = () => row.isDir ? changeWorkspacePath(workspacePath ? `${workspacePath}/${row.name}` : row.name)
             : openWorkspaceFile(row.name);
+          entries.push({ name: row.name.toLocaleLowerCase(), button });
           workspaceBrowser.appendChild(button);
         }
+        const applyFilter = () => {
+          const query = workspaceFilter.trim().toLocaleLowerCase();
+          let matching = 0;
+          for (const entry of entries) {
+            const visible = !query || entry.name.includes(query);
+            entry.button.style.display = visible ? '' : 'none';
+            if (visible) matching += 1;
+          }
+          filterCount.textContent = `${matching} / ${entries.length} visible`;
+          filterEmpty.style.display = entries.length > 0 && matching === 0 ? '' : 'none';
+        };
+        filterInput.oninput = () => {
+          workspaceFilter = String(filterInput.value || '');
+          applyFilter();
+        };
+        filterInput.onkeydown = (event) => {
+          if (event?.key !== 'Escape') return;
+          event.preventDefault?.();
+          filterInput.value = '';
+          workspaceFilter = '';
+          applyFilter();
+        };
+        workspaceBrowser.appendChild(filterEmpty);
+        applyFilter();
       } else if (workspaceState.kind === 'search') {
         workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSearchCaption' },
           `${workspaceState.results.length} results for ${workspaceState.query}`));
@@ -770,6 +817,7 @@ return (function () {
             else {
               workspaceVersion += 1;
               workspacePath = row.relativePath.split('/').slice(0, -1).join('/');
+              workspaceFilter = '';
               openWorkspaceFile(row.name);
             }
           };
