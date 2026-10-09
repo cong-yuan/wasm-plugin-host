@@ -2420,6 +2420,12 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   const oldList = api.fileHistoryListFilesAvailable;
   const oldVersions = api.fileHistoryListVersionsAvailable;
   const oldSnapshot = api.fileHistoryGetSnapshotAvailable;
+  const oldRestore = api.fileHistoryRestoreAvailable;
+  let restoreCalls = 0;
+  let restoreError = false;
+  let holdRestore = false;
+  let releaseRestore;
+  api.fileHistoryRestoreAvailable = () => false;
   api.fileHistoryListFilesAvailable = () => true;
   api.fileHistoryListVersionsAvailable = () => true;
   api.fileHistoryGetSnapshotAvailable = () => true;
@@ -2429,6 +2435,12 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   let incorrectSnapshot = false;
   const paths = [];
   adapter.http = async (method, path, body) => {
+    if (method === 'POST' && path === '/api/file-history/restore') {
+      restoreCalls += 1;
+      if (holdRestore) return new Promise((resolve) => { releaseRestore = resolve; });
+      return restoreError ? { ok: false, error: 'restore denied' }
+        : { ok: true, relPath: 'first.md', agentId: body.agentId };
+    }
     if (method === 'GET' && path.startsWith('/api/file-history/')) {
       paths.push(path);
       if (path.startsWith('/api/file-history/files')) {
@@ -2463,6 +2475,41 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   await new Promise((resolve) => setTimeout(resolve, 0));
   check('file history snapshot is read only text',
     /Historical content from Studio/.test(rail.root.querySelector('.railHistorySnapshot')?.textContent || ''));
+  check('restore action is hidden without native capability',
+    rail.root.querySelector('.railHistoryRestoreButton') == null);
+  api.fileHistoryRestoreAvailable = () => true;
+  rail.root.querySelector('.railHistoryRefresh')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  rail.root.querySelector('.railHistoryFile')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  rail.root.querySelector('.railHistoryVersion')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  rail.root.querySelector('.railHistoryRestoreButton')?.fire('click');
+  check('first restore click only arms irreversible action', restoreCalls === 0
+    && /Confirm restore/.test(rail.root.querySelector('.railHistoryRestoreButton')?.textContent || ''));
+  restoreError = true;
+  rail.root.querySelector('.railHistoryRestoreButton')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('restore error preserves snapshot and revokes confirmation', restoreCalls === 1
+    && /restore denied/.test(rail.root.textContent || '')
+    && !!rail.root.querySelector('.railHistorySnapshot')
+    && /Restore this snapshot/.test(rail.root.querySelector('.railHistoryRestoreButton')?.textContent || ''));
+  restoreError = false;
+  rail.root.querySelector('.railHistoryRestoreButton')?.fire('click');
+  holdRestore = true;
+  rail.root.querySelector('.railHistoryRestoreButton')?.fire('click');
+  await Promise.resolve();
+  rail.root.querySelector('.railHistoryRestoreButton')?.fire('click');
+  rail.root.querySelectorAll('.tab')[1]?.fire('click');
+  check('pending restore is single flight and blocks switching tabs', restoreCalls === 2
+    && rail.root.querySelector('.railHistoryRestoreCancel')?.disabled === true
+    && rail.root.querySelector('.railHistorySnapshot') != null);
+  releaseRestore?.({ ok: true, agentId: 'history-one', relPath: 'first.md' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('confirmed native restore reports acknowledged success',
+    /acknowledged the historical file restoration/.test(rail.root.textContent || '')
+    && rail.root.querySelector('.railHistoryRestoreButton') == null);
+  holdRestore = false;
   rail.root.querySelector('.railHistoryBack')?.fire('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   holdFirstList = true;
@@ -2506,6 +2553,7 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.fileHistoryListFilesAvailable = oldList;
   api.fileHistoryListVersionsAvailable = oldVersions;
   api.fileHistoryGetSnapshotAvailable = oldSnapshot;
+  api.fileHistoryRestoreAvailable = oldRestore;
 }
 
 // Native workspace browser remains read-only, scopes coordinates to the

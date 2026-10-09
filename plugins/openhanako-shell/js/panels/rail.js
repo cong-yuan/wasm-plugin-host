@@ -29,6 +29,7 @@ return (function () {
     const state = { tab: 'workspace', jianOpen: false, sessionId: null };
     let historyVersion = 0;
     let historyView = { kind: 'idle' };
+    let restoreIntent = null;
     let disposed = false;
     let workspaceVersion = 0;
     let workspacePath = '';
@@ -136,6 +137,7 @@ return (function () {
       return true;
     };
     function selectTab(id) {
+      if (state.tab !== id && restoreIntent?.busy) return;
       if (state.tab !== id && guardEdit()) return;
       state.tab = id;
       const index = Math.max(0, BASE_TABS.findIndex((tab) => tab.id === id));
@@ -664,6 +666,8 @@ return (function () {
       return response;
     };
     const loadHistory = async () => {
+      if (restoreIntent?.busy) return;
+      restoreIntent = null;
       const sessionId = state.sessionId;
       const version = ++historyVersion;
       if (!sessionId) {
@@ -687,6 +691,8 @@ return (function () {
       }
     };
     const openVersions = async (relPath) => {
+      if (restoreIntent?.busy) return;
+      restoreIntent = null;
       const sessionId = state.sessionId;
       const version = ++historyVersion;
       if (!api.fileHistoryListVersionsAvailable?.()) {
@@ -706,6 +712,8 @@ return (function () {
       }
     };
     const openSnapshot = async (relPath, snapshotId) => {
+      if (restoreIntent?.busy) return;
+      restoreIntent = null;
       const sessionId = state.sessionId;
       const version = ++historyVersion;
       if (!api.fileHistoryGetSnapshotAvailable?.()) {
@@ -718,16 +726,56 @@ return (function () {
         if (response.relPath !== relPath || typeof response.content !== 'string') {
           throw new Error('Invalid or mismatched snapshot response');
         }
-        setHistory({ kind: 'snapshot', relPath, content: response.content }, version, sessionId);
+        setHistory({ kind: 'snapshot', relPath, snapshotId, content: response.content }, version, sessionId);
       } catch (error) {
         setHistory({ kind: 'error', text: error?.message || 'Snapshot reading failed' }, version, sessionId);
+      }
+    };
+    const restoreSnapshot = async () => {
+      const snapshot = historyView;
+      if (snapshot.kind !== 'snapshot' || !state.sessionId
+        || !api.fileHistoryRestoreAvailable?.() || !Number.isSafeInteger(snapshot.snapshotId)) return;
+      if (!restoreIntent || !restoreIntent.confirmed || restoreIntent.snapshotId !== snapshot.snapshotId
+        || restoreIntent.sessionId !== state.sessionId || restoreIntent.relPath !== snapshot.relPath) {
+        restoreIntent = { snapshotId: snapshot.snapshotId, relPath: snapshot.relPath,
+          sessionId: state.sessionId, confirmed: true, busy: false,
+          error: 'Confirm restoring this historical file version to the current workspace' };
+        renderData(latestData);
+        return;
+      }
+      const intent = restoreIntent;
+      if (intent.busy) return;
+      const version = historyVersion;
+      intent.busy = true;
+      intent.error = 'Restoring historical file through Studio…';
+      renderData(latestData);
+      try {
+        const response = await adapter.http('POST', '/api/file-history/restore', {
+          agentId: intent.sessionId, snapshotId: intent.snapshotId,
+        });
+        if (response?.ok !== true || response.relPath !== intent.relPath
+          || (response.agentId != null && response.agentId !== intent.sessionId)) {
+          throw new Error(response?.error || 'Native file history restore was not acknowledged');
+        }
+        if (disposed || restoreIntent !== intent || historyVersion !== version
+          || state.sessionId !== intent.sessionId) return;
+        restoreIntent = null;
+        historyView = { ...snapshot, restored: true };
+        renderData(latestData);
+      } catch (error) {
+        if (disposed || restoreIntent !== intent || historyVersion !== version) return;
+        intent.error = error?.message || 'Native file restore failed';
+        intent.confirmed = false;
+      } finally {
+        intent.busy = false;
+        if (!disposed && restoreIntent === intent && historyVersion === version) renderData(latestData);
       }
     };
     const renderHistory = () => {
       const refresh = h('button', { class: 'railHistoryRefresh', type: 'button' }, 'Refresh');
       refresh.onclick = loadHistory;
       fileList.appendChild(h('div', { class: 'railHistoryHeader' },
-        h('span', {}, 'Tracked file history (read-only)'), refresh));
+        h('span', {}, 'Tracked file history'), refresh));
       if (historyView.kind === 'files') {
         if (!historyView.files.length) fileList.appendChild(h('div', { class: 'emptyState' }, 'No tracked files for this session'));
         for (const row of historyView.files) {
@@ -755,6 +803,24 @@ return (function () {
         fileList.appendChild(h('div', { class: 'railHistoryPath' }, historyView.relPath));
         fileList.appendChild(h('pre', { class: 'railHistorySnapshot' },
           historyView.content.slice(0, 16000) + (historyView.content.length > 16000 ? '\n… preview truncated' : '')));
+        if (historyView.restored) fileList.appendChild(h('div', { class: 'railHistoryRestoreStatus', 'aria-live': 'polite' },
+          'Studio acknowledged the historical file restoration'));
+        if (api.fileHistoryRestoreAvailable?.() && !historyView.restored) {
+          const restore = h('button', { class: 'railHistoryRestoreButton', type: 'button' },
+            restoreIntent?.confirmed ? 'Confirm restore' : 'Restore this snapshot');
+          restore.disabled = !!restoreIntent?.busy;
+          restore.onclick = restoreSnapshot;
+          fileList.appendChild(restore);
+          if (restoreIntent) {
+            const cancel = h('button', { class: 'railHistoryRestoreCancel', type: 'button' }, 'Cancel');
+            cancel.disabled = restoreIntent.busy;
+            cancel.onclick = () => { restoreIntent = null; renderData(latestData); };
+            fileList.appendChild(cancel);
+            if (restoreIntent.error) fileList.appendChild(h('div', {
+              class: 'railHistoryRestoreStatus', 'aria-live': 'polite',
+            }, restoreIntent.error));
+          }
+        }
       } else {
         fileList.appendChild(h('div', { class: 'emptyState railHistoryStatus', 'aria-live': 'polite' },
           historyView.text || 'No history loaded'));
@@ -764,6 +830,7 @@ return (function () {
       const nextId = typeof sessionId === 'string' && sessionId ? sessionId : null;
       if (state.sessionId === nextId) return;
       state.sessionId = nextId;
+      restoreIntent = null;
       historyVersion += 1;
       historyView = { kind: 'idle' };
       if (state.tab === 'session-files') loadHistory();

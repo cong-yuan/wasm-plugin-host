@@ -11878,3 +11878,12 @@ html[data-platform="linux"] .onboarding {
     color: var(--text-primary); font: inherit; font-size: 11px; cursor: pointer;
 }
 .railWorkspaceUploadSubmit:disabled, .railWorkspaceUploadCancel:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Explicit version restore flow; native host owns the actual mutation. */
+.railHistoryRestoreButton, .railHistoryRestoreCancel {
+    display: inline-block; border: 0; border-radius: 5px; padding: 5px 7px;
+    background: rgba(0,0,0,0.06); color: var(--text-primary); cursor: pointer;
+    font: inherit; font-size: 11px;
+}
+.railHistoryRestoreButton:disabled, .railHistoryRestoreCancel:disabled { opacity: 0.45; cursor: not-allowed; }
+.railHistoryRestoreStatus { padding: 5px 0; font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
