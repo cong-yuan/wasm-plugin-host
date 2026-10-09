@@ -96,6 +96,30 @@ return (function () {
       'data-placeholder': t('input.placeholder'),
     });
 
+    // Compose drafts stay in memory (not localStorage): unsent content may be sensitive.
+    const draftBySession = new Map();
+    const draftMaxLength = 50000;
+    const draftKey = (id) => id || '__new_chat__';
+    const draftStatus = h('span', { class: 'conversationDraftStatus', 'aria-live': 'polite' }, '');
+    const setDraft = (text, id = state.id) => {
+      const value = String(text || '').slice(0, draftMaxLength);
+      if (value) draftBySession.set(draftKey(id), value);
+      else draftBySession.delete(draftKey(id));
+      draftStatus.textContent = value ? `Draft retained in this app · ${value.length} characters` : '';
+    };
+    const captureDraft = () => {
+      let value = String(input.textContent || '');
+      if (value.length > draftMaxLength) {
+        value = value.slice(0, draftMaxLength);
+        input.textContent = value;
+      }
+      setDraft(value);
+    };
+    const restoreDraft = (id = state.id) => {
+      const value = draftBySession.get(draftKey(id)) || '';
+      input.textContent = value;
+      draftStatus.textContent = value ? `Draft retained in this app · ${value.length} characters` : '';
+    };
     const attach = h('button', { class: 'attach-btn', type: 'button', title: t('input.attachFiles') }, svg(PLUS));
     const scopeBtn = h('button', { class: 'attach-btn sessionFolderScopeBtn', type: 'button', title: 'Session authorized folders', 'aria-expanded': 'false' }, svg(FOLDER));
     const slash = h('button', { class: 'attach-btn nativeSlashButton', type: 'button', title: 'Local slash commands' }, svg(SLASH));
@@ -551,10 +575,11 @@ return (function () {
       else closeSlash();
     };
     input.addEventListener('input', () => {
+      captureDraft();
       if (slashMenu.style.display !== 'none' && !input.textContent.trim().startsWith('/')) closeSlash();
     });
     // ChatPage.tsx: <div className="input-area">
-    const inputArea = h('div', { class: 'input-area' }, slashMenu, slashStatus, sessionToolsPanel, scopePanel, surface);
+    const inputArea = h('div', { class: 'input-area' }, slashMenu, slashStatus, sessionToolsPanel, scopePanel, surface, draftStatus);
 
     const headerSlot = h('div', { class: 'conversation-header-slot hana-slot' });
     slots.mount('openhanako.conversation.header', headerSlot);
@@ -714,6 +739,7 @@ return (function () {
         state.turns.splice(index, 1);
       }
       input.textContent = retryText;
+      captureDraft();
       draw();
       submit();
     };
@@ -813,6 +839,7 @@ return (function () {
 
     async function open(session) {
       const previousId = state.id;
+      captureDraft();
       stagedFiles = [];
       renderAttachments();
       const previousTurns = state.turns.slice();
@@ -825,6 +852,7 @@ return (function () {
       const openEpoch = state.epoch;
       closeModels();
       state.id = session.id;
+      restoreDraft();
       state.busy = false;
       state.cancelling = false;
       state.switchingModel = false;
@@ -839,7 +867,10 @@ return (function () {
         if (session.live === false) {
           const resumed = await api.resume(session.id);
           if (state.epoch !== openEpoch) return false;
-          if (resumed && (resumed.id || typeof resumed === 'string')) state.id = resumed.id || resumed;
+          if (resumed && (resumed.id || typeof resumed === 'string')) {
+            state.id = resumed.id || resumed;
+            restoreDraft();
+          }
         }
         const transcript = await api.transcript(state.id);
         if (state.epoch !== openEpoch) return false;
@@ -856,6 +887,7 @@ return (function () {
       } catch (err) {
         if (state.epoch !== openEpoch) return false;
         state.id = previousId;
+        restoreDraft();
         state.turns = previousTurns;
         state.busy = false;
         state.cancelling = false;
@@ -872,6 +904,7 @@ return (function () {
 
     const failSubmit = (err, submitEpoch = state.epoch, retryText = '') => {
       if (state.epoch !== submitEpoch) return;
+      if (retryText && !input.textContent.trim()) { input.textContent = retryText; captureDraft(); }
       state.turns.push({
         role: 'assistant',
         text: (err && err.message) ? err.message : String(err),
@@ -900,7 +933,7 @@ return (function () {
           if (stagedFiles.length) {
             slashStatus.textContent = 'Remove attachments before running local commands';
           } else if (match[2]?.trim()) slashStatus.textContent = `/${match[1]} does not accept arguments`;
-          else if (executeSlash(match[1].toLowerCase())) input.textContent = '';
+          else if (executeSlash(match[1].toLowerCase())) { input.textContent = ''; setDraft(''); }
           return;
         }
       }
@@ -915,6 +948,7 @@ return (function () {
       renderSendState();
       renderAttachments();
       input.textContent = '';
+      setDraft('');
       const userTurn = { role: 'user', text };
       state.turns.push(userTurn);
       draw();
@@ -1145,6 +1179,7 @@ return (function () {
       root, open, setModelLabel, refreshPendingModel,
       reset: () => {
         const previousId = state.id;
+        captureDraft();
         const wasBusy = state.busy;
         state.epoch += 1;
         closeSlash();
@@ -1164,7 +1199,8 @@ return (function () {
         closeModels();
         modelStatus.textContent = '';
         modelStatus.className = 'model-switch-status';
-        input.textContent = '';
+        setDraft('', null);
+        restoreDraft(null);
         renderSendState();
         draw();
         input.focus?.();

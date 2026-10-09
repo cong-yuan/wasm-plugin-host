@@ -11903,3 +11903,7 @@ html[data-platform="linux"] .onboarding {
 .jianStatus { padding: 4px 8px; line-height: 1.4; overflow-wrap: anywhere; }
 .jianClear { border: 0; border-radius: 5px; cursor: pointer; padding: 3px 6px; color: var(--text-primary); background: rgba(0,0,0,0.06); font-size: 11px; }
 .jianClear:hover { background: rgba(0,0,0,0.10); }
+
+/* In-process only, per-chat composer draft indicator. */
+.conversationDraftStatus { display: block; min-height: 0; padding: 0 12px 4px; color: var(--text-muted); font-size: 11px; }
+.conversationDraftStatus:empty { display: none; }

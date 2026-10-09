@@ -3125,6 +3125,57 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   else delete global.localStorage;
 }
 
+// Unsent composer drafts are isolated by session and never persisted or sent
+// merely because the user navigated. A new-chat action still resets its draft.
+{
+  const conversation = studio.require('panels/conversation');
+  const api = studio.require('lib/api');
+  const originalTranscript = api.transcript;
+  const originalPickProvider = api.pickProvider;
+  const originalSend = api.sendWithProgress;
+  let sent = 0;
+  api.transcript = async () => [];
+  api.sendWithProgress = async () => { sent += 1; return true; };
+  const panel = conversation.render({ onChanged() {}, onOpened() {}, onCreated() {} });
+  const composer = panel.root.querySelector('.input-box');
+  const draftStatus = panel.root.querySelector('.conversationDraftStatus');
+  await panel.open({ id: 'draft-first', live: true });
+  composer.textContent = 'First session private draft';
+  composer.fire('input');
+  check('draft reports in-process retention without sending',
+    /Draft retained in this app/.test(draftStatus?.textContent || '') && sent === 0);
+  await panel.open({ id: 'draft-second', live: true });
+  check('switching sessions hides first session unsent text', composer.textContent === '');
+  composer.textContent = 'Second session message';
+  composer.fire('input');
+  await panel.open({ id: 'draft-first', live: true });
+  check('returning to original session restores its unsent draft',
+    composer.textContent === 'First session private draft' && sent === 0);
+  await panel.open({ id: 'draft-second', live: true });
+  check('second session draft remains separate', composer.textContent === 'Second session message');
+  composer.textContent = 'x'.repeat(51000);
+  composer.fire('input');
+  check('composer bounds oversized drafts without persisting them', composer.textContent.length === 50000);
+  panel.reset();
+  check('new chat clears the composer and draft status', composer.textContent === ''
+    && draftStatus?.textContent === '');
+  api.pickProvider = async () => null;
+  composer.textContent = 'Retry if provider unavailable';
+  composer.fire('input');
+  panel.root.querySelector('.send-btn')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('provider failure before dispatch restores the unsent prompt for correction',
+    composer.textContent === 'Retry if provider unavailable' && sent === 0);
+  panel.reset();
+  await panel.open({ id: 'draft-first', live: true });
+  check('explicit new chat does not erase drafts from other sessions',
+    composer.textContent === 'First session private draft');
+  panel.reset();
+  api.transcript = originalTranscript;
+  api.pickProvider = originalPickProvider;
+  api.sendWithProgress = originalSend;
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));
