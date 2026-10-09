@@ -7,17 +7,17 @@ import '@testing-library/jest-dom/vitest';
 
 const mocks = vi.hoisted(() => ({
   FileHistoryRestoreConflictError: class FileHistoryRestoreConflictError extends Error {},
-  fetchHistoryFiles: vi.fn(async () => [
+  fetchHistoryFiles: vi.fn(async (..._args: any[]): Promise<any> => [
     { relPath: 'notes/a.md', deletedAt: null, lastCapturedAt: 1000, snapshotCount: 2 },
     { relPath: 'gone.md', deletedAt: 2000, lastCapturedAt: 900, snapshotCount: 1 },
   ]),
-  fetchHistoryVersions: vi.fn(async () => [
+  fetchHistoryVersions: vi.fn(async (..._args: any[]): Promise<any> => [
     { id: 7, capturedAt: 1000, origin: 'event', opContext: 'agent_tool', rawSize: 5 },
   ]),
-  fetchHistorySnapshot: vi.fn(async () => ({
+  fetchHistorySnapshot: vi.fn(async (..._args: any[]): Promise<any> => ({
     relPath: 'notes/a.md', capturedAt: 1000, origin: 'event', content: 'old',
   })),
-  restoreHistorySnapshot: vi.fn(async () => ({ ok: true, relPath: 'notes/a.md' })),
+  restoreHistorySnapshot: vi.fn(async (..._args: any[]): Promise<any> => ({ ok: true, relPath: 'notes/a.md' })),
 }));
 vi.mock('../../utils/file-history-api', () => mocks);
 const refreshMocks = vi.hoisted(() => ({ refreshOpenPreviewDocumentsForFilePath: vi.fn(async () => {}) }));

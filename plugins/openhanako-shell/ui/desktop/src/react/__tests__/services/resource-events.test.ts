@@ -3,7 +3,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const hanaFetch = vi.hoisted(() => vi.fn(async (path: string) => ({
+const hanaFetch = vi.hoisted(() => vi.fn(async (path: string): Promise<any> => ({
   json: async () => (path.endsWith('/subscribe') ? { ok: true, subscriptionId: 'sub-1' } : { ok: true }),
 })));
 

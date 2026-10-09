@@ -11916,3 +11916,19 @@ html[data-platform="linux"] .onboarding {
 .railWorkspaceFilterRow { display: flex; align-items: center; gap: 6px; }
 .railWorkspaceFilter { flex: 1; min-width: 0; font: inherit; font-size: 11px; padding: 5px 6px; border: 1px solid rgba(0,0,0,0.15); border-radius: 5px; background: transparent; color: var(--text-primary); }
 .railWorkspaceFilterCount { white-space: nowrap; font-size: 10px; color: var(--text-muted); }
+
+/* Native, per-call approval gate and durable per-Agent memory editor. */
+.railNativeApprovalPanel, .railNativeMemoryPanel { display: flex; flex-direction: column; gap: 7px; padding: 8px; border-bottom: 1px solid rgba(0,0,0,.12); font-size: 11px; min-width: 0; }
+.railApprovalHeader, .railApprovalActions, .railMemoryActions { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.railApprovalRequest { border: 1px solid rgba(160,100,32,.4); border-radius: 6px; padding: 8px; background: rgba(160,100,32,.05); min-width: 0; }
+.railApprovalArguments { white-space: pre-wrap; word-break: break-word; max-height: 230px; overflow-y: auto; font-size: 11px; user-select: text; }
+.railApprovalCall, .railApprovalStatus, .railMemoryStatus { color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
+.railApprovalRefresh, .railApprovalAllow, .railApprovalDeny, .railMemorySave, .railMemoryReload { background: rgba(0,0,0,.07); color: var(--text-primary); border: 0; padding: 5px 7px; border-radius: 5px; cursor: pointer; font: inherit; font-size: 11px; }
+.railApprovalAllow:disabled, .railApprovalDeny:disabled, .railApprovalRefresh:disabled, .railMemorySave:disabled, .railMemoryReload:disabled { cursor: not-allowed; opacity: .5; }
+.railMemoryNotes { width: 100%; min-height: 75px; max-height: 220px; resize: vertical; box-sizing: border-box; border: 1px solid rgba(0,0,0,.16); border-radius: 5px; padding: 6px; font: inherit; font-size: 11px; color: var(--text-primary); background: transparent; }
+.railNativeMemoryPanel label { display: flex; align-items: center; gap: 5px; }
+.railSharedMemoryList { display: flex; flex-direction: column; gap: 5px; font-size: 11px; }
+.railSharedFact { display: flex; align-items: flex-start; gap: 5px; border: 1px solid rgba(0,0,0,.12); border-radius: 5px; padding: 5px; overflow-wrap: anywhere; }
+.railSharedFact span { flex: 1; min-width: 0; }
+.railMemoryDeleteFact { color: var(--text-primary); background: rgba(0,0,0,.07); border: 0; border-radius: 4px; font: inherit; font-size: 11px; cursor: pointer; }
+.railMemoryDeleteFact:disabled { opacity: .5; cursor: not-allowed; }

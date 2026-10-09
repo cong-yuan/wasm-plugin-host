@@ -2213,6 +2213,48 @@ return (function () {
       return result.ok === true && control.field === 'level'
         ? { ...result, thinkingLevel: result.level } : result;
     }
+    // A specific Agent's pending tool calls. Approval is one-use and never
+    // changes the conversation's policy mode.
+    if (pathname === '/api/shared-memory' && verb === 'GET') {
+      const agentId = idFrom(query.agentId);
+      if (!agentId) return { ok: false, code: 'invalid_agent', error: 'Agent ID required' };
+      return stageAInvoke('list_shared_memory', api.sharedMemoryAvailable?.(),
+        () => api.listSharedMemory(agentId),
+        (r) => r.agentId === agentId && Array.isArray(r.facts)
+          && r.facts.every((fact) => /^memory-[0-9]+-[0-9]+$/.test(fact.id)
+            && typeof fact.text === 'string' && typeof fact.sourceAgent === 'string'));
+    }
+    if (pathname === '/api/shared-memory/remove' && verb === 'POST') {
+      const agentId = idFrom(body?.agentId);
+      const factId = body?.factId;
+      if (!agentId || typeof factId !== 'string' || !/^memory-[0-9]+-[0-9]+$/.test(factId))
+        return { ok: false, code: 'invalid_memory', error: 'Invalid Agent or memory fact ID' };
+      return stageAInvoke('delete_shared_memory', api.sharedMemoryAvailable?.(),
+        () => api.deleteSharedMemory(agentId, factId),
+        (r) => r.agentId === agentId && r.id === factId && r.deleted === true);
+    }
+    if (pathname === '/api/tool-approvals' && verb === 'GET') {
+      const agentId = idFrom(query.agentId || query.sessionId || query.sessionPath);
+      if (!agentId) return { ok: false, code: 'invalid_agent', error: 'Agent ID required' };
+      return stageAInvoke('pending_tool_approvals', api.toolApprovalsAvailable?.(),
+        () => api.pendingToolApprovals(agentId),
+        (r) => r.agentId === agentId && Array.isArray(r.approvals)
+          && r.approvals.every((item) => item.agentId === agentId
+            && typeof item.id === 'string' && item.id.length > 0
+            && typeof item.callId === 'string' && typeof item.toolName === 'string'
+            && item.arguments != null));
+    }
+    if (pathname === '/api/tool-approvals/decision' && verb === 'POST') {
+      const agentId = idFrom(body?.agentId);
+      const approvalId = body?.approvalId;
+      if (!agentId || typeof approvalId !== 'string' || !/^approval-[0-9]{1,20}$/.test(approvalId)
+        || typeof body?.approved !== 'boolean') {
+        return { ok: false, code: 'invalid_approval', error: 'Expected exact Agent, approval ID and explicit choice' };
+      }
+      return stageAInvoke('decide_tool_approval', api.toolApprovalsAvailable?.(),
+        () => api.decideToolApproval(agentId, approvalId, body.approved),
+        (r) => r.agentId === agentId && r.id === approvalId && r.approved === body.approved);
+    }
     if (pathname === '/api/agents/primary' && verb === 'GET') {
       const native = await stageAInvoke('get_primary_agent', api.primaryAgentAvailable?.(),
         () => api.getPrimaryAgent(), (r) => typeof r.agentId === 'string' && !!r.agentId);
@@ -2299,7 +2341,7 @@ return (function () {
         requestedRevision = original.revision;
         requestedPatch = flattened;
       }
-      const allowed = new Set(['provider', 'model', 'thinkingLevel', 'permissionMode', 'memoryEnabled', 'memoryNotes']);
+      const allowed = new Set(['provider', 'model', 'thinkingLevel', 'permissionMode', 'memoryEnabled', 'memoryNotes', 'sharedMemoryEnabled']);
       const patch = requestedPatch;
       const revision = requestedRevision;
       if (!patch || typeof patch !== 'object' || Array.isArray(patch)
@@ -2312,6 +2354,7 @@ return (function () {
         || (patch.thinkingLevel !== undefined && !['off', 'low', 'medium', 'high', 'extra-high'].includes(patch.thinkingLevel))
         || (patch.permissionMode !== undefined && !['ask', 'read_only', 'read-only', 'operate', 'auto'].includes(patch.permissionMode))
         || (patch.memoryEnabled !== undefined && typeof patch.memoryEnabled !== 'boolean')
+        || (patch.sharedMemoryEnabled !== undefined && typeof patch.sharedMemoryEnabled !== 'boolean')
         || (patch.memoryNotes !== undefined && (typeof patch.memoryNotes !== 'string' || patch.memoryNotes.length > 65536))) {
         return { ok: false, code: 'invalid_config', error: 'Unsupported agent config values' };
       }

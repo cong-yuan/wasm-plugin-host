@@ -1114,6 +1114,8 @@ check('iframe bridge intercepts session permission mode requests',
   iframeBridgeSource.includes("pathname === '/api/session-permission-mode'"));
 check('iframe bridge routes native memory toggles',
   iframeBridgeSource.includes("pathname === '/api/session-memory-enabled'"));
+check('iframe bridge forwards approval list/decisions to the Studio native control',
+  iframeBridgeSource.includes("pathname === '/api/tool-approvals'"));
 check('iframe bridge intercepts appearance preference requests',
   iframeBridgeSource.includes("pathname === '/api/preferences/appearance'"));
 check('iframe bridge intercepts sidebar UI preference requests',
@@ -2311,6 +2313,20 @@ check('host bridge correlates requestId',
       thinkingLevel: true, permissionMode: true, memoryToggle: true,
       primaryAgentSwitch: true, agentConfigWrite: true,
     } };
+    if (command === 'list_shared_memory') return { ok: true, agentId: args.agentId,
+      facts: [{ id: 'memory-101-1', sourceAgent: 'a1', text: 'Use Chinese' }],
+    };
+    if (command === 'delete_shared_memory') return { ok: true, agentId: badAck ? 'wrong' : args.agentId,
+      id: args.factId, deleted: true,
+    };
+    if (command === 'pending_tool_approvals') return { ok: true, agentId: args.agentId,
+      approvals: [{ id: 'approval-42', agentId: args.agentId, callId: 'c1',
+        toolName: 'write_file', arguments: { path: 'doc.txt' } }],
+    };
+    if (command === 'decide_tool_approval') return {
+      ok: true, agentId: badAck ? 'other-agent' : args.agentId,
+      id: args.approvalId, approved: args.approved,
+    };
     if (command === 'get_session_runtime_controls') return {
       ok: true, agentId: args.agentId, level: 'medium', mode: 'ask', enabled: false,
     };
@@ -2343,6 +2359,29 @@ check('host bridge correlates requestId',
     && advertised.capabilities.memoryToggle === true
     && advertised.capabilities.primaryAgentSwitch === true
     && advertised.capabilities.agentConfigWrite === true);
+  const sharedFacts = await adapter.http('GET', '/api/shared-memory?agentId=native-stage-a');
+  const sharedDeletion = await adapter.http('POST', '/api/shared-memory/remove', {
+    agentId: 'native-stage-a', factId: 'memory-101-1',
+  });
+  const invalidFact = await adapter.http('POST', '/api/shared-memory/remove', {
+    agentId: 'native-stage-a', factId: '../memory',
+  });
+  check('shared memory list/removal validates IDs and exact native acknowledgment',
+    sharedFacts?.ok === true && sharedFacts.facts[0].text === 'Use Chinese'
+    && sharedDeletion?.ok === true && invalidFact?.code === 'invalid_memory');
+  const nativeApprovals = await adapter.http('GET', '/api/tool-approvals?agentId=native-stage-a');
+  const nativeDecision = await adapter.http('POST', '/api/tool-approvals/decision', {
+    agentId: 'native-stage-a', approvalId: 'approval-42', approved: false,
+  });
+  check('pending native tool calls and exact deny decision use authorized commands',
+    nativeApprovals?.ok === true && nativeApprovals.approvals.length === 1
+    && nativeApprovals.approvals[0].arguments.path === 'doc.txt'
+    && nativeDecision?.approved === false && nativeDecision?.ok === true);
+  const malformedApproval = await adapter.http('POST', '/api/tool-approvals/decision', {
+    agentId: 'native-stage-a', approvalId: '../other', approved: true,
+  });
+  check('malformed native approval identifiers are rejected before native dispatch',
+    malformedApproval?.code === 'invalid_approval');
   const sessionId = 'native-stage-a';
   const getControls = await adapter.http('GET', '/api/session-thinking-level?sessionId=' + sessionId);
   check('native session control get verifies identity and runtime values',
@@ -2392,6 +2431,16 @@ check('host bridge correlates requestId',
     && unsafeLegacyPut?.code === 'invalid_config'
     && unsafeModelPut?.code === 'invalid_config');
   badAck = true;
+  const wrongSharedDeletion = await adapter.http('POST', '/api/shared-memory/remove', {
+    agentId: 'native-stage-a', factId: 'memory-101-1',
+  });
+  check('shared memory cannot accept a cross-Agent native success echo',
+    wrongSharedDeletion?.code === 'invalid_native_ack');
+  const wrongApproval = await adapter.http('POST', '/api/tool-approvals/decision', {
+    agentId: 'native-stage-a', approvalId: 'approval-42', approved: true,
+  });
+  check('cross-Agent native approval acknowledgment never claims success',
+    wrongApproval?.code === 'invalid_native_ack' && wrongApproval?.ok === false);
   const wrongThinking = await adapter.http('POST', '/api/session-thinking-level', { sessionId, level: 'high' });
   const wrongMemory = await adapter.http('POST', '/api/session-memory-enabled', { sessionId, enabled: false });
   const wrongPrimary = await adapter.http('POST', '/api/agents/switch', { agentId: 'a1' });

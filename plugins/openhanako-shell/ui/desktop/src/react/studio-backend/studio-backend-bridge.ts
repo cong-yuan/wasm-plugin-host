@@ -279,6 +279,8 @@ export function intercepts(pathname: string): boolean {
   if (pathname === '/api/preferences/models') return true;
   if (pathname === '/api/session-thinking-level') return true;
   if (pathname === '/api/session-memory-enabled') return true;
+  if (pathname === '/api/tool-approvals' || pathname === '/api/tool-approvals/decision') return true;
+  if (pathname === '/api/shared-memory' || pathname === '/api/shared-memory/remove') return true;
   if (pathname === '/api/user-profile') return true;
   if (pathname === '/api/desk/cron') return true;
   if (pathname === '/api/providers/fetch-models') return true;
@@ -567,7 +569,8 @@ function installFetchShim(): void {
       body: requestBody,
     });
     const envelope = result && typeof result === 'object'
-      ? result as { __httpStatus?: unknown; __httpHeaders?: unknown; __httpBody?: unknown }
+      ? result as { __httpStatus?: unknown; __httpHeaders?: unknown; __httpBody?: unknown;
+          __httpBodyEncoding?: unknown; __httpHeadOnly?: unknown }
       : null;
     const rawStatus = envelope?.__httpStatus;
     const status = Number.isInteger(rawStatus)
@@ -603,7 +606,11 @@ function installFetchShim(): void {
               ? 'application/octet-stream'
               : 'application/json',
         };
-    return new Response(responseBody, {
+    // The DOM BodyInit contract excludes Uint8Array<ArrayBufferLike> in TS 5.x;
+    // a fresh ArrayBuffer-backed copy is both safe and a valid browser BodyInit.
+    const nativeBody = responseBody instanceof Uint8Array
+      ? new Uint8Array(responseBody).buffer : responseBody;
+    return new Response(nativeBody, {
       status,
       headers,
     });

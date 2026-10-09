@@ -46,10 +46,25 @@ return (function () {
     let checkpointVersion = 0;
     let checkpointIntent = null;
     let latestData = { tools: [], plugins: [], runtime: { mode: 'unknown', sessions: [] } };
+    let approvalState = { rows: [], status: '' };
+    let approvalVersion = 0;
+    let approvalBusy = false;
+    let approvalConfirmId = null;
+    let memoryState = { revision: null, notes: '', enabled: false, sharedEnabled: false, status: '' };
+    let memoryVersion = 0;
+    let memoryBusy = false;
+    let sharedState = { rows: [], status: '' };
+    let sharedDeleteIntent = null;
+    let sharedBusy = false;
+    const memoryDrafts = new Map();
 
     // <div className={styles.workspaceHeader}> + workspaceTitle
     const title = h('div', { class: 'workspaceTitle' }, t('desk.title'));
     const header = h('div', { class: 'workspaceHeader' }, title);
+    const approvalPanel = h('section', { class: 'railNativeApprovalPanel',
+      'aria-label': 'Pending native tool approvals', 'aria-live': 'polite' });
+    const memoryPanel = h('section', { class: 'railNativeMemoryPanel',
+      'aria-label': 'Agent memory notes' });
     const headerSlot = h('div', { class: 'rail-header-slot' });
     slots.mount('openhanako.rail.header', headerSlot);
 
@@ -196,7 +211,7 @@ return (function () {
       class: 'universal-card workspaceCard',
       'data-right-workspace-card': '',
       'data-jian-open': 'false',
-    }, header, headerSlot, tabs, content, drawer, jianToggle);
+    }, header, headerSlot, approvalPanel, memoryPanel, tabs, content, drawer, jianToggle);
 
     // <div className={styles.shell}>
     const shell = h('div', { class: 'workspaceShell' }, card);
@@ -569,6 +584,260 @@ return (function () {
         job.busy = false;
         if (!disposed && workspaceUpload === job && workspaceVersion === version) renderData(latestData);
       }
+    };
+    const refreshApprovals = async () => {
+      if (!state.sessionId || !api.toolApprovalsAvailable?.() || approvalBusy || disposed) return;
+      const version = ++approvalVersion;
+      const agentId = state.sessionId;
+      try {
+        const result = await adapter.http('GET',
+          `/api/tool-approvals?agentId=${encodeURIComponent(agentId)}`);
+        if (disposed || version !== approvalVersion || state.sessionId !== agentId) return;
+        if (result?.ok !== true || !Array.isArray(result.approvals))
+          throw new Error(result?.error || 'Native approval listing not confirmed');
+        approvalState = { rows: result.approvals, status: '' };
+        if (!result.approvals.some((row) => row.id === approvalConfirmId)) approvalConfirmId = null;
+      } catch (error) {
+        if (disposed || version !== approvalVersion || state.sessionId !== agentId) return;
+        approvalState = { rows: [], status: error?.message || 'Native approval listing failed' };
+      }
+      renderApprovals();
+    };
+    const decideToolApproval = async (row, approved) => {
+      if (!state.sessionId || approvalBusy || !approvalState.rows.some((item) => item.id === row.id)) return;
+      if (approved && approvalConfirmId !== row.id) {
+        approvalConfirmId = row.id;
+        renderApprovals();
+        return;
+      }
+      const version = approvalVersion;
+      const agentId = state.sessionId;
+      approvalBusy = true;
+      approvalState.status = 'Submitting native tool approval decision…';
+      renderApprovals();
+      try {
+        const result = await adapter.http('POST', '/api/tool-approvals/decision', {
+          agentId, approvalId: row.id, approved,
+        });
+        if (result?.ok !== true || result.agentId !== agentId
+          || result.id !== row.id || result.approved !== approved)
+          throw new Error(result?.error || 'Native tool approval was not acknowledged');
+        if (disposed || approvalVersion !== version || state.sessionId !== agentId) return;
+        approvalConfirmId = null;
+        approvalState.status = approved ? 'Approved one exact tool call' : 'Denied tool call';
+        approvalState.rows = approvalState.rows.filter((item) => item.id !== row.id);
+      } catch (error) {
+        if (disposed || approvalVersion !== version || state.sessionId !== agentId) return;
+        approvalState.status = error?.message || 'Approval failed';
+        approvalConfirmId = null;
+      } finally {
+        approvalBusy = false;
+        if (!disposed && approvalVersion === version && state.sessionId === agentId) renderApprovals();
+      }
+    };
+    const renderApprovals = () => {
+      clear(approvalPanel);
+      if (!state.sessionId || !api.toolApprovalsAvailable?.()) {
+        approvalPanel.style.display = 'none';
+        return;
+      }
+      approvalPanel.style.display = '';
+      const refresh = h('button', { type: 'button', class: 'railApprovalRefresh' }, 'Refresh approvals');
+      refresh.disabled = approvalBusy;
+      refresh.onclick = refreshApprovals;
+      approvalPanel.appendChild(h('div', { class: 'railApprovalHeader' },
+        h('strong', {}, `Tool approvals (${approvalState.rows.length})`), refresh));
+      for (const request of approvalState.rows) {
+        const raw = JSON.stringify(request.arguments, null, 2);
+        const tooLong = raw.length > 16000;
+        const card = h('div', { class: 'railApprovalRequest' },
+          h('strong', {}, request.toolName),
+          h('div', { class: 'railApprovalCall' }, `Call ${request.callId}`),
+          h('pre', { class: 'railApprovalArguments' }, tooLong
+            ? 'Arguments exceed review limit — deny this call'
+            : raw));
+        const allow = h('button', { class: 'railApprovalAllow', type: 'button' },
+          approvalConfirmId === request.id ? 'Confirm this tool call' : 'Review & approve');
+        allow.disabled = approvalBusy || tooLong;
+        allow.onclick = () => decideToolApproval(request, true);
+        const deny = h('button', { class: 'railApprovalDeny', type: 'button' }, 'Deny');
+        deny.disabled = approvalBusy;
+        deny.onclick = () => decideToolApproval(request, false);
+        card.appendChild(h('div', { class: 'railApprovalActions' }, allow, deny));
+        approvalPanel.appendChild(card);
+      }
+      if (approvalState.status) approvalPanel.appendChild(h('div',
+        { class: 'railApprovalStatus', 'aria-live': 'polite' }, approvalState.status));
+    };
+    const loadNativeMemory = async () => {
+      if (!state.sessionId || !api.agentConfigAvailable?.() || disposed || memoryBusy) return;
+      const version = ++memoryVersion;
+      const agentId = state.sessionId;
+      try {
+        const result = await adapter.http('GET', `/api/agents/${encodeURIComponent(agentId)}/config`);
+        if (disposed || version !== memoryVersion || state.sessionId !== agentId) return;
+        if (result?.ok !== true || result.agentId !== agentId || !result.revision
+          || !result.config || typeof result.config.memoryNotes !== 'string') {
+          throw new Error(result?.error || 'Native Agent memory not available');
+        }
+        memoryState = { revision: result.revision, notes: result.config.memoryNotes,
+          enabled: result.config.memoryEnabled === true,
+          sharedEnabled: result.config.sharedMemoryEnabled === true, status: '' };
+        renderNativeMemory();
+        loadSharedMemory();
+      } catch (error) {
+        if (disposed || version !== memoryVersion || state.sessionId !== agentId) return;
+        memoryState.status = error?.message || 'Native Agent memory failed';
+        renderNativeMemory();
+      }
+    };
+    const saveNativeMemory = async (notes, enabled, sharedEnabled) => {
+      if (!state.sessionId || memoryBusy || !memoryState.revision) return;
+      if (notes.length > 12000) {
+        memoryState.status = 'Memory note exceeds 12,000 characters — shorten explicitly before saving';
+        renderNativeMemory();
+        return;
+      }
+      const agentId = state.sessionId;
+      const version = memoryVersion;
+      memoryBusy = true;
+      memoryState.status = 'Saving Agent memory to Studio…';
+      renderNativeMemory();
+      try {
+        const result = await adapter.http('PATCH',
+          `/api/agents/${encodeURIComponent(agentId)}/config`, {
+            revision: memoryState.revision, patch: { memoryNotes: notes, memoryEnabled: enabled, sharedMemoryEnabled: sharedEnabled },
+          });
+        if (result?.ok !== true || result.agentId !== agentId || !result.revision
+          || result.revision === memoryState.revision || result.config?.memoryNotes !== notes
+          || result.config?.memoryEnabled !== enabled
+          || result.config?.sharedMemoryEnabled !== sharedEnabled) {
+          throw new Error(result?.error || 'Native memory update was not acknowledged');
+        }
+        if (disposed || version !== memoryVersion || state.sessionId !== agentId) return;
+        memoryDrafts.delete(agentId);
+        memoryState = { revision: result.revision, notes, enabled, sharedEnabled, status: 'Saved in native Agent memory' };
+        loadSharedMemory();
+      } catch (error) {
+        if (disposed || version !== memoryVersion || state.sessionId !== agentId) return;
+        memoryState.status = error?.message || 'Native memory update failed — draft retained';
+      } finally {
+        memoryBusy = false;
+        if (!disposed && version === memoryVersion && state.sessionId === agentId) renderNativeMemory();
+      }
+    };
+    const loadSharedMemory = async () => {
+      const agentId = state.sessionId;
+      if (!agentId || !api.sharedMemoryAvailable?.() || !memoryState.enabled || !memoryState.sharedEnabled) {
+        sharedState = { rows: [], status: '' };
+        renderSharedMemory();
+        return;
+      }
+      const version = memoryVersion;
+      try {
+        const result = await adapter.http('GET', `/api/shared-memory?agentId=${encodeURIComponent(agentId)}`);
+        if (disposed || version !== memoryVersion || state.sessionId !== agentId) return;
+        if (result?.ok !== true || result.agentId !== agentId || !Array.isArray(result.facts)) {
+          throw new Error(result?.error || 'Shared memory unavailable');
+        }
+        sharedState = { rows: result.facts, status: '' };
+      } catch (error) {
+        if (disposed || version !== memoryVersion || state.sessionId !== agentId) return;
+        sharedState = { rows: [], status: error?.message || 'Could not load shared memory' };
+      }
+      renderSharedMemory();
+    };
+    const removeSharedFact = async (row) => {
+      if (sharedBusy || !sharedState.rows.some((fact) => fact.id === row.id)) return;
+      if (sharedDeleteIntent !== row.id) {
+        sharedDeleteIntent = row.id;
+        renderSharedMemory();
+        return;
+      }
+      const agentId = state.sessionId;
+      const version = memoryVersion;
+      sharedBusy = true;
+      sharedState.status = 'Deleting approved memory fact from Studio…';
+      renderSharedMemory();
+      try {
+        const result = await adapter.http('POST', '/api/shared-memory/remove', {
+          agentId, factId: row.id,
+        });
+        if (result?.ok !== true || result.agentId !== agentId || result.id !== row.id
+          || result.deleted !== true) throw new Error(result?.error || 'Memory deletion not acknowledged');
+        if (disposed || version !== memoryVersion || state.sessionId !== agentId) return;
+        sharedState.rows = sharedState.rows.filter((fact) => fact.id !== row.id);
+        sharedState.status = 'Removed one shared memory fact';
+        sharedDeleteIntent = null;
+      } catch (error) {
+        if (disposed || version !== memoryVersion || state.sessionId !== agentId) return;
+        sharedState.status = error?.message || 'Shared memory deletion failed';
+        sharedDeleteIntent = null;
+      } finally {
+        sharedBusy = false;
+        if (!disposed && version === memoryVersion && state.sessionId === agentId) renderSharedMemory();
+      }
+    };
+    const sharedList = h('section', { class: 'railSharedMemoryList', 'aria-label': 'Shared memory facts' });
+    const renderSharedMemory = () => {
+      clear(sharedList);
+      if (!state.sessionId || !memoryState.enabled || !memoryState.sharedEnabled) return;
+      sharedList.appendChild(h('strong', {}, `Shared facts (${sharedState.rows.length})`));
+      sharedList.appendChild(h('div', { class: 'railMemoryStatus' },
+        'Only explicit “记住：…” / “Remember: …” messages are collected while sharing is enabled.'));
+      const refresh = h('button', { type: 'button', class: 'railMemoryReload' }, 'Refresh facts');
+      refresh.disabled = sharedBusy;
+      refresh.onclick = loadSharedMemory;
+      sharedList.appendChild(refresh);
+      for (const fact of sharedState.rows) {
+        const row = h('div', { class: 'railSharedFact' }, h('span', {}, fact.text));
+        const remove = h('button', { type: 'button', class: 'railMemoryDeleteFact' },
+          sharedDeleteIntent === fact.id ? 'Confirm removal' : 'Remove');
+        remove.disabled = sharedBusy;
+        remove.onclick = () => removeSharedFact(fact);
+        row.appendChild(remove);
+        sharedList.appendChild(row);
+      }
+      if (sharedState.status) sharedList.appendChild(h('div',
+        { class: 'railMemoryStatus', 'aria-live': 'polite' }, sharedState.status));
+    };
+    const renderNativeMemory = () => {
+      clear(memoryPanel);
+      if (!state.sessionId || !api.agentConfigAvailable?.()) { memoryPanel.style.display = 'none'; return; }
+      memoryPanel.style.display = '';
+      memoryPanel.appendChild(h('strong', {}, 'Agent memory · native'));
+      const draft = memoryDrafts.get(state.sessionId);
+      const notes = h('textarea', { class: 'railMemoryNotes', maxlength: '12000',
+        placeholder: 'Explicit facts to remember for this Agent (not the local Jian note)' });
+      notes.value = draft !== undefined ? draft : memoryState.notes;
+      notes.oninput = () => memoryDrafts.set(state.sessionId, String(notes.value));
+      const enabled = h('input', { type: 'checkbox', class: 'railMemoryEnabled' });
+      enabled.checked = memoryState.enabled;
+      enabled.onchange = () => {
+        // Native toggle remains a real write, never an optimistic checkbox.
+        enabled.checked = memoryState.enabled;
+        saveNativeMemory(String(notes.value), !memoryState.enabled, memoryState.sharedEnabled);
+      };
+      const shared = h('input', { type: 'checkbox', class: 'railSharedMemoryEnabled' });
+      shared.checked = memoryState.sharedEnabled;
+      shared.onchange = () => {
+        shared.checked = memoryState.sharedEnabled;
+        saveNativeMemory(String(notes.value), memoryState.enabled, !memoryState.sharedEnabled);
+      };
+      const save = h('button', { type: 'button', class: 'railMemorySave' }, 'Save memory notes');
+      save.disabled = memoryBusy || !memoryState.revision;
+      save.onclick = () => saveNativeMemory(String(notes.value), memoryState.enabled, memoryState.sharedEnabled);
+      const reload = h('button', { type: 'button', class: 'railMemoryReload' }, 'Reload');
+      reload.disabled = memoryBusy;
+      reload.onclick = () => { memoryDrafts.delete(state.sessionId); loadNativeMemory(); };
+      memoryPanel.appendChild(h('label', {}, enabled, ' Enable memory on this Agent'));
+      memoryPanel.appendChild(h('label', {}, shared, ' Opt in to shared cross-chat memory'));
+      memoryPanel.appendChild(notes);
+      memoryPanel.appendChild(h('div', { class: 'railMemoryActions' }, save, reload));
+      memoryPanel.appendChild(sharedList);
+      renderSharedMemory();
+      if (memoryState.status) memoryPanel.appendChild(h('div',
+        { class: 'railMemoryStatus', 'aria-live': 'polite' }, memoryState.status));
     };
     // Native Checkpoints apply to host-owned files, not the selected chat.
     // Only host-provided IDs are usable; arbitrary paths cannot be entered.
@@ -1077,6 +1346,17 @@ return (function () {
       const nextId = typeof sessionId === 'string' && sessionId ? sessionId : null;
       if (state.sessionId === nextId) return;
       state.sessionId = nextId;
+      approvalVersion += 1;
+      approvalConfirmId = null;
+      approvalState = { rows: [], status: '' };
+      memoryVersion += 1;
+      memoryState = { revision: null, notes: '', enabled: false, sharedEnabled: false, status: '' };
+      sharedState = { rows: [], status: '' };
+      sharedDeleteIntent = null;
+      renderApprovals();
+      renderNativeMemory();
+      refreshApprovals();
+      loadNativeMemory();
       hydrateJian();
       restoreIntent = null;
       historyVersion += 1;
@@ -1094,6 +1374,12 @@ return (function () {
 
     loadWorkspace();
     loadCheckpoints();
+    renderApprovals();
+    renderNativeMemory();
+    const approvalTimer = typeof setInterval === 'function'
+      ? setInterval(() => { if (state.sessionId && !approvalBusy) refreshApprovals(); }, 2000)
+      : null;
+    approvalTimer?.unref?.(); // Node smoke runner must not stay alive after test teardown
     const unsubscribeSlots = slots.subscribe((slotState) => {
       slotSummary.textContent = `Slots ${slotState.mounted}/${slotState.total} · visible ${slotState.visible} · contributions ${slotState.contributions}`;
       slotSummary.setAttribute('data-contributions', String(slotState.contributions));
@@ -1107,7 +1393,10 @@ return (function () {
     return {
       root,
       update, setSession, openJian,
-      dispose: () => { disposed = true; historyVersion += 1; workspaceVersion += 1; checkpointVersion += 1; if (typeof unsubscribeSlots === 'function') unsubscribeSlots(); },
+      dispose: () => { disposed = true; historyVersion += 1; workspaceVersion += 1;
+        checkpointVersion += 1; approvalVersion += 1; memoryVersion += 1;
+        if (approvalTimer != null) clearInterval(approvalTimer);
+        if (typeof unsubscribeSlots === 'function') unsubscribeSlots(); },
     };
   }
 

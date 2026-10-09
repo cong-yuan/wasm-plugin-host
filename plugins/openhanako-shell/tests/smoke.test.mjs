@@ -3245,6 +3245,121 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.workbenchListFilesAvailable = oldList;
 }
 
+// Stage A: full native approvals and durable Agent memory through the rail.
+// No tool is executed or memory is saved on unacknowledged local UI changes.
+{
+  const railModule = studio.require('panels/rail');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const originalApproval = api.toolApprovalsAvailable;
+  const originalConfig = api.agentConfigAvailable;
+  const originalShared = api.sharedMemoryAvailable;
+  api.sharedMemoryAvailable = () => true;
+  api.toolApprovalsAvailable = () => true;
+  api.agentConfigAvailable = () => true;
+  let approveCalls = 0;
+  let patchCalls = 0;
+  let approveError = false;
+  let patchError = false;
+  let sharedFacts = [{ id: 'memory-100-1', sourceAgent: 'a-source', text: 'Preference: Chinese' }];
+  let sharedDeletes = 0;
+  let pending = [{ id: 'approval-42', agentId: 'a-local', callId: 'tool-c1',
+    toolName: 'write_file', arguments: { path: 'docs/test.txt', data: 'hello' } }];
+  adapter.http = async (method, path, body) => {
+    if (path.startsWith('/api/tool-approvals?')) return {
+      ok: true, agentId: 'a-local', approvals: pending,
+    };
+    if (path.startsWith('/api/shared-memory?')) return {
+      ok: true, agentId: 'a-local', facts: sharedFacts,
+    };
+    if (path === '/api/shared-memory/remove') {
+      sharedDeletes += 1;
+      sharedFacts = sharedFacts.filter((row) => row.id !== body.factId);
+      return { ok: true, agentId: body.agentId, id: body.factId, deleted: true };
+    }
+    if (path === '/api/tool-approvals/decision') {
+      approveCalls++;
+      if (approveError) return { ok: false, error: 'approval expired' };
+      pending = pending.filter((row) => row.id !== body.approvalId);
+      return { ok: true, agentId: body.agentId, id: body.approvalId, approved: body.approved };
+    }
+    if (path === '/api/agents/a-local/config' && method === 'GET') return {
+      ok: true, agentId: 'a-local', revision: 'r5',
+      config: { memoryNotes: 'Store a factual preference', memoryEnabled: false, sharedMemoryEnabled: false },
+    };
+    if (path === '/api/agents/a-local/config' && method === 'PATCH') {
+      patchCalls++;
+      if (patchError) return { ok: false, error: 'revision conflict' };
+      return { ok: true, agentId: 'a-local', revision: 'r' + (Number(body.revision.slice(1)) + 1),
+        config: { memoryNotes: body.patch.memoryNotes, memoryEnabled: body.patch.memoryEnabled, sharedMemoryEnabled: body.patch.sharedMemoryEnabled },
+      };
+    }
+    return oldHttp(method, path, body);
+  };
+  const rail = railModule.render();
+  rail.setSession('a-local');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('native approval surface displays tool arguments, not a blanket permission toggle',
+    rail.root.querySelector('.railApprovalArguments')?.textContent.includes('docs/test.txt')
+    && !!rail.root.querySelector('.railApprovalAllow'));
+  rail.root.querySelector('.railApprovalAllow')?.fire('click');
+  check('one approval click arms exact call without backend side effects',
+    approveCalls === 0 && /Confirm this tool call/.test(rail.root.querySelector('.railApprovalAllow')?.textContent || ''));
+  approveError = true;
+  rail.root.querySelector('.railApprovalAllow')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('expired native approval is not reported as granted',
+    approveCalls === 1 && /approval expired/.test(rail.root.textContent || '')
+    && !!rail.root.querySelector('.railApprovalDeny'));
+  approveError = false;
+  rail.root.querySelector('.railApprovalDeny')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('native denial resolves only the requested pending call',
+    approveCalls === 2 && !rail.root.querySelector('.railApprovalAllow')
+    && /Denied tool call/.test(rail.root.textContent || ''));
+  const notes = rail.root.querySelector('.railMemoryNotes');
+  check('memory editor loads native revisioned notes, not Jian localStorage',
+    notes?.value === 'Store a factual preference' && !!rail.root.querySelector('.railMemorySave'));
+  notes.value = 'Explicit preferences only';
+  notes.fire('input');
+  patchError = true;
+  rail.root.querySelector('.railMemorySave')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('stale revision keeps note in editable draft for retry',
+    patchCalls === 1 && /revision conflict/.test(rail.root.textContent || '')
+    && rail.root.querySelector('.railMemoryNotes')?.value === 'Explicit preferences only');
+  patchError = false;
+  rail.root.querySelector('.railMemorySave')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('native memory save only reports new acknowledged revision',
+    patchCalls === 2 && /Saved in native Agent memory/.test(rail.root.textContent || ''));
+  rail.root.querySelector('.railSharedMemoryEnabled')?.fire('change');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('native shared-memory opt-in must be acknowledged by Studio',
+    patchCalls === 3 && rail.root.querySelector('.railSharedMemoryEnabled')?.checked === true);
+  rail.root.querySelector('.railMemoryEnabled')?.fire('change');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('native memory enable loads approved cross-session facts',
+    patchCalls === 4 && rail.root.querySelector('.railSharedFact')?.textContent.includes('Preference: Chinese'));
+  rail.root.querySelector('.railMemoryDeleteFact')?.fire('click');
+  check('first shared-memory delete click does not touch backend',
+    sharedDeletes === 0 && /Confirm removal/.test(rail.root.querySelector('.railMemoryDeleteFact')?.textContent || ''));
+  rail.root.querySelector('.railMemoryDeleteFact')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('confirmed native shared-memory deletion removes the fact from view',
+    sharedDeletes === 1 && rail.root.querySelector('.railSharedFact') == null
+    && /Removed one shared memory fact/.test(rail.root.textContent || ''));
+  rail.setSession('another-session');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('native Agent memory editor clears another session scope',
+    rail.root.querySelector('.railMemoryNotes')?.value !== 'Explicit preferences only');
+  rail.dispose();
+  api.toolApprovalsAvailable = originalApproval;
+  api.agentConfigAvailable = originalConfig;
+  api.sharedMemoryAvailable = originalShared;
+  adapter.http = oldHttp;
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));

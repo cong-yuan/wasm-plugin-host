@@ -56,6 +56,7 @@ describe('AutomationCard model selection', () => {
         onToggleEnabled={vi.fn()}
         onRemove={vi.fn()}
         onUpdate={onUpdate}
+        onRunNow={vi.fn()}
       />,
     );
 
