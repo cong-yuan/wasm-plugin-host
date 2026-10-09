@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { intercepts, interceptsWithCapabilities } from '../studio-backend/studio-backend-bridge';
 
 describe('Studio backend bridge file/workbench coverage', () => {
+  it('intercepts in-session native trajectory without routing to Hana server', () => {
+    expect(intercepts('/api/session-trajectory')).toBe(true);
+    expect(interceptsWithCapabilities('/api/session-trajectory', new Set(['session_trajectory']), 'GET')).toBe(true);
+    // Older Studio hosts still reach the native adapter and fail closed with
+    // capability_unavailable; they must never fabricate a Hana trajectory.
+    expect(interceptsWithCapabilities('/api/session-trajectory', new Set(), 'GET')).toBe(true);
+  });
+
   it('keeps file/workbench/preview routes capability-gated on the Studio host', () => {
     expect(intercepts('/api/workbench/files')).toBe(false);
     expect(intercepts('/api/workbench/search')).toBe(false);
