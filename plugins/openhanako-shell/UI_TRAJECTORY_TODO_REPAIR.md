@@ -12,3 +12,9 @@
 - JS bridge：待办列表可从单独 `todo/write` 快照恢复，老宿主仍能 fallback；实时 `todo_update` 走同一原生版本。
 - React：聊天/轨迹 in-column tabs、键盘切换、无残余聊天覆盖层；右上 checklist 自动出现、展开/关闭、归属隔离和动作互斥。
 - 本机开发服务热更新并执行 `scripts/verify-openhanako-local.sh`；不运行 GitHub CI。
+
+## 第二轮 UI 收敛
+
+- 不再添加右上角清单：删除 `SessionTodoPeek`，只在原有右侧「进程」`SessionTodoCard` 渲染，同一 keyed 会话状态。原生 `/api/sessions/todos` 读取 Session Event 快照，守护版本号/异步回包；手动完成保留 completed 清单，而非清空。
+- Studio 连接状态移至顶栏聊天/频道 tab 旁的单词级提示；会话顶部恢复给视图切换和正文使用。
+- 轨迹时间轴改为点击柱状事件 + 起点/终点两独立滑杆（含键盘操作），不再通过跨工具色块拖框；Turn 标题增强层级并 sticky，详情元信息显示紧凑芯片而非 9 行 definition-list。

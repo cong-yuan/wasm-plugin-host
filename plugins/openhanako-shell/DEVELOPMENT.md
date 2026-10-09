@@ -317,3 +317,10 @@
 - Resolved the original chat `.sessionShell` absolute-cover pointer interception by placing a small OpenHanako-styled, positioned Chat/Trajectory switch above the session canvas. Trajectory is an independently positioned panel, and the old chat scroll/composer layout is unchanged. The switch uses existing design tokens and supports keyboard access.
 - Restored a session-scoped top-right checklist peek and native `session_todos` persisted TodoWrite snapshot with live delta updates. The existing right Workspace todo card remains; both use the same keyed `todosBySession` state and completion command.
 - Rationale, regression paths and testing: [`UI_TRAJECTORY_TODO_REPAIR.md`](UI_TRAJECTORY_TODO_REPAIR.md). No GitHub CI.
+
+### UI regression repair (2026-10-09, follow-up)
+
+- Moved the compact Studio transport status into the top global Chat / Channel titlebar; removed the persistent overlay underneath Chat / Trajectory.
+- Replaced the timeline drag-vs-bar-hit collision with explicit accessible start/end range controls, enlarged clickable bars, stronger sticky Turn hierarchy, and compressed the inspector's metadata into small status/time/usage badges with absent values omitted.
+- Removed duplicate top-right SessionTodoPeek, retaining the original right-rail SessionTodoCard titled 进程. Fixed "complete all" to keep and show the persisted completed list rather than clearing it. Added native session_todos read route and per-session polling to recover refresh and session switch, guard stale in-flight snapshots and preserve legacy behavior when Studio native event support is absent.
+- Local-only integration/react/typecheck/build validation, then one commit per repository. GitHub CI remains disabled.

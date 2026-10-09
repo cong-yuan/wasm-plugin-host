@@ -5,6 +5,11 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppTitlebar } from '../../components/app/AppTitlebar';
+import { useStore } from '../../stores';
+
+vi.mock('../../components/chat/ChatArea', () => ({
+  ChatRuntimeStatusIndicator: () => <span data-testid="global-connection-status">Studio</span>,
+}));
 
 vi.mock('../../components/channels/ChannelTabBar', () => ({
   ChannelTabBar: () => <div data-testid="channel-tabs" />,
@@ -20,11 +25,21 @@ vi.mock('../../components/WindowControls', () => ({
 
 describe('AppTitlebar', () => {
   beforeEach(() => {
+    useStore.setState({currentTab:'chat'});
     window.t = ((key: string) => key) as typeof window.t;
   });
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('shows one compact connection indicator alongside Chat / Channel, not inside ChatPage', () => {
+    render(<AppTitlebar sidebarOpen={false} jianOpen={false}
+      onToggleSidebar={vi.fn()} onToggleJian={vi.fn()}/>);
+    const tabs=screen.getByTestId('channel-tabs');
+    const indicator=screen.getByTestId('global-connection-status');
+    expect(tabs.parentElement).toContainElement(indicator);
+    expect(indicator).toHaveTextContent('Studio');
   });
 
   it('does not render the file preview toggle by default on desktop', () => {

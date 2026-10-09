@@ -16,8 +16,13 @@ echo '[local] Automation React component regression'
 (cd "$PLUGIN/ui" && ./node_modules/.bin/vitest run \
   desktop/src/react/__tests__/components/AutomationPanel.test.tsx \
   desktop/src/react/components/chat/__tests__/TrajectoryView.test.tsx \
-  desktop/src/react/components/chat/__tests__/SessionTodoPeek.test.tsx \
-  desktop/src/react/components/app/__tests__/ChatPage.trajectory.test.tsx)
+  desktop/src/react/components/app/__tests__/ChatPage.trajectory.test.tsx \
+  desktop/src/react/components/right-workspace/__tests__/SessionTodoCard.test.tsx \
+  desktop/src/react/components/right-workspace/__tests__/NativeTodoSync.test.tsx \
+  desktop/src/react/__tests__/components/AppTitlebar.test.tsx \
+  desktop/src/react/components/chat/__tests__/ChatArea.status.test.ts \
+  desktop/src/react/__tests__/studio-backend-bridge.test.ts \
+  desktop/src/react/__tests__/stores/session-actions.test.ts)
 echo '[local] OpenHanako TypeScript'
 npm --prefix "$PLUGIN/ui" run typecheck
 echo '[local] Renderer production bundle'

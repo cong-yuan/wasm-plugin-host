@@ -9,6 +9,7 @@ import { completeSessionTodos } from '../../stores/session-actions';
 import { sessionScopedListIncludes, sessionScopedValue } from '../../stores/session-slice';
 import type { TodoItem, TodoStatus } from '../../types';
 import styles from './SessionTodoCard.module.css';
+import {useNativeSessionTodos} from './use-native-session-todos';
 
 const EMPTY_TODOS: TodoItem[] = [];
 
@@ -50,6 +51,7 @@ export function SessionTodoCard() {
     const path = s.currentSessionPath;
     return sessionScopedListIncludes(s, s.streamingSessions, path);
   });
+  useNativeSessionTodos(sessionPath,streaming);
   const t = window.t ?? ((k: string) => k);
 
   useEffect(() => () => {

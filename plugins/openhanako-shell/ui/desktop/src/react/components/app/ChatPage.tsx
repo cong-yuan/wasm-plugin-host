@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../../stores';
 import { TrajectoryView } from '../chat/TrajectoryView';
-import { SessionTodoPeek } from '../chat/SessionTodoPeek';
 import trajectoryStyles from '../chat/TrajectoryView.module.css';
 import { InputArea, type InputAreaProps } from '../InputArea';
 import { WelcomeScreen } from '../WelcomeScreen';
@@ -36,7 +35,6 @@ export function ChatPage({
         data-conversation-views={hasPanels ? 'true' : undefined}>
         <WelcomeContainer />
         {hasPanels && <div className={trajectoryStyles.chatHeaderBackdrop} aria-hidden="true" />}
-        {hasPanels && view === 'chat' && <SessionTodoPeek />}
         {hasPanels && (
           <nav aria-label="会话视图" role="tablist" className={trajectoryStyles.chatTabs}>
             <span className={trajectoryStyles.chatTabSlider} aria-hidden="true"

@@ -451,8 +451,11 @@ export async function completeSessionTodos(sessionPath: string): Promise<boolean
       const routeError = normalizeSessionRouteError(data);
       throw errorWithCode(routeError.message || res.statusText, routeError.code);
     }
-    useStore.getState().setSessionTodosForPath(sessionPath, []);
-    useStore.getState().bumpTodosLiveVersion(sessionPath);
+    const completed = Array.isArray(data.completed) ? migrateLegacyTodos({todos:data.completed}) : null;
+    if (completed) {
+      useStore.getState().setSessionTodosForPath(sessionPath, completed);
+      useStore.getState().bumpTodosLiveVersion(sessionPath);
+    }
     return true;
   } catch (err) {
     const presented = presentError(err);

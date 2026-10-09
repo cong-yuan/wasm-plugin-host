@@ -2010,7 +2010,7 @@ return (function () {
             error: 'studio did not acknowledge completed TODO snapshot',
           };
         }
-        return { ok: true, todos: [], completed };
+        return { ok: true, todos: completed, completed };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const code = error?.code === 'capability_unavailable'
@@ -2441,6 +2441,16 @@ return (function () {
         }
         return result;
       } catch (error) { return stageAFailure(error, 'native_automation_scheduler'); }
+    }
+    if (pathname === '/api/sessions/todos' && verb === 'GET') {
+      if (!api.sessionTodosAvailable?.()) return stageAUnsupported('session_todos');
+      const sessionId=sessionIdOf(null,query);
+      if (!sessionId) return {ok:false,code:'invalid_session',error:'Session ID required'};
+      return stageAInvoke('session_todos',true,
+        () => api.getSessionTodos(sessionId),
+        (snapshot) => Array.isArray(snapshot.todos)
+          && (snapshot.source==='session-event'||snapshot.source==='no-event')
+          && (snapshot.revision===null || Number.isSafeInteger(snapshot.revision)));
     }
     if (pathname === '/api/session-trajectory') {
       if (verb !== 'GET') return {ok:false,code:'invalid_method',error:'Only GET is supported'};

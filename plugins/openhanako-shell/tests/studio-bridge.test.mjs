@@ -102,7 +102,7 @@ check('api mode is mock without invoke', api.mode() === 'mock');
   });
   const call = calls.find((action) => action.command === 'complete_session_todos');
   check('todo completion uses the Studio native command',
-    result?.ok === true && result?.todos?.length === 0 && !!call);
+    result?.ok === true && result?.todos?.length === 2 && !!call);
   check('todo completion resolves the session id from studio path',
     call?.args?.agentId === 'todo-session');
   check('todo completion returns completed snapshot for the bridge',
@@ -2252,7 +2252,7 @@ check('host bridge correlates requestId',
   const todosCompleted = await adapter.http('POST', '/api/sessions/todos/complete', { path: 'studio://agent-2' });
   check('todo completion uses the Studio persisted mutation command',
     todosCompleted?.ok === true
-    && todosCompleted?.todos?.length === 0
+    && todosCompleted?.todos?.length === 2
     && todosCompleted?.completed?.length === 2
     && calls.some((c) => c.cmd === 'complete_session_todos' && c.args.agentId === 'agent-2'));
 
@@ -2684,6 +2684,10 @@ check('host bridge correlates requestId',
   api.sessionTodosAvailable=()=>true;
   api.getSessionTodos=async(agentId)=>({ok:true,source:'session-event',revision:7,
     todos:[{content:'Run tests',activeForm:'Running tests',status:'in_progress'}]});
+  const nativeGet=await adapter.http('GET','/api/sessions/todos?sessionId=studio%3A%2F%2Fnative-todos');
+  check('top right native todo endpoint uses the real session identity',
+    nativeGet?.ok===true&&nativeGet.source==='session-event'&&nativeGet.revision===7
+    &&nativeGet.todos[0].status==='in_progress');
   const native=await adapter.http('GET','/api/sessions/messages?sessionId=native-todos');
   check('native TodoWrite survives hydration without a transcript ToolCall',
     native?.todos?.length===1 && native.todos[0].status==='in_progress');
@@ -2692,6 +2696,9 @@ check('host bridge correlates requestId',
   check('explicit cleared native todo snapshot remains cleared',
     Array.isArray(cleared.todos)&&cleared.todos.length===0);
   api.sessionTodosAvailable=()=>false;
+  const unavailable=await adapter.http('GET','/api/sessions/todos?sessionId=native-todos');
+  check('native todo sync is explicitly unsupported by old Studio',
+    unavailable?.ok===false&&unavailable.code==='capability_unavailable');
   const legacy=await adapter.http('GET','/api/sessions/messages?sessionId=native-todos');
   check('older native Studio host keeps an empty compatible fallback',Array.isArray(legacy.todos));
   api.transcript=originalTranscript;

@@ -23,7 +23,6 @@ const MAX_ALIVE = 5;
 export function ChatArea() {
   return (
     <>
-      <ChatRuntimeStatusBar />
       <PanelHost />
       <ChatFindBar />
       <ScrollToBottomBtn />
@@ -52,7 +51,8 @@ export function resolveChatRuntimeStatus({
   return null;
 }
 
-function ChatRuntimeStatusBar() {
+/** Short, accessible connection indicator in the global Chat / Channel titlebar. */
+export function ChatRuntimeStatusIndicator() {
   const bridge = useSyncExternalStore(
     subscribeStudioBridgeStatus,
     getStudioBridgeStatus,
@@ -90,7 +90,7 @@ function ChatRuntimeStatusBar() {
       data-chat-runtime-state={status.state}
     >
       <span className={styles.bridgeStatusDot} aria-hidden="true" />
-      <span>{status.label}</span>
+      <span className={styles.bridgeStatusLabel} title={status.label}>{status.state === 'connected' ? 'Studio' : status.state === 'streaming' ? '响应中' : status.state === 'pending' ? '连接中' : status.state === 'error' ? '错误' : status.label}</span>
       {status.state === 'error' && errorActionLabel && (
         <button
           type="button"

@@ -1,4 +1,6 @@
 import { ChannelTabBar } from '../channels/ChannelTabBar';
+import { ChatRuntimeStatusIndicator } from '../chat/ChatArea';
+import { useStore } from '../../stores';
 import { WidgetButtons } from '../plugin/WidgetButtons';
 import { WindowControls } from '../WindowControls';
 
@@ -38,6 +40,7 @@ export function AppTitlebar({
   onToggleMouseLeave,
 }: AppTitlebarProps) {
   const t = window.t ?? ((p: string) => p);
+  const currentTab=useStore(s=>s.currentTab);
 
   return (
     <div className="titlebar">
@@ -79,6 +82,7 @@ export function AppTitlebar({
         </div>
       )}
       {showChannelTabs && <ChannelTabBar />}
+      {showChannelTabs && currentTab === 'chat' && <ChatRuntimeStatusIndicator />}
       <div className="tb-right-group" data-ohk-slot="openhanako.titlebar.right">
         {showWidgetButtons && <WidgetButtons />}
         {showPreviewToggle && onTogglePreview && (

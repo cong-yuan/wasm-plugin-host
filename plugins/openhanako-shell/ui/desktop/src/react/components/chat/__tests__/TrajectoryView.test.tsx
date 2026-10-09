@@ -44,6 +44,24 @@ describe('native Trajectory tab',()=>{
     expect(screen.queryByRole('button',{name:'加载更早事件'})).not.toBeInTheDocument();
     expect(vi.mocked(hanaFetch).mock.calls.some(([url])=>String(url).includes('before=2'))).toBe(true);
   });
+  it('filters through separate keyboard-accessible time range controls without blocking event clicks',async()=>{
+    render(<TrajectoryView sessionPath="session-timeline" active/>);
+    expect(await screen.findByText('read_file')).toBeInTheDocument();
+    const rangeFrom=screen.getByRole('slider',{name:'时间起点'});
+    const rangeTo=screen.getByRole('slider',{name:'时间终点'});
+    expect(rangeFrom).toHaveValue('0');
+    expect(rangeTo).toHaveValue('100');
+    fireEvent.change(rangeFrom,{target:{value:'75'}});
+    expect(rangeFrom).toHaveValue('75');
+    expect(screen.queryByText('User')).not.toBeInTheDocument();
+    expect(screen.getByText('Tool result')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'重置区间'}));
+    expect(screen.getByText('User')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('read_file'));
+    const panel=screen.getByRole('complementary',{name:'轨迹事件详情'});
+    expect(panel).toHaveTextContent('60 ms');
+    expect(panel.querySelector('dl')).toBeNull();
+  });
   it('fails closed without native trajectory support; no fake usage or times',async()=>{
     vi.mocked(hanaFetch).mockResolvedValue(new Response(JSON.stringify({ok:false,error:'session_trajectory unavailable'}),{status:501}));
     render(<TrajectoryView sessionPath="session-a" active/>);

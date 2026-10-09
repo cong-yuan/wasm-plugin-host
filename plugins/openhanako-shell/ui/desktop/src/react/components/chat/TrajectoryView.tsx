@@ -30,11 +30,10 @@ export function TrajectoryView({sessionPath,active}:{sessionPath:string;active:b
   const [selected,setSelected]=useState<number|null>(null);
   const [role,setRole]=useState<string>('all');
   const [search,setSearch]=useState('');
-  const [range,setRange]=useState<[number,number]|null>(null);
+  const [rangeFrom,setRangeFrom]=useState(0);
+  const [rangeTo,setRangeTo]=useState(100);
   const [collapsed,setCollapsed]=useState<Set<number>>(new Set());
   const version=useRef(0);
-  const timeline=useRef<HTMLDivElement>(null);
-  const drag=useRef<number|null>(null);
   const cursorRef=useRef<number|null>(null);
   const load=useCallback(async(older=false)=>{
     if(!active||!sessionPath||(older&&cursorRef.current===null))return;
@@ -54,7 +53,7 @@ export function TrajectoryView({sessionPath,active}:{sessionPath:string;active:b
     }catch(e){if(n===version.current)setError(e instanceof Error?e.message:String(e));}
     finally{if(n===version.current)setBusy(false);}
   },[active,sessionPath]);
-  useEffect(()=>{version.current++;cursorRef.current=null;setCursor(null);setRecords([]);setHasMore(false);setSelected(null);setRange(null);setCollapsed(new Set());setError('');},[sessionPath]);
+  useEffect(()=>{version.current++;cursorRef.current=null;setCursor(null);setRecords([]);setHasMore(false);setSelected(null);setRangeFrom(0);setRangeTo(100);setCollapsed(new Set());setError('');},[sessionPath]);
   useEffect(()=>{if(!active||!sessionPath)return;
     void load();const timer=window.setInterval(()=>{void load();},7000);
     return()=>{window.clearInterval(timer);version.current++;};
@@ -65,6 +64,16 @@ export function TrajectoryView({sessionPath,active}:{sessionPath:string;active:b
     return Number.isFinite(start)?[start,Math.max(end,start+1)] as const:[0,1] as const;
   },[records]);
   const span=bounds[1]-bounds[0];
+  const range=rangeFrom===0 && rangeTo===100 ? null :
+    [bounds[0]+span*rangeFrom/100,bounds[0]+span*rangeTo/100] as [number,number];
+  const focusRow=(row:TrajectoryRecord)=>{
+    setSelected(row.seq);
+    setCollapsed(old=>{if(!old.has(row.turn))return old;const next=new Set(old);next.delete(row.turn);return next;});
+    requestAnimationFrame(()=>{
+      const element=document.querySelector(`[data-trajectory-seq="${row.seq}"]`);
+      if(element && 'scrollIntoView' in element)element.scrollIntoView({block:'nearest',behavior:'smooth'});
+    });
+  };
   const shown=useMemo(()=>records.filter(row=>(role==='all'||role===row.role)
     &&(!search||`${row.role} ${row.label} ${row.kind} ${row.content}`.toLowerCase().includes(search.toLowerCase()))
     &&(!range||(row.time<=range[1]&&(row.endAt??row.time)>=range[0]))),[records,role,search,range]);
@@ -74,10 +83,6 @@ export function TrajectoryView({sessionPath,active}:{sessionPath:string;active:b
     return [...groups.entries()];
   },[shown]);
   const selectedRecord=records.find(row=>row.seq===selected);
-  const atX=(x:number)=>{
-    const rect=timeline.current?.getBoundingClientRect();
-    return !rect||!rect.width?bounds[0]:bounds[0]+Math.min(1,Math.max(0,(x-rect.left)/rect.width))*span;
-  };
   return <div className={styles.root} aria-label="会话轨迹">
     <header className={styles.header}><strong>Trajectory · 会话轨迹</strong>
       <span>{records.length} 条事件{cursor!==null?' · 支持载入更早记录':''}</span>
@@ -86,14 +91,10 @@ export function TrajectoryView({sessionPath,active}:{sessionPath:string;active:b
     {error&&<p className={styles.error} role="alert">{error}</p>}
     <section className={styles.overview} aria-label="执行时间轴">
       <div className={styles.heading}><strong>Timeline</strong><span>{records.length?`${clock(bounds[0])} — ${clock(bounds[1])}`:'等待事件记录'}</span>
-        {range&&<button type="button" onClick={()=>setRange(null)}>清除时间选择</button>}</div>
+        {range&&<button type="button" onClick={()=>{setRangeFrom(0);setRangeTo(100);}}>重置区间</button>}</div>
       <div className={styles.timelineRow}>
         <div className={styles.labels}>{TRACKS.map(item=><span key={item.id}>{item.id}</span>)}</div>
-        <div ref={timeline} className={styles.timeline}
-          onMouseDown={event=>{drag.current=atX(event.clientX);}}
-          onMouseUp={event=>{if(drag.current!==null){const end=atX(event.clientX);
-            if(Math.abs(end-drag.current)>Math.max(1,span/100))setRange([Math.min(drag.current,end),Math.max(drag.current,end)]);
-            drag.current=null;}}} title="拖选时间范围可筛选事件">
+        <div className={styles.timeline} aria-label="轨迹时间轴">
           {TRACKS.map(track=><div key={track.id} className={styles.track}>
             {records.filter(row=>track.roles.some(item=>row.role===item))
               .filter(row=>row.role==='tool'?row.kind==='tool/call':row.role==='model'?row.kind==='step/start':row.role==='context'?row.kind==='turn/start':true)
@@ -102,12 +103,20 @@ export function TrajectoryView({sessionPath,active}:{sessionPath:string;active:b
                 aria-label={`${row.label} ${clock(row.time)}`} title={`${row.label} · ${clock(row.time)} · ${duration(row)}`}
                 style={{left:`${Math.max(0,(row.time-bounds[0])/span*100)}%`,
                   width:`${Math.max(.6,(row.endAt??row.time)-row.time>0?((row.endAt??row.time)-row.time)/span*100:.6)}%`}}
-                onClick={()=>setSelected(row.seq)}/>)}
+                onClick={()=>focusRow(row)}/>)}
             {range&&<div className={styles.selection} style={{left:`${(range[0]-bounds[0])/span*100}%`,width:`${(range[1]-range[0])/span*100}%`}}/>}
           </div>)}
         </div>
       </div>
-      <p className={styles.hint}>颜色表示角色与执行阶段；没有记录耗时的事件仅标记时间点。拖选时间范围可筛选下方内容。</p>
+      <div className={styles.rangeControls} aria-label="时间区间筛选">
+        <label>起点 <input type="range" aria-label="时间起点" min="0" max="99"
+          value={rangeFrom} onChange={e=>setRangeFrom(Math.min(Number(e.target.value),rangeTo-1))}/>
+          <span>{clock(bounds[0]+span*rangeFrom/100)}</span></label>
+        <label>终点 <input type="range" aria-label="时间终点" min="1" max="100"
+          value={rangeTo} onChange={e=>setRangeTo(Math.max(Number(e.target.value),rangeFrom+1))}/>
+          <span>{clock(bounds[0]+span*rangeTo/100)}</span></label>
+      </div>
+      <p className={styles.hint}>点击彩色事件定位详情；使用下方两个滑杆精确筛选时间，不再与事件点击冲突。</p>
     </section>
     <div className={styles.controls}>
       <input aria-label="搜索轨迹事件" placeholder="搜索角色、工具或内容…" value={search} onChange={event=>setSearch(event.target.value)}/>
@@ -121,11 +130,17 @@ export function TrajectoryView({sessionPath,active}:{sessionPath:string;active:b
         {turns.map(([turn,rows])=><div key={turn} className={styles.turn}>
           <button type="button" className={styles.turnHead} aria-expanded={!collapsed.has(turn)}
             onClick={()=>setCollapsed(previous=>{const next=new Set(previous);if(next.has(turn))next.delete(turn);else next.add(turn);return next;})}>
-            <span>{collapsed.has(turn)?'▸':'▾'} Turn {turn||'Context'}</span><small>{rows.length} events</small>
+            <span className={styles.turnIdentity}>
+              <span className={styles.turnNumber}>{turn || '–'}</span>
+              <span>{turn ? `Turn ${turn}` : 'Context'}</span>
+              <span className={styles.turnCaret}>{collapsed.has(turn)?'▸':'▾'}</span>
+            </span>
+            <small className={styles.turnCount}>{rows.length} 个事件</small>
           </button>
           {!collapsed.has(turn)&&rows.map(row=><button key={row.seq} type="button"
             className={`${styles.event} ${selected===row.seq?styles.eventSelected:''} ${row.status==='failed'?styles.failed:''}`}
-            aria-pressed={selected===row.seq} onClick={()=>setSelected(row.seq)}>
+            data-trajectory-seq={row.seq}
+            aria-pressed={selected===row.seq} onClick={()=>focusRow(row)}>
             <span className={`${styles.roleTag} ${styles[row.role]}`}>{ROLE_LABEL[row.role]||row.role}</span>
             <span className={styles.eventText}><strong>{row.label}</strong><small>{(row.content||row.kind).slice(0,150)}</small></span>
             <span className={styles.time}>{clock(row.time)}<small>{duration(row)}</small></span>
@@ -139,17 +154,25 @@ export function TrajectoryView({sessionPath,active}:{sessionPath:string;active:b
             <button type="button" onClick={()=>setSelected(null)}>关闭</button>
           </div>
           <h3>{selectedRecord.label}</h3>
-          <dl className={styles.metrics}>
-            <dt>事件</dt><dd>#{selectedRecord.seq} · {selectedRecord.kind}</dd>
-            <dt>轮次</dt><dd>Turn {selectedRecord.turn} / Step {selectedRecord.step}</dd>
-            <dt>状态</dt><dd>{selectedRecord.status||'未记录'}</dd>
-            <dt>开始</dt><dd>{clock(selectedRecord.time)}</dd>
-            <dt>结束</dt><dd>{selectedRecord.endAt==null?'未记录':clock(selectedRecord.endAt)}</dd>
-            <dt>耗时</dt><dd>{duration(selectedRecord)}</dd>
-            <dt>TTFT</dt><dd>{selectedRecord.ttftMs==null?'未记录':`${selectedRecord.ttftMs} ms`}</dd>
-            <dt>解码</dt><dd>{selectedRecord.decodeMs==null?'未记录':`${selectedRecord.decodeMs} ms`}</dd>
-            <dt>Token</dt><dd>{selectedRecord.usage?JSON.stringify(selectedRecord.usage):'未记录'}</dd>
-          </dl>
+          <div className={styles.metaChips} aria-label="事件元信息">
+            <span className={styles.metaChip} title={selectedRecord.kind}>#{selectedRecord.seq} · {selectedRecord.kind}</span>
+            <span className={styles.metaChip}>Turn {selectedRecord.turn} · Step {selectedRecord.step}</span>
+            {selectedRecord.status&&<span className={`${styles.metaChip} ${selectedRecord.status==='failed'?styles.metaFailed:styles.metaSuccess}`}>
+              {selectedRecord.status}</span>}
+          </div>
+          <div className={styles.metaChips} aria-label="事件时间与耗时">
+            <span className={styles.metaChip} title="开始时间">◷ {clock(selectedRecord.time)}</span>
+            {selectedRecord.endAt!=null&&<span className={styles.metaChip} title="结束时间">→ {clock(selectedRecord.endAt)}</span>}
+            {selectedRecord.durationMs!=null&&<span className={styles.metaChip}>耗时 {duration(selectedRecord)}</span>}
+            {selectedRecord.ttftMs!=null&&<span className={styles.metaChip}>TTFT {selectedRecord.ttftMs}ms</span>}
+            {selectedRecord.decodeMs!=null&&<span className={styles.metaChip}>解码 {selectedRecord.decodeMs}ms</span>}
+          </div>
+          {selectedRecord.usage&&Object.keys(selectedRecord.usage).length>0&&
+            <div className={styles.metaChips} aria-label="Token 统计">
+              {Object.entries(selectedRecord.usage).map(([key,value])=><span key={key} className={styles.metaChip}>
+                {key.replace(/([A-Z])/g,' $1')}: {String(value)}
+              </span>)}
+            </div>}
           {(['input','output','content'] as const).map(field=>{
             const raw=selectedRecord[field];
             if(!raw)return null;

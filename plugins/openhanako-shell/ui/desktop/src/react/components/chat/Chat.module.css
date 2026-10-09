@@ -6,52 +6,26 @@
 
 /* ── 消息组 ── */
 
+/* Chat / Channel titlebar status: tiny, no overlay on the conversation. */
 .bridgeStatus {
-    position: absolute;
-    top: var(--space-8);
-    left: 50%;
-    z-index: 20;
+    position: relative;
+    z-index: 1;
+    flex: 0 1 auto;
+    min-width: 0;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    max-width: min(560px, calc(100% - 32px));
-    padding: 4px 10px;
-    border: 1px solid color-mix(in srgb, var(--text-muted) 18%, transparent);
+    gap: 5px;
+    margin-left: 8px;
+    padding: 2px 6px;
+    border: 1px solid var(--overlay-light);
     border-radius: 999px;
-    background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+    background: var(--overlay-subtle);
     color: var(--text-muted);
-    font-size: var(--fs-caption);
-    line-height: 1.35;
-    transform: translateX(-50%);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
-    backdrop-filter: blur(10px);
-    pointer-events: none;
-}
-
-/* Inside ChatPage's view header, the segmented tabs occupy the center and
-   the todo list occupies the right. Keep the runtime indicator on the left
-   instead of obscuring the trajectory tab and its pointer hit target. */
-:global(.chat-area.has-panels[data-conversation-views="true"]) .bridgeStatus {
-    left: var(--space-16);
-    top: var(--space-16);
-    z-index: 28;
-    transform: none;
-    max-width: min(34%, 280px);
+    font-size: var(--fs-hint, 11px);
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    -webkit-app-region: no-drag;
 }
-@media(max-width:680px){
-    :global(.chat-area.has-panels[data-conversation-views="true"]) .bridgeStatus-connected {
-        display: none;
-    }
-    :global(.chat-area.has-panels[data-conversation-views="true"]) .bridgeStatus-error,
-    :global(.chat-area.has-panels[data-conversation-views="true"]) .bridgeStatus-pending,
-    :global(.chat-area.has-panels[data-conversation-views="true"]) .bridgeStatus-streaming {
-        top: 55px;
-        max-width: min(85%, 360px);
-    }
-}
+.bridgeStatusLabel{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:65px}
 
 .bridgeStatus-connected {
     opacity: 0.68;

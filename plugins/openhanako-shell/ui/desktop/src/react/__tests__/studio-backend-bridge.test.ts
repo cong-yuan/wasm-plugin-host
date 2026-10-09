@@ -4,6 +4,7 @@ import { intercepts, interceptsWithCapabilities } from '../studio-backend/studio
 describe('Studio backend bridge file/workbench coverage', () => {
   it('intercepts in-session native trajectory without routing to Hana server', () => {
     expect(intercepts('/api/session-trajectory')).toBe(true);
+    expect(intercepts('/api/sessions/todos')).toBe(true);
     expect(interceptsWithCapabilities('/api/session-trajectory', new Set(['session_trajectory']), 'GET')).toBe(true);
     // Older Studio hosts still reach the native adapter and fail closed with
     // capability_unavailable; they must never fabricate a Hana trajectory.

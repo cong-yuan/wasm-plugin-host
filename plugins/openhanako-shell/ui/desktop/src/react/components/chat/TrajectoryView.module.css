@@ -98,3 +98,46 @@
 .turnHead{color:var(--text);background:var(--overlay-subtle)}
 .event:hover,.eventSelected{background:var(--overlay-subtle)}
 .inspector h3,.inspectionBlock h4{font-family:inherit;color:var(--text)}
+/* Trajectory V2: event clicks and time filtering have separate hit areas. */
+.overview { padding-bottom: 7px; }
+.timeline { cursor: default; touch-action: pan-y; }
+.track { height: 33px; }
+.labels span { height: 33px; }
+.bar { top: 8px; height: 18px; min-width: 7px; border-radius: 4px; opacity: .78;
+    transition: opacity var(--duration-fast), outline-color var(--duration-fast); }
+.bar:hover,.barSelected {opacity:1; outline:2px solid var(--accent);outline-offset:1px;z-index:3}
+.selection { z-index:0; background: color-mix(in srgb,var(--accent) 12%,transparent); }
+.rangeControls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;
+    margin:10px 15px 0 74px;padding:8px 12px;border-radius:var(--radius-sm);
+    background:var(--overlay-subtle);border:1px solid var(--overlay-light);}
+.rangeControls label{display:flex;align-items:center;gap:8px;min-width:0;
+    font-size:var(--fs-hint);color:var(--text-muted)}
+.rangeControls input{width:100%;min-width:35px;flex:1;cursor:ew-resize;accent-color:var(--accent);
+    touch-action:pan-y;height:24px}
+.rangeControls span{white-space:nowrap;font-size:var(--fs-hint);font-variant-numeric:tabular-nums}
+.rangeControls input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.hint{margin-top:5px;margin-bottom:6px;line-height:1.45}
+.turn{border-left:3px solid var(--overlay-light);}
+.turnHead{position:sticky;top:0;z-index:4;align-items:center;min-height:43px;padding:6px 13px;
+    border-bottom:1px solid var(--overlay-light);background:var(--bg-card);}
+.turnHead:hover{background:var(--overlay-subtle)}
+.turnIdentity{display:inline-flex;align-items:center;gap:10px;color:var(--text);font-size:12px}
+.turnNumber{display:grid;place-items:center;min-width:28px;height:28px;border-radius:7px;
+    background:var(--overlay-subtle);border:1px solid var(--overlay-light);
+    color:var(--accent);font-weight:750;font-variant-numeric:tabular-nums}
+.turnCaret{font-size:13px;color:var(--text-muted)}
+.turnCount{padding:3px 8px;border:1px solid var(--overlay-light);border-radius:999px;
+    background:var(--overlay-subtle);color:var(--text-muted)}
+.turn .event{padding-left:20px;border-left:2px solid var(--overlay-light)}
+.turn .eventSelected{border-left-color:var(--accent);}
+.inspector{padding:12px;}
+.inspector h3{font-size:13px;line-height:1.3;margin:9px 0 10px;}
+.metaChips{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 7px;}
+.metaChip{display:inline-flex;align-items:center;gap:3px;max-width:100%;min-height:22px;
+    padding:3px 7px;border-radius:var(--radius-sm);border:1px solid var(--overlay-light);
+    background:var(--overlay-subtle);font-size:10px;line-height:1.35;color:var(--text-muted);
+    white-space:normal;overflow-wrap:anywhere;}
+.metaFailed{border-color:color-mix(in srgb,#c34242 40%,transparent);color:#c34242;}
+.metaSuccess{color:var(--accent)}
+.inspectionBlock{margin-top:8px;padding-top:8px;}
+@media(max-width:700px){.rangeControls{margin-left:14px;grid-template-columns:1fr;gap:3px;}}

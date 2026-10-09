@@ -414,7 +414,8 @@ function mockPermissionDefault(mode = 'ask') {
 
   it('completes current session todos through the explicit cleanup route', async () => {
     const sessionPath = '/session/todo-cleanup.jsonl';
-    mockFetch.mockResolvedValue(jsonResponse({ ok: true, todos: [] }));
+    mockFetch.mockResolvedValue(jsonResponse({ ok: true, todos: [{ content: 'read', status: 'completed' }],
+      completed: [{ content: 'read', status: 'completed' }] }));
 
     const ok = await completeSessionTodos(sessionPath);
 
@@ -425,7 +426,8 @@ function mockPermissionDefault(mode = 'ask') {
       body: JSON.stringify({ path: sessionPath }),
       throwOnHttpError: false,
     });
-    expect(mockState.setSessionTodosForPath).toHaveBeenCalledWith(sessionPath, []);
+    expect(mockState.setSessionTodosForPath).toHaveBeenCalledWith(sessionPath,
+      [expect.objectContaining({content:'read',status:'completed'})]);
     expect(mockState.bumpTodosLiveVersion).toHaveBeenCalledWith(sessionPath);
   });
 
