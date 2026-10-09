@@ -11868,3 +11868,13 @@ html[data-platform="linux"] .onboarding {
 .railWorkspaceMutationStart:hover, .railWorkspaceMutationApply:hover, .railWorkspaceMutationCancel:hover { background: rgba(0,0,0,0.1); }
 .railWorkspaceMutationStart:disabled, .railWorkspaceMutationApply:disabled, .railWorkspaceMutationCancel:disabled { opacity: 0.45; cursor: not-allowed; }
 .railWorkspaceMutationInput { min-width: 0; box-sizing: border-box; width: 100%; border: 1px solid rgba(0,0,0,0.15); border-radius: 5px; padding: 5px; font: inherit; font-size: 11px; color: var(--text-primary); background: transparent; }
+
+/* Single-file native Studio workspace upload; no external file service. */
+.railWorkspaceUploadChooser { display: block; max-width: 100%; font-size: 11px; }
+.railWorkspaceUploadName { font-size: 11px; overflow-wrap: anywhere; }
+.railWorkspaceUploadActions { display: flex; align-items: center; gap: 5px; }
+.railWorkspaceUploadSubmit, .railWorkspaceUploadCancel {
+    border: 0; border-radius: 5px; padding: 5px 7px; background: rgba(0,0,0,0.06);
+    color: var(--text-primary); font: inherit; font-size: 11px; cursor: pointer;
+}
+.railWorkspaceUploadSubmit:disabled, .railWorkspaceUploadCancel:disabled { opacity: 0.45; cursor: not-allowed; }

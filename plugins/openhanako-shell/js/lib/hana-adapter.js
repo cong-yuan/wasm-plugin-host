@@ -2378,7 +2378,7 @@ return (function () {
             results.push({
               ...(result && typeof result === 'object' ? result : {}),
               name: result?.name || name,
-              ok: result?.ok !== false,
+              ok: result?.ok === true,
             });
           } catch (error) {
             results.push({

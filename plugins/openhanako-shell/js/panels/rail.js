@@ -37,6 +37,7 @@ return (function () {
     let workspaceEdit = null; // {name, subdir, version, content, original, create, saving, error}
     let workspaceMutation = null; // native rename/move/safe-delete intent
     let workspaceNotice = '';
+    let workspaceUpload = null;
     let latestData = { tools: [], plugins: [], runtime: { mode: 'unknown', sessions: [] } };
 
     // <div className={styles.workspaceHeader}> + workspaceTitle
@@ -120,12 +121,13 @@ return (function () {
 
     const editIsDirty = () => workspaceEdit && (workspaceEdit.create || workspaceEdit.content !== workspaceEdit.original);
     const guardEdit = () => {
+      if (workspaceUpload?.busy) { workspaceUpload.error = 'Upload in progress'; renderData(latestData); return true; }
       if (workspaceMutation?.busy) {
         workspaceMutation.error = 'Native file operation is still in progress';
         renderData(latestData);
         return true;
       }
-      if (!workspaceEdit) { workspaceMutation = null; return false; }
+      if (!workspaceEdit) { workspaceMutation = null; workspaceUpload = null; return false; }
       if (!editIsDirty() && !workspaceEdit.saving) { workspaceEdit = null; return false; }
       workspaceEdit.error = workspaceEdit.saving
         ? 'A native save is in progress; finish before navigating'
@@ -419,6 +421,64 @@ return (function () {
         if (!disposed && workspaceMutation === mutation && workspaceVersion === requestVersion) renderData(latestData);
       }
     };
+    const uploadLimit = 5 * 1024 * 1024;
+    const stageUpload = (file) => {
+      if (workspaceUpload?.busy || workspaceEdit || workspaceMutation
+        || workspaceState.kind !== 'files' || !api.workbenchUploadFileAvailable?.()) return;
+      const name = String(file?.name || '');
+      if (!validName(name) || !Number.isFinite(file?.size) || file.size <= 0
+        || file.size > uploadLimit || typeof file?.arrayBuffer !== 'function') {
+        workspaceUpload = { error: 'Choose one valid file of at most 5 MiB', busy: false };
+      } else if (workspaceState.files.some((item) => item.name === name)) {
+        workspaceUpload = { error: 'A file with that name already exists here', busy: false };
+      } else {
+        workspaceUpload = { file, name, subdir: workspacePath, busy: false, error: '' };
+      }
+      renderData(latestData);
+    };
+    const cancelUpload = () => {
+      if (workspaceUpload?.busy) return;
+      workspaceUpload = null;
+      renderData(latestData);
+    };
+    const sendUpload = async () => {
+      const job = workspaceUpload;
+      if (!job?.file || job.busy || !api.workbenchUploadFileAvailable?.()) return;
+      const version = workspaceVersion;
+      job.busy = true;
+      job.error = 'Uploading to local Studio…';
+      renderData(latestData);
+      try {
+        const bytes = new Uint8Array(await job.file.arrayBuffer());
+        if (!bytes.length || bytes.length > uploadLimit) throw new Error('Invalid file size');
+        let binary = '';
+        for (let pos = 0; pos < bytes.length; pos += 8192)
+          binary += String.fromCharCode(...bytes.subarray(pos, pos + 8192));
+        if (disposed || workspaceUpload !== job || workspaceVersion !== version) return;
+        const response = await adapter.http('POST', '/api/workbench/upload', {
+          rootId: 'default', subdir: job.subdir,
+          files: [{ name: job.name, mimeType: job.file.type || 'application/octet-stream',
+            contentBase64: btoa(binary) }],
+        });
+        const file = response?.results?.[0];
+        if (response?.ok !== true || response.rootId !== 'default' || response.subdir !== job.subdir
+          || !Array.isArray(response.results) || response.results.length !== 1
+          || file?.ok !== true || file?.name !== job.name
+          || typeof file?.version !== 'string' || !file.version.trim()) {
+          throw new Error(file?.error || response?.error || 'Native upload was not acknowledged');
+        }
+        if (disposed || workspaceUpload !== job || workspaceVersion !== version) return;
+        workspaceUpload = null;
+        workspaceNotice = `Uploaded ${job.name} to Studio workspace`;
+        loadWorkspace();
+      } catch (error) {
+        if (!disposed && workspaceUpload === job && workspaceVersion === version)
+          job.error = error?.message || 'Native upload failed';
+      } finally {
+        job.busy = false;
+        if (!disposed && workspaceUpload === job && workspaceVersion === version) renderData(latestData);
+      }
+    };
     const renderWorkspace = () => {
       clear(workspaceBrowser);
       const refresh = h('button', { class: 'railWorkspaceRefresh', type: 'button' }, 'Refresh');
@@ -429,6 +489,7 @@ return (function () {
       });
       searchInput.value = workspaceQuery;
       searchInput.oninput = () => {
+        if (workspaceUpload?.busy || workspaceMutation?.busy || workspaceEdit?.saving) return;
         workspaceQuery = String(searchInput.value || '');
         // Typing invalidates a previously submitted asynchronous search immediately.
         workspaceVersion += 1;
@@ -448,6 +509,30 @@ return (function () {
         h('span', {}, `Workspace /${workspacePath}`), back, refresh));
       workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSearchRow' }, searchInput, searchButton));
       if (workspaceNotice) workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceSaveStatus', 'aria-live': 'polite' }, workspaceNotice));
+      if (workspaceState.kind === 'files' && api.workbenchUploadFileAvailable?.()) {
+        const chooser = h('input', { class: 'railWorkspaceUploadChooser', type: 'file',
+          'aria-label': 'Choose file for Studio workspace upload' });
+        chooser.onchange = () => {
+          const file = Array.from(chooser.files || [])[0];
+          if (file) stageUpload(file);
+        };
+        workspaceBrowser.appendChild(chooser);
+        if (workspaceUpload) {
+          const item = workspaceUpload;
+          if (item.file) workspaceBrowser.appendChild(h('span', { class: 'railWorkspaceUploadName' },
+            `Staged: ${item.name}`));
+          const upload = h('button', { class: 'railWorkspaceUploadSubmit', type: 'button' }, 'Upload file');
+          upload.disabled = !item.file || item.busy;
+          upload.onclick = sendUpload;
+          const cancel = h('button', { class: 'railWorkspaceUploadCancel', type: 'button' }, 'Cancel');
+          cancel.disabled = item.busy;
+          cancel.onclick = cancelUpload;
+          workspaceBrowser.appendChild(h('div', { class: 'railWorkspaceUploadActions' }, upload, cancel));
+          if (item.error) workspaceBrowser.appendChild(h('div', {
+            class: 'railWorkspaceSaveStatus', 'aria-live': 'polite',
+          }, item.error));
+        }
+      }
       if (workspaceState.kind === 'files' && api.workbenchWriteFileAvailable?.()) {
         const newName = h('input', { class: 'railWorkspaceNewName', type: 'text',
           'aria-label': 'New workspace filename', placeholder: 'new-file.txt' });
@@ -688,7 +773,7 @@ return (function () {
     function update(data) {
       latestData = data || latestData;
       // Runtime polls must not replace a focused native textarea mid-edit.
-      if (state.tab === 'workspace' && (workspaceState.kind === 'edit' || workspaceMutation)) return;
+      if (state.tab === 'workspace' && (workspaceState.kind === 'edit' || workspaceMutation || workspaceUpload)) return;
       renderData(latestData);
     }
 

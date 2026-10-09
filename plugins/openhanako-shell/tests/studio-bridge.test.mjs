@@ -920,6 +920,16 @@ check('blob upload reports missing Studio capability explicitly',
     workbenchUpload?.ok === true
     && workbenchUpload?.results?.[0]?.name === 'uploaded.txt'
     && workbenchUpload?.results?.[0]?.version === 'v6');
+  const originalUploadHostAction = studio.hostAction;
+  studio.hostAction = async (action) => action.command === 'workbench_upload_file'
+    ? { name: action.args.name, version: 'unconfirmed' }
+    : originalUploadHostAction(action);
+  const unacknowledgedUpload = await adapter.http('POST', '/api/workbench/upload', {
+    rootId: 'default', subdir: '', files: [{ name: 'missing-ack.txt', contentBase64: 'aGk=' }],
+  });
+  check('native upload missing an explicit ok is never reported as successful',
+    unacknowledgedUpload?.ok === false && unacknowledgedUpload?.results?.[0]?.ok === false);
+  studio.hostAction = originalUploadHostAction;
   const workbenchMobileRename = await adapter.http('POST', '/api/mobile/workbench/actions', {
     action: 'rename',
     mountId: 'default',

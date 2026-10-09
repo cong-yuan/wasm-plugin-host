@@ -2858,6 +2858,80 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   flags.forEach((name, index) => { api[name] = originals[index]; });
 }
 
+// Native workspace file chooser stages locally, retries actual upload errors,
+// blocks duplicate submits and requires exact authenticated host ACKs.
+{
+  const railModule = studio.require('panels/rail');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const oldList = api.workbenchListFilesAvailable;
+  const oldUpload = api.workbenchUploadFileAvailable;
+  api.workbenchListFilesAvailable = () => true;
+  api.workbenchUploadFileAvailable = () => true;
+  const calls = [];
+  let failUpload = false;
+  let deferUpload = false;
+  let releaseUpload;
+  adapter.http = async (method, path, body) => {
+    if (method === 'GET' && path.startsWith('/api/workbench/files')) return {
+      rootId: 'default', subdir: '', files: [{ name: 'exists.txt', isDir: false }],
+    };
+    if (method === 'POST' && path === '/api/workbench/upload') {
+      calls.push(body);
+      if (deferUpload) return new Promise((resolve) => { releaseUpload = resolve; });
+      return failUpload ? { ok: false, error: 'upload rejected' }
+        : { ok: true, rootId: 'default', subdir: '', results: [
+          { ok: true, name: body.files[0].name, version: 'v2' },
+        ] };
+    }
+    return oldHttp(method, path, body);
+  };
+  const rail = railModule.render();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const stage = (name, size = 2) => {
+    const chooser = rail.root.querySelector('.railWorkspaceUploadChooser');
+    chooser.files = [{ name, size, type: 'text/plain',
+      async arrayBuffer() { return new Uint8Array([104, 105]).buffer; } }];
+    chooser.fire('change');
+  };
+  stage('exists.txt');
+  check('existing filename rejected before upload', calls.length === 0
+    && /already exists/.test(rail.root.textContent || ''));
+  stage('huge.txt', 6 * 1024 * 1024);
+  check('oversized file cannot be staged', calls.length === 0
+    && /at most 5 MiB/.test(rail.root.textContent || ''));
+  stage('new.txt');
+  check('valid file is staged without native side effects', calls.length === 0
+    && /Staged: new.txt/.test(rail.root.textContent || ''));
+  failUpload = true;
+  rail.root.querySelector('.railWorkspaceUploadSubmit')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('failed upload stays staged for manual retry', calls.length === 1
+    && calls[0].files?.[0]?.contentBase64 === 'aGk='
+    && /upload rejected/.test(rail.root.textContent || '')
+    && !!rail.root.querySelector('.railWorkspaceUploadSubmit'));
+  failUpload = false;
+  deferUpload = true;
+  rail.root.querySelector('.railWorkspaceUploadSubmit')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  rail.root.querySelector('.railWorkspaceUploadSubmit')?.fire('click');
+  rail.root.querySelectorAll('.tab')[0]?.fire('click');
+  check('pending upload locks duplicate requests and navigation', calls.length === 2
+    && rail.root.querySelector('.railWorkspaceUploadCancel')?.disabled === true
+    && rail.root.querySelector('.railWorkspaceBrowser')?.style.display !== 'none');
+  releaseUpload?.({ ok: true, rootId: 'default', subdir: '', results: [
+    { ok: true, name: 'new.txt', version: 'v2' },
+  ] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('acknowledged upload refreshes listing without phantom success',
+    /Uploaded new.txt to Studio workspace/.test(rail.root.textContent || '')
+    && rail.root.querySelector('.railWorkspaceUploadSubmit') == null);
+  rail.dispose();
+  adapter.http = oldHttp;
+  api.workbenchListFilesAvailable = oldList;
+  api.workbenchUploadFileAvailable = oldUpload;
+}
+
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);
 if (failures.length) {
   console.error('FAIL:\n  ' + failures.join('\n  '));
