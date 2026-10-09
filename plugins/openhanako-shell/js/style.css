@@ -11765,3 +11765,31 @@ html[data-platform="linux"] .onboarding {
     color: var(--text-primary);
     background: rgba(var(--accent-rgb), 0.08);
 }
+
+/* Standalone local slash commands reuse existing capability-gated UI controls. */
+.nativeSlashMenu {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 8px;
+    border: 1px solid rgba(0,0,0,0.1);
+    border-radius: 8px;
+    background: var(--surface, #fff);
+}
+.nativeSlashOption {
+    width: 100%;
+    border: 0;
+    border-radius: 5px;
+    text-align: left;
+    font: inherit;
+    font-size: 12px;
+    padding: 5px 8px;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+.nativeSlashOption:hover:not(:disabled), .nativeSlashOption:focus-visible {
+    background: rgba(0,0,0,0.07);
+}
+.nativeSlashOption:disabled { opacity: 0.45; cursor: not-allowed; }
+.nativeSlashStatus { font-size: 11px; color: var(--text-muted); }

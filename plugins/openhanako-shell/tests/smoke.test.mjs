@@ -1087,11 +1087,11 @@ skillsButton?.fire('click');
 
 check('unsupported standalone controls are explicitly disabled',
   root.querySelector('.folderSelectBtn')?.disabled === true
-  && root.querySelectorAll('.attach-btn').every((button) => button.disabled === true)
+  && root.querySelectorAll('.attach-btn').filter((button) => !button.classList.contains('nativeSlashButton')).every((button) => button.disabled === true)
   && root.querySelector('.plan-mode-btn')?.disabled === true);
 check('unsupported controls explain why they are disabled',
   /does not expose authorized folder/.test(root.querySelector('.folderSelectBtn')?.title || '')
-  && /server command dispatcher/.test(root.querySelectorAll('.attach-btn')[2]?.title || '')
+  && root.querySelectorAll('.attach-btn')[2]?.disabled !== true
   && /enforce/.test(root.querySelector('.plan-mode-btn')?.title || ''));
 check('unsupported automation control is explicitly disabled',
   root.querySelector('.automation-count-badge')?.parentNode?.disabled === true
@@ -2319,6 +2319,96 @@ adapterForShellRefresh.http = originalHttpForRefresh;
   api.sessionSummaryAvailable = capabilities.sessionSummaryAvailable;
   api.transcript = oldTranscript;
   adapter.http = oldHttp;
+}
+
+// Slash commands reuse local native controls; never send command text to the LLM.
+{
+  const conversation = studio.require('panels/conversation');
+  const adapter = studio.require('lib/hana-adapter');
+  const oldHttp = adapter.http;
+  const oldTranscript = api.transcript;
+  const oldSummary = api.sessionSummaryAvailable;
+  const oldCompact = api.freshCompactSessionAvailable;
+  const oldTodos = api.completeSessionTodosAvailable;
+  const oldScope = api.sessionFolderScopeAvailable;
+  const oldSend = api.sendWithProgress;
+  let sends = 0;
+  let compacts = 0;
+  let reads = 0;
+  api.sessionSummaryAvailable = () => true;
+  api.freshCompactSessionAvailable = () => true;
+  api.completeSessionTodosAvailable = () => true;
+  api.sessionFolderScopeAvailable = () => true;
+  api.transcript = async () => [];
+  api.sendWithProgress = async () => { sends += 1; return true; };
+  adapter.http = async (method, path, body) => {
+    if (path.startsWith('/api/models')) return { models: [] };
+    if (path.startsWith('/api/sessions/summary')) {
+      reads += 1;
+      return { hasSummary: true, summary: 'Native saved summary' };
+    }
+    if (path.startsWith('/api/sessions/authorized-folders')) {
+      return { ok: true, sessionId: 'slash-session', authorizedFolders: ['/workspace'] };
+    }
+    if (path === '/api/sessions/fresh-compact') {
+      compacts += 1;
+      return { ok: true, fresh: true };
+    }
+    return oldHttp(method, path, body);
+  };
+  const panel = conversation.render({ onChanged() {}, onOpened() {}, onCreated() {} });
+  const input = panel.root.querySelector('.input-box');
+  const slashBtn = panel.root.querySelector('.nativeSlashButton');
+  const cmdStatus = panel.root.querySelector('.nativeSlashStatus');
+  const cmdMenu = panel.root.querySelector('.nativeSlashMenu');
+  const send = panel.root.querySelector('.send-btn');
+  const issue = async (text) => {
+    input.textContent = text;
+    send.fire('click');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+  await issue('/help');
+  check('slash help opens local menu without sending a chat turn',
+    sends === 0 && input.textContent === '' && cmdMenu.style.display === ''
+    && cmdMenu.querySelectorAll('.nativeSlashOption').length === 6);
+  check('command capability gates are visible before opening a session',
+    cmdMenu.querySelectorAll('.nativeSlashOption').filter((option) => option.disabled).length === 4);
+  input.fire('keydown', { key: 'Escape', preventDefault() {} });
+  check('Escape dismisses slash popup', cmdMenu.style.display === 'none' && slashBtn.getAttribute('aria-expanded') === 'false');
+  await issue('/summary');
+  check('slash commands without an active session fail closed',
+    sends === 0 && input.textContent === '/summary' && /unavailable/.test(cmdStatus.textContent));
+  await panel.open({ id: 'slash-session', live: true });
+  await issue('/summary');
+  check('summary shortcut calls the native session summary read',
+    reads === 1 && /Native saved summary/.test(panel.root.querySelector('.sessionSummaryContent')?.textContent || '')
+    && sends === 0);
+  await issue('/compact');
+  check('compact command only arms explicit confirmation',
+    compacts === 0 && /Confirm compact/.test(panel.root.querySelector('.sessionToolsCompact')?.textContent || ''));
+  panel.root.querySelector('.sessionToolsCompact')?.fire('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check('confirmed compact calls existing real session mutation', compacts === 1 && sends === 0);
+  await issue('/folders');
+  check('folders shortcut opens native folder editor',
+    panel.root.querySelector('.sessionFolderScopePanel')?.style.display === '');
+  await issue('/unknown');
+  check('unknown slash name remains editable and is not dispatched',
+    sends === 0 && input.textContent === '/unknown' && /Unknown/.test(cmdStatus.textContent));
+  await issue('/compact extra');
+  check('slash commands refuse unexpected arguments without sending',
+    sends === 0 && /does not accept arguments/.test(cmdStatus.textContent));
+  slashBtn.fire('click');
+  panel.reset();
+  check('reset closes local commands and clears previous status',
+    cmdMenu.style.display === 'none' && cmdStatus.textContent === '');
+  adapter.http = oldHttp;
+  api.transcript = oldTranscript;
+  api.sessionSummaryAvailable = oldSummary;
+  api.freshCompactSessionAvailable = oldCompact;
+  api.completeSessionTodosAvailable = oldTodos;
+  api.sessionFolderScopeAvailable = oldScope;
+  api.sendWithProgress = oldSend;
 }
 
 console.log(`DOM smoke: ${nodes} nodes, ${svgs.length} svg, ${count('.hana-slot')} slots`);

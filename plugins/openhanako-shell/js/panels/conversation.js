@@ -98,7 +98,7 @@ return (function () {
 
     const attach = h('button', { class: 'attach-btn', type: 'button', title: t('input.attachFiles') }, svg(PLUS));
     const scopeBtn = h('button', { class: 'attach-btn sessionFolderScopeBtn', type: 'button', title: 'Session authorized folders', 'aria-expanded': 'false' }, svg(FOLDER));
-    const slash = h('button', { class: 'attach-btn', type: 'button', title: t('input.commandMenu') }, svg(SLASH));
+    const slash = h('button', { class: 'attach-btn nativeSlashButton', type: 'button', title: 'Local slash commands' }, svg(SLASH));
     const plan = h('button', { class: 'plan-mode-btn plan-mode-default', type: 'button' }, svg(PLAN));
     const uploadAvailable = typeof api.uploadBlobAvailable === 'function' && api.uploadBlobAvailable();
     if (!uploadAvailable) markUnsupported(attach, 'Studio does not support native file uploads in this window.');
@@ -107,7 +107,6 @@ return (function () {
       markUnsupported(scopeBtn, 'Studio does not expose authorized folder controls in this window.');
       markUnsupported(folderBtn, 'Studio does not expose authorized folder controls in this window.');
     }
-    markUnsupported(slash, 'Slash commands require the server command dispatcher and are not available here yet.');
     markUnsupported(plan, 'Permission modes are unavailable until the Studio bridge can enforce them.');
     const attachmentChooser = h('input', {
       class: 'nativeAttachmentChooser', type: 'file', multiple: 'multiple',
@@ -328,6 +327,7 @@ return (function () {
           svg(SEND_ENTER), h('span', {}, t('chat.send'))));
       }
       attach.disabled = !uploadAvailable || state.opening || state.busy;
+      slash.disabled = state.opening || state.busy;
       sessionToolsButton.disabled = !hasSessionActions || state.opening || state.busy;
       toolsUpdateControls();
       const modelDisabled = !!state.opening || !!state.busy || !!state.switchingModel;
@@ -485,8 +485,74 @@ return (function () {
         scopeAdd.onclick();
       }
     };
+    // Built-in slash commands are local shortcuts to acknowledged Studio capabilities.
+    const slashMenu = h('section', { class: 'nativeSlashMenu', 'aria-label': 'Local commands' });
+    slashMenu.style.display = 'none';
+    slash.setAttribute('aria-expanded', 'false');
+    slash.setAttribute('aria-haspopup', 'true');
+    const slashStatus = h('span', { class: 'nativeSlashStatus', 'aria-live': 'polite' }, '');
+    const closeSlash = () => {
+      slashMenu.style.display = 'none';
+      slash.setAttribute('aria-expanded', 'false');
+    };
+    const slashCommands = [
+      { name: 'help', label: 'Show local commands', enabled: () => true },
+      { name: 'models', label: 'Choose model', enabled: () => !state.opening && !state.busy && !state.switchingModel },
+      { name: 'folders', label: 'Authorized folders', enabled: () => scopeAvailable && !!state.id && !state.opening },
+      { name: 'summary', label: 'Read session summary', enabled: () => canReadSummary && !!state.id && !state.busy && !state.opening },
+      { name: 'compact', label: 'Compact session (confirm)', enabled: () => canCompact && !!state.id && !state.busy && !state.opening },
+      { name: 'todos', label: 'Complete TODOs (confirm)', enabled: () => canCompleteTodos && !!state.id && !state.busy && !state.opening },
+    ];
+    const showSlash = () => {
+      clear(slashMenu);
+      for (const command of slashCommands) {
+        const option = h('button', { class: 'nativeSlashOption', type: 'button' },
+          `/${command.name} — ${command.label}`);
+        option.disabled = !command.enabled();
+        option.onclick = () => executeSlash(command.name);
+        slashMenu.appendChild(option);
+      }
+      slashMenu.style.display = '';
+      slash.setAttribute('aria-expanded', 'true');
+    };
+    const executeSlash = (name) => {
+      const command = slashCommands.find((item) => item.name === name);
+      if (!command) {
+        slashStatus.textContent = `Unknown local command /${name}; use /help`;
+        return false;
+      }
+      if (name === 'help') {
+        showSlash();
+        slashStatus.textContent = 'Local commands are not sent to the model';
+        return true;
+      }
+      if (!command.enabled()) {
+        slashStatus.textContent = `/${name} is unavailable in this session or Studio host`;
+        return false;
+      }
+      closeSlash();
+      slashStatus.textContent = '';
+      if (name === 'models') modelPill.onclick();
+      else if (name === 'folders') {
+        if (scopePanel.style.display === 'none') toggleScopePanel();
+      } else {
+        if (sessionToolsPanel.style.display === 'none') sessionToolsButton.onclick();
+        if (sessionToolsPanel.style.display !== 'none') {
+          const control = { summary: sessionToolsSummary, compact: sessionToolsCompact, todos: sessionToolsTodos }[name];
+          control?.onclick?.();
+        }
+      }
+      return true;
+    };
+    slash.onclick = () => {
+      if (slashMenu.style.display === 'none') showSlash();
+      else closeSlash();
+    };
+    input.addEventListener('input', () => {
+      if (slashMenu.style.display !== 'none' && !input.textContent.trim().startsWith('/')) closeSlash();
+    });
     // ChatPage.tsx: <div className="input-area">
-    const inputArea = h('div', { class: 'input-area' }, sessionToolsPanel, scopePanel, surface);
+    const inputArea = h('div', { class: 'input-area' }, slashMenu, slashStatus, sessionToolsPanel, scopePanel, surface);
 
     const headerSlot = h('div', { class: 'conversation-header-slot hana-slot' });
     slots.mount('openhanako.conversation.header', headerSlot);
@@ -750,6 +816,8 @@ return (function () {
       const previousTurns = state.turns.slice();
       const wasBusy = state.busy;
       state.epoch += 1;
+      closeSlash();
+      slashStatus.textContent = '';
       scopeReset();
       toolsReset();
       const openEpoch = state.epoch;
@@ -824,6 +892,17 @@ return (function () {
     async function submit() {
       const rawText = input.textContent.trim();
       if ((!rawText && !stagedFiles.length) || state.opening || state.busy) return;
+      if (rawText.startsWith('/')) {
+        const match = /^\/([a-z]+)(?:\s(.*))?$/i.exec(rawText);
+        if (match) {
+          if (stagedFiles.length) {
+            slashStatus.textContent = 'Remove attachments before running local commands';
+          } else if (match[2]?.trim()) slashStatus.textContent = `/${match[1]} does not accept arguments`;
+          else if (executeSlash(match[1].toLowerCase())) input.textContent = '';
+          return;
+        }
+      }
+      closeSlash();
       const filesForTurn = stagedFiles.slice();
       const text = rawText || 'Please inspect these attached files.';
       state.busy = true;
@@ -1048,6 +1127,11 @@ return (function () {
 
     send.onclick = () => (state.busy ? stop() : submit());
     input.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' && slashMenu.style.display !== 'none') {
+        event.preventDefault?.();
+        closeSlash();
+        return;
+      }
       if (event?.isComposing || event?.keyCode === 229) return;
       if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit(); }
     });
@@ -1061,6 +1145,8 @@ return (function () {
         const previousId = state.id;
         const wasBusy = state.busy;
         state.epoch += 1;
+        closeSlash();
+        slashStatus.textContent = '';
         stagedFiles = [];
         renderAttachments();
         scopeReset();
