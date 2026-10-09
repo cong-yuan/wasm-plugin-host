@@ -490,7 +490,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const [backendCapabilities, setBackendCapabilities] = useState<{
     uploadBlob?: boolean;
     thinkingLevel?: boolean;
+    permissionMode?: boolean;
   } | null>(null);
+  const [nativeThinkingLocked, setNativeThinkingLocked] = useState(true);
   const availableThinkingLevels = useMemo(
     () => getModelThinkingLevels(currentModelInfo),
     [currentModelInfo],
@@ -1589,6 +1591,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const activeServerConnection = useStore(s => s.activeServerConnection);
   useEffect(() => {
     setBackendCapabilities(null);
+    setNativeThinkingLocked(true);
     if (activeServerConnection) {
       hanaFetch('/api/capabilities')
         .then(async (response) => {
@@ -1606,7 +1609,10 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
           : '';
       hanaFetch(`/api/session-thinking-level${query}`)
         .then(r => r.json())
-        .then(d => { if (d.thinkingLevel) setThinkingLevel(d.thinkingLevel as ThinkingLevel); })
+        .then(d => {
+          setNativeThinkingLocked(d?.locked !== false);
+          if (d?.ok === true && d.thinkingLevel) setThinkingLevel(d.thinkingLevel as ThinkingLevel);
+        })
         .catch((err: unknown) => console.warn('[InputArea] load thinking level failed', err));
     }
 
@@ -2357,9 +2363,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
             onSlashToggle={handleSlashToggle}
             permissionMode={permissionMode}
             onPermissionModeChange={setPermissionMode}
-            planModeLocked={inputLocked}
+            planModeLocked={inputLocked || backendCapabilities?.permissionMode !== true || !currentSessionPath}
             showThinking={showThinkingControl}
-            thinkingLocked={backendCapabilities?.thinkingLevel === false}
+            thinkingLocked={backendCapabilities?.thinkingLevel !== true || !currentSessionPath || nativeThinkingLocked}
             thinkingLevel={thinkingLevel}
             onThinkingChange={setThinkingLevel}
             availableThinkingLevels={availableThinkingLevels}

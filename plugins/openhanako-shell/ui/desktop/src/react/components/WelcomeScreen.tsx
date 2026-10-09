@@ -21,6 +21,7 @@ import {
   removeRecentWorkspace,
   removeStudioWorkspace,
   removeWorkspaceFolder,
+  toggleMemory,
 } from '../stores/desk-actions';
 import { openSettingsModal } from '../stores/settings-modal-actions';
 import type { Agent, StudioWorkspace } from '../types';
@@ -577,10 +578,9 @@ function MemoryToggle({ enabled, masterEnabled, t }: {
   masterEnabled: boolean;
   t: (key: string) => string;
 }) {
-  const handleClick = useCallback(() => {
-    useStore.setState((s) => ({ memoryEnabled: !s.memoryEnabled }));
-  }, []);
-  const disabled = !masterEnabled;
+  const currentSessionPath = useStore((s) => s.currentSessionPath);
+  const handleClick = useCallback(() => toggleMemory(), []);
+  const disabled = !masterEnabled || !currentSessionPath;
   const label = disabled ? t('welcome.memoryDisabled') : t(enabled ? 'welcome.memoryOn' : 'welcome.memoryOff');
 
   return (

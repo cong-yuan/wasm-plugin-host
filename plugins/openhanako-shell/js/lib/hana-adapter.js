@@ -2198,7 +2198,8 @@ return (function () {
           () => api.getSessionRuntimeControls(agentId),
           (r) => r.agentId === agentId && typeof r.level === 'string'
             && typeof r.mode === 'string' && typeof r.enabled === 'boolean');
-        return controls.ok === true ? { ...controls, thinkingLevel: controls.level, locked: false } : controls;
+        return controls.ok === true ? { ...controls, thinkingLevel: controls.level,
+          locked: controls.locked === true } : controls;
       }
       const control = sessionControlRoutes[pathname];
       const incoming = body?.[control.field];
@@ -2213,14 +2214,25 @@ return (function () {
         ? { ...result, thinkingLevel: result.level } : result;
     }
     if (pathname === '/api/agents/primary' && verb === 'GET') {
-      return stageAInvoke('get_primary_agent', api.primaryAgentAvailable?.(),
+      const native = await stageAInvoke('get_primary_agent', api.primaryAgentAvailable?.(),
         () => api.getPrimaryAgent(), (r) => typeof r.agentId === 'string' && !!r.agentId);
+      if (native.ok !== true) return native;
+      const list = await api.agents();
+      const row = list.find((agent) => agent.id === native.agentId);
+      if (!row) return { ok: false, code: 'invalid_native_ack', error: 'primary agent not present in native agent listing' };
+      return { ...native, id: native.agentId, name: row.title || native.agentId,
+        agent: { id: native.agentId, name: row.title || native.agentId } };
     }
     if (pathname === '/api/agents/switch' && verb === 'POST') {
-      const agentId = idFrom(body?.agentId);
+      const agentId = idFrom(body?.agentId || body?.id);
       if (!agentId) return { ok: false, code: 'invalid_agent', error: 'agentId required' };
-      return stageAInvoke('switch_primary_agent', api.primaryAgentAvailable?.(),
+      const native = await stageAInvoke('switch_primary_agent', api.primaryAgentAvailable?.(),
         () => api.switchPrimaryAgent(agentId), (r) => r.agentId === agentId);
+      if (native.ok !== true) return native;
+      const list = await api.agents();
+      const row = list.find((agent) => agent.id === agentId);
+      if (!row) return { ok: false, code: 'invalid_native_ack', error: 'switched Agent not present in native list' };
+      return { ...native, agent: { id: agentId, name: row.title || agentId } };
     }
     const configRoute = pathname.match(/^\/api\/agents\/([^/]+)\/config$/);
     if (configRoute && ['GET', 'PATCH', 'PUT'].includes(verb)) {
@@ -2247,9 +2259,49 @@ return (function () {
             && !!r.revision && r.config && typeof r.config === 'object' && !Array.isArray(r.config));
         return nativeConfig.code === 'capability_unavailable' ? readonlyConfig() : nativeConfig;
       }
-      const allowed = new Set(['provider', 'model', 'thinkingLevel', 'permissionMode', 'memoryEnabled']);
-      const patch = body?.patch;
-      const revision = body?.revision;
+      // Upstream settings uses a legacy unversioned PUT. Translate supported
+      // fields into an explicit revisioned CAS instead of claiming success for
+      // unrelated settings or applying a blind overwrite.
+      let requestedPatch = body?.patch;
+      let requestedRevision = body?.revision;
+      if (verb === 'PUT' && !requestedPatch) {
+        const raw = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+        const flattened = {};
+        const keys = Object.keys(raw);
+        const supportedNested = keys.every((key) => ['chat', 'memory', 'models',
+          'provider', 'model', 'thinkingLevel', 'permissionMode', 'memoryEnabled'].includes(key));
+        if (!supportedNested) return { ok: false, code: 'invalid_config', error: 'Unsupported agent setting in Studio' };
+        if (raw.models && (typeof raw.models !== 'object' || Array.isArray(raw.models)
+          || Object.keys(raw.models).some((key) => key !== 'chat'))) {
+          return { ok: false, code: 'invalid_config', error: 'Unsupported additional model setting' };
+        }
+        const chat = raw.chat || raw.models?.chat;
+        if (chat && (typeof chat !== 'object' || Array.isArray(chat)
+          || Object.keys(chat).some((key) => !['provider', 'model', 'id'].includes(key)))) {
+          return { ok: false, code: 'invalid_config', error: 'Unsupported chat setting' };
+        }
+        if (raw.memory && (typeof raw.memory !== 'object' || Array.isArray(raw.memory)
+          || Object.keys(raw.memory).some((key) => key !== 'enabled'))) {
+          return { ok: false, code: 'invalid_config', error: 'Unsupported memory setting' };
+        }
+        if (chat) {
+          if (chat.provider !== undefined) flattened.provider = chat.provider;
+          if (chat.model !== undefined || chat.id !== undefined) flattened.model = chat.model || chat.id;
+        }
+        for (const key of ['provider', 'model', 'thinkingLevel', 'permissionMode', 'memoryEnabled']) {
+          if (raw[key] !== undefined) flattened[key] = raw[key];
+        }
+        if (raw.memory?.enabled !== undefined) flattened.memoryEnabled = raw.memory.enabled;
+        const original = await stageAInvoke('get_agent_config', api.agentConfigAvailable?.(),
+          () => api.getAgentConfig(agentId),
+          (r) => r.agentId === agentId && typeof r.revision === 'string' && !!r.revision);
+        if (original.ok !== true) return original;
+        requestedRevision = original.revision;
+        requestedPatch = flattened;
+      }
+      const allowed = new Set(['provider', 'model', 'thinkingLevel', 'permissionMode', 'memoryEnabled', 'memoryNotes']);
+      const patch = requestedPatch;
+      const revision = requestedRevision;
       if (!patch || typeof patch !== 'object' || Array.isArray(patch)
         || !Object.keys(patch).length || Object.keys(patch).some((key) => !allowed.has(key))
         || typeof revision !== 'string' || !revision.trim()) {
@@ -2259,7 +2311,8 @@ return (function () {
         || (patch.model !== undefined && (typeof patch.model !== 'string' || !patch.model.trim()))
         || (patch.thinkingLevel !== undefined && !['off', 'low', 'medium', 'high', 'extra-high'].includes(patch.thinkingLevel))
         || (patch.permissionMode !== undefined && !['ask', 'read_only', 'read-only', 'operate', 'auto'].includes(patch.permissionMode))
-        || (patch.memoryEnabled !== undefined && typeof patch.memoryEnabled !== 'boolean')) {
+        || (patch.memoryEnabled !== undefined && typeof patch.memoryEnabled !== 'boolean')
+        || (patch.memoryNotes !== undefined && (typeof patch.memoryNotes !== 'string' || patch.memoryNotes.length > 65536))) {
         return { ok: false, code: 'invalid_config', error: 'Unsupported agent config values' };
       }
       return stageAInvoke('patch_agent_config', api.agentConfigAvailable?.(),
@@ -3007,12 +3060,20 @@ return (function () {
 
     if (pathname === '/api/agents' && verb === 'GET') {
       const rows = await api.agents();
+      let primaryId = null;
+      if (api.primaryAgentAvailable?.()) {
+        try {
+          const primary = await api.getPrimaryAgent();
+          if (primary?.ok === true && typeof primary.agentId === 'string'
+            && rows.some((row) => row.id === primary.agentId)) primaryId = primary.agentId;
+        } catch (_) { /* no fictional primary Agent */ }
+      }
       return {
         agents: rows.map((row) => ({
           id: row.id,
           name: row.title || row.id,
           yuan: row.id === ASSISTANT_ID ? 'hanako' : undefined,
-          isPrimary: row.id === ASSISTANT_ID,
+          isPrimary: primaryId ? row.id === primaryId : row.id === ASSISTANT_ID,
           hasAvatar: false,
           live: row.live !== false,
           status: row.status || 'idle',
@@ -3263,6 +3324,19 @@ return (function () {
           assigned = { modelId: api.DEFAULT_MODEL, provider: api.DEFAULT_PROVIDER };
         }
       }
+      // Restore per-session controls from the native execution runtime.
+      // A failed read must not enable Memory by default or invent a mode.
+      let runtimeControls = null;
+      if (api.sessionControlsAvailable?.()) {
+        try {
+          const controls = await api.getSessionRuntimeControls(liveId);
+          if (controls?.ok === true && controls.agentId === liveId
+            && typeof controls.enabled === 'boolean'
+            && ['ask', 'read_only', 'operate', 'auto'].includes(controls.mode)) {
+            runtimeControls = controls;
+          }
+        } catch (_) { /* legacy host: controls remain unavailable */ }
+      }
       return {
         ok: true,
         path: pathFor(liveId),
@@ -3270,10 +3344,10 @@ return (function () {
         agentId: ASSISTANT_ID,
         agentName: ASSISTANT_NAME,
         isStreaming: false,
-        memoryEnabled: true,
+        memoryEnabled: runtimeControls?.enabled === true,
         workspaceFolders: [],
         cwd: null,
-        permissionMode: 'ask',
+        permissionMode: runtimeControls?.mode || 'ask',
         currentModelId: assigned.modelId,
         currentModelName: assigned.modelId,
         currentModelProvider: assigned.provider,

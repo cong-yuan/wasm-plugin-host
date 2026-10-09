@@ -2303,6 +2303,10 @@ check('host bridge correlates requestId',
     calls.push(action);
     if (denied) throw new Error('runtime refused control change');
     const { command, args = {} } = action;
+    if (command === 'list_agents') return [
+      { id: 'a1', title: 'First native Agent', live: true },
+      { id: 'a2', title: 'Second native Agent', live: true },
+    ];
     if (command === 'get_agent_control_capabilities') return { ok: true, capabilities: {
       thinkingLevel: true, permissionMode: true, memoryToggle: true,
       primaryAgentSwitch: true, agentConfigWrite: true,
@@ -2354,26 +2358,39 @@ check('host bridge correlates requestId',
     && thinkingFromPath?.thinkingLevel === 'medium'
     && calls.some((item) => item.command === 'set_session_memory_enabled' && item.args.agentId === sessionId));
   const primary = await adapter.http('GET', '/api/agents/primary');
-  const switched = await adapter.http('POST', '/api/agents/switch', { agentId: 'a2' });
+  const switched = await adapter.http('POST', '/api/agents/switch', { id: 'a2' });
+  const agentList = await adapter.http('GET', '/api/agents');
   check('native primary agent queries and switches are confirmed by target ID',
-    primary?.agentId === 'a1' && switched?.agentId === 'a2' && switched.ok === true);
+    primary?.agentId === 'a1' && primary?.id === 'a1'
+    && switched?.agentId === 'a2' && switched?.agent?.name === 'Second native Agent'
+    && switched.ok === true && agentList.agents.some((row) => row.id === 'a1' && row.isPrimary));
   const config = await adapter.http('GET', '/api/agents/a2/config');
   const patch = await adapter.http('PATCH', '/api/agents/a2/config', {
     revision: 'r1', patch: { model: 'mock-2', memoryEnabled: false },
   });
+  const legacyPut = await adapter.http('PUT', '/api/agents/a2/config', {
+    chat: { provider: 'mock', model: 'mock-3' }, memory: { enabled: true },
+  });
   check('per-agent config requires durable revision and fresh mutation readback',
     config?.ok === true && config.revision === 'r1'
-    && patch?.ok === true && patch.revision === 'r2' && patch.config.memoryEnabled === false);
+    && patch?.ok === true && patch.revision === 'r2' && patch.config.memoryEnabled === false
+    && legacyPut?.ok === true
+    && calls.some((call) => call.command === 'patch_agent_config'
+      && call.args.patch.model === 'mock-3' && call.args.revision === 'r1'));
   const invalidMode = await adapter.http('POST', '/api/session-permission-mode', {
     sessionId, mode: 'admin',
   });
   const invalidPatch = await adapter.http('PATCH', '/api/agents/a2/config', {
     revision: 'r1', patch: { systemPrompt: 'unsafe unsupported field' },
   });
-  const unsafeLegacyPut = await adapter.http('PUT', '/api/agents/a2/config', { memory: { enabled: true } });
+  const unsafeLegacyPut = await adapter.http('PUT', '/api/agents/a2/config', { memory: { dream: { enabled: true } } });
+  const unsafeModelPut = await adapter.http('PUT', '/api/agents/a2/config', {
+    models: { chat: { model: 'mock-1' }, utility: { model: 'ignored-if-fake' } },
+  });
   check('invalid permission and arbitrary config keys are rejected before host dispatch',
     invalidMode?.code === 'invalid_control' && invalidPatch?.code === 'invalid_config'
-    && unsafeLegacyPut?.code === 'invalid_config');
+    && unsafeLegacyPut?.code === 'invalid_config'
+    && unsafeModelPut?.code === 'invalid_config');
   badAck = true;
   const wrongThinking = await adapter.http('POST', '/api/session-thinking-level', { sessionId, level: 'high' });
   const wrongMemory = await adapter.http('POST', '/api/session-memory-enabled', { sessionId, enabled: false });

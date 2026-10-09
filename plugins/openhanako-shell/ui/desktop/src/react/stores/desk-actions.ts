@@ -1312,7 +1312,32 @@ export async function deskRenameFile(oldName: string, newName: string): Promise<
 // ── 状态工具 ──
 
 export function toggleMemory(): void {
-  useStore.setState((s: any) => ({ memoryEnabled: !s.memoryEnabled }));
+  const state = useStore.getState();
+  const sessionPath = state.currentSessionPath;
+  if (!sessionPath) {
+    console.warn('[memory] a saved session is required for native Memory control');
+    return;
+  }
+  const expected = !state.memoryEnabled;
+  void hanaFetch('/api/session-memory-enabled', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionPath, enabled: expected }),
+  }).then(async (response) => {
+    const result = await response.json();
+    if (!response.ok || result?.ok !== true || result?.enabled !== expected) {
+      throw new Error(result?.error || 'Studio did not acknowledge Memory update');
+    }
+    // Don't apply a late reply after navigation to another session.
+    if (useStore.getState().currentSessionPath === sessionPath) {
+      useStore.setState({ memoryEnabled: expected });
+    }
+  }).catch((error) => {
+    console.error('[memory] native save failed:', error);
+    window.dispatchEvent(new CustomEvent('hana-inline-notice', {
+      detail: { type: 'error', text: error?.message || 'Memory update failed' },
+    }));
+  });
 }
 
 export async function applyFolder(folder: string): Promise<void> {
